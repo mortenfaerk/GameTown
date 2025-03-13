@@ -1,15 +1,25 @@
 using Scalar.AspNetCore;
+using EFModel.Models;
+using Microsoft.EntityFrameworkCore;
+using API.Services;
+using Microsoft.AspNetCore.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.Services.AddOpenApi();
 
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var RAWGKey = builder.Configuration.GetValue<string>("RAWGApiKey");
+
+builder.Services.AddDbContext<DatabaseContext>(options =>
+options.UseSqlServer(connectionString));
+builder.Services.AddScoped<RAWGService>(serviceProvider =>
+    new RAWGService(serviceProvider.GetRequiredService<DatabaseContext>(), RAWGKey));
 var app = builder.Build();
 
 app.MapDefaultEndpoints();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -18,28 +28,16 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
+app.MapGet("/games", async (DatabaseContext context) =>
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
+    return await context.Games.ToListAsync();
+});
+app.MapPost("/games/{id}", async (DatabaseContext context, RAWGService rServ, int id) =>
 {
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+    Game resultingGame = await rServ.GetGameById(id);
+    context.Games.Add(resultingGame);
+    await context.SaveChangesAsync();
+}
+);
 
 app.Run();
-
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
