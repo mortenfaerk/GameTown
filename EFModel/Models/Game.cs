@@ -75,6 +75,8 @@ public partial class Game
 
     public string DominantColor { get; set; }
 
+    public virtual ICollection<GameTownGame> GameTownGames { get; set; } = new List<GameTownGame>();
+
     public virtual ICollection<Developer> Developers { get; set; } = new List<Developer>();
 
     public virtual ICollection<Genre> Genres { get; set; } = new List<Genre>();

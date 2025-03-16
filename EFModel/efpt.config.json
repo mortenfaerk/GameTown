@@ -31,6 +31,10 @@
          "ObjectType": 0
       },
       {
+         "Name": "[dbo].[GameTownGame]",
+         "ObjectType": 0
+      },
+      {
          "Name": "[dbo].[Genres]",
          "ObjectType": 0
       }

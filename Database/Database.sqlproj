@@ -64,5 +64,9 @@
     <Build Include="Tables\GameGenres.sql" />
     <Build Include="Tables\Developers.sql" />
     <Build Include="Tables\GameDevelopers.sql" />
+    <Build Include="Tables\GameTownGame.sql" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Database.publish.xml" />
   </ItemGroup>
 </Project>

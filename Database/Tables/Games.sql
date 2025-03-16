@@ -2,7 +2,7 @@
     [id] INT PRIMARY KEY,
     [slug] NVARCHAR(255) NOT NULL,
     [name] NVARCHAR(255) NOT NULL,
-    [name_original] NVARCHAR(255) NOT NULL,
+    [name_original] NVARCHAR(255) NULL,
     [description] NVARCHAR(MAX) NOT NULL,
     [metacritic] INT,
     [released] DATE,

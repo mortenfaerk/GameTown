@@ -17,6 +17,8 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<Game> Games { get; set; }
 
+    public virtual DbSet<GameTownGame> GameTownGames { get; set; }
+
     public virtual DbSet<Genre> Genres { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -69,7 +71,6 @@ public partial class DatabaseContext : DbContext
                 .HasMaxLength(255)
                 .HasColumnName("name");
             entity.Property(e => e.NameOriginal)
-                .IsRequired()
                 .HasMaxLength(255)
                 .HasColumnName("name_original");
             entity.Property(e => e.ParentAchievementsCount).HasColumnName("parent_achievements_count");
@@ -140,6 +141,25 @@ public partial class DatabaseContext : DbContext
                         j.IndexerProperty<int>("GameId").HasColumnName("game_id");
                         j.IndexerProperty<int>("GenreId").HasColumnName("genre_id");
                     });
+        });
+
+        modelBuilder.Entity<GameTownGame>(entity =>
+        {
+            entity.ToTable("GameTownGame");
+
+            entity.Property(e => e.Id).HasDefaultValueSql("newid()");
+            entity.Property(e => e.HowTo).IsRequired();
+            entity.Property(e => e.Title)
+                .IsRequired()
+                .HasMaxLength(500);
+            entity.Property(e => e.Url)
+                .IsRequired()
+                .HasMaxLength(500)
+                .HasColumnName("URL");
+
+            entity.HasOne(d => d.Game).WithMany(p => p.GameTownGames)
+                .HasForeignKey(d => d.GameId)
+                .HasConstraintName("FK_GameTownGame_Games");
         });
 
         modelBuilder.Entity<Genre>(entity =>
