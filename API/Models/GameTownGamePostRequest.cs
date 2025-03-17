@@ -16,7 +16,7 @@ public class GameTownGamePostRequest(string title, string howto, int? gameId, st
     /// <summary>
     /// The ID of the referenced game (if applicable). When used the application will try to gather the relevant metadata for the game online. 
     /// </summary>
-    public int? GameId { get; set; } = gameId;
+    public int? RawgGameId { get; set; } = gameId;
     /// <summary>
     /// A URL containing more details about the game.
     /// </summary>
