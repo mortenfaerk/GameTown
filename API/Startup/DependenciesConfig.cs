@@ -17,7 +17,12 @@ public static class DependenciesConfig
         builder.Services.AddDbContext<DatabaseContext>(options =>
             options.UseSqlServer(connectionString)
             );
-        builder.Services.AddScoped<RAWGService>(serviceProvider =>
-            new RAWGService(RAWGKey));
+        builder.Services.AddScoped<RAWGService>(provider =>
+        {
+            var dbContext = provider.GetRequiredService<DatabaseContext>();
+            var rawgKey = builder.Configuration.GetValue<string>("RAWGApiKey") ?? throw new Exception("The app requires an API key for RAWG to be set!");
+            return new RAWGService(rawgKey, dbContext);
+        });
+        builder.Services.AddScoped<GTGamesService>();
     }
 }

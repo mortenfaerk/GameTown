@@ -12,6 +12,7 @@ app.UseOpenApi();
 app.UseHttpsRedirection();
 
 app.AddRootEndpoints();
-app.AddGamesEndpoints();
+app.AddGamesTownGamesEndpoints();
+app.AddMetaDataEndpoints();
 
 app.Run();

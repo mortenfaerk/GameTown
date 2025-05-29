@@ -13,9 +13,9 @@ public partial class GameTownGame
 
     public string HowTo { get; set; }
 
-    public int? GameId { get; set; }
+    public int? RawggameId { get; set; }
 
     public string Url { get; set; }
 
-    public virtual Game Game { get; set; }
+    public virtual Rawggame Rawggame { get; set; }
 }

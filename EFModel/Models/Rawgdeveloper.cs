@@ -5,7 +5,7 @@ using System.Collections.Generic;
 
 namespace EFModel.Models;
 
-public partial class Genre
+public partial class Rawgdeveloper
 {
     public int Id { get; set; }
 
@@ -13,7 +13,9 @@ public partial class Genre
 
     public string Slug { get; set; }
 
+    public int? GamesCount { get; set; }
+
     public string ImageBackground { get; set; }
 
-    public virtual ICollection<Game> Games { get; set; } = new List<Game>();
+    public virtual ICollection<Rawggame> Games { get; set; } = new List<Rawggame>();
 }

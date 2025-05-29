@@ -1,4 +1,4 @@
-﻿using API.Models;
+﻿using API.Models.Games;
 using API.Services;
 using EFModel.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -8,298 +8,147 @@ namespace API.Endpoints;
 
 public static class GamesEndpoints
 {
-    public static void AddGamesEndpoints(this WebApplication app)
+    public static void AddGamesTownGamesEndpoints(this WebApplication app)
     {
-        app.MapPost("games/add/", AddGame).WithDescription("Tilføjer nye spil til GameTown.").Produces<GameTownGameDTO>(StatusCodes.Status201Created).Produces<string>(StatusCodes.Status404NotFound).Produces<ProblemDetails>(StatusCodes.Status500InternalServerError).WithOpenApi(); ;
-        app.MapGet("/games", LoadAllGames).WithDescription("Henter alle spil ud, med evt. tilhørende data fra RAWG api'et").Produces<ICollection<GameTownGameDTO>>(StatusCodes.Status200OK).WithOpenApi();
-        app.MapGet("games/{id}", LoadGameById).WithDescription("Henter et enkelt spils informationer").Produces<GameTownGameDTO>(StatusCodes.Status200OK).WithOpenApi();
-        app.MapDelete("/game", DeleteGame).WithDescription("Sletter et spil").WithOpenApi();
-        app.MapPatch("/game/{id}", PatchGame).WithDescription("Opdater et spils metadata").Produces<GameTownGameDTO>(StatusCodes.Status200OK).Produces(StatusCodes.Status404NotFound).Produces<ProblemDetails>(StatusCodes.Status500InternalServerError).WithOpenApi();
+        var group = app.MapGroup("/GTGames")
+            .WithTags("GameTown Games")
+            .WithOpenApi()
+            .WithDescription("Endpoints for managing games in GameTown.");
+        group.MapGet("/{id}", GetGameById).Accepts<string>("text/plain")
+            .Produces<ResponseGameTownGameDTO>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .WithName("GetGameById")
+            .WithDescription("Retrieves a game from GameTown by its unique identifier. The ID should be a valid GUID format.");
+        group.MapDelete("/{id}", RemoveGameById).Accepts<string>("text/plain")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .WithName("RemoveGameById")
+            .WithDescription("Removes a game from GameTown by its unique identifier. The ID should be a valid GUID format.");
+        group.MapPost("/add",AddGame).Accepts<RequestGameTownGameDTO>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status500InternalServerError)
+            .WithName("AddGame")
+            .WithDescription("Adds a new game to GameTown. The game data should be provided in the request body as JSON.");
+        group.MapPatch("/update", UpdateGame).Accepts<GameTownGamePatchRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status500InternalServerError)
+            .WithName("UpdateGame")
+            .WithDescription("Updates an existing game in GameTown. The game data should be provided in the request body as JSON, including the unique identifier (ID) of the game to be updated.");
+        group.MapGet("/paged/{page}/{pageSize}", GetGamesPaged).Accepts<int>("text/plain")
+            .Accepts<int>("text/plain")
+            .Produces<IEnumerable<ResponseGameTownGameDTO>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status500InternalServerError)
+            .WithName("GetGamesPaged")
+            .WithDescription("Retrieves a paginated list of games from GameTown. The page and page size must be greater than zero.");
+        group.MapGet("/search/", SearchGame).Accepts<GameTownGameSearchRequest>("text/plain")
+            .Accepts<int>("text/plain")
+            .Accepts<int>("text/plain")
+            .Produces<IEnumerable<ResponseGameTownGameDTO>>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status500InternalServerError)
+            .WithName("SearchGame")
+            .WithDescription("Searches for games in GameTown based on a query string. The query string should not be empty and pagination parameters must be greater than zero.");
     }
-    private static async Task<IResult> LoadAllGames(DatabaseContext context, string? search)
+    private static async Task<IResult> GetGameById(string id, GTGamesService service)
     {
-        IQueryable<GameTownGame> query = context.GameTownGames;
-
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var searchLower = search.ToLower();
-            query = query.Where(x => x.Title.Contains(searchLower, StringComparison.CurrentCultureIgnoreCase));
-        }
-
-        var gamesDto = await query.Select(x => new GameTownGameDTO
-        {
-            Id = x.Id,
-            Title = x.Title,
-            HowTo = x.HowTo,
-            URL = x.Url,
-            RAWGGame = x.Game != null
-                ? new RAWGGameDTO(
-                    x.Game.Id,
-                    x.Game.Slug,
-                    x.Game.Name,
-                    x.Game.NameOriginal,
-                    x.Game.Description,
-                    x.Game.Metacritic,
-                    x.Game.Released,
-                    x.Game.Tba,
-                    x.Game.Updated,
-                    x.Game.BackgroundImage,
-                    x.Game.BackgroundImageAdditional,
-                    x.Game.Website,
-                    x.Game.Rating,
-                    x.Game.RatingTop,
-                    x.Game.Playtime,
-                    x.Game.ScreenshotsCount,
-                    x.Game.MoviesCount,
-                    x.Game.CreatorsCount,
-                    x.Game.AchievementsCount,
-                    x.Game.ParentAchievementsCount,
-                    x.Game.RedditUrl,
-                    x.Game.RedditCount,
-                    x.Game.TwitchCount,
-                    x.Game.YoutubeCount,
-                    x.Game.ReviewsTextCount,
-                    x.Game.RatingsCount,
-                    x.Game.SuggestionsCount,
-                    x.Game.MetacriticUrl,
-                    x.Game.ParentsCount,
-                    x.Game.AdditionsCount,
-                    x.Game.GameSeriesCount,
-                    x.Game.ReviewsCount,
-                    x.Game.SaturatedColor,
-                    x.Game.DominantColor
-                  )
-                : null
-        }).ToListAsync();
-
-        return Results.Ok(gamesDto);
+        if (!Guid.TryParse(id, out var gameId))
+            return Results.BadRequest("Invalid game ID format.");
+        var game = await service.GetGameById(gameId);
+        if (game == null)
+            return Results.NotFound($"Game with ID {id} not found.");
+        return Results.Ok(game);
     }
-    private static async Task<IResult> LoadGameById(DatabaseContext context, string id)
+    private static async Task<IResult> RemoveGameById(string id, GTGamesService service)
     {
-        Guid givenId = Guid.Parse(id);
-        var gameDto = await context.GameTownGames
-               .Where(x => x.Id == givenId)
-               .Select(x => new GameTownGameDTO
-               {
-                   Id = x.Id,
-                   Title = x.Title,
-                   HowTo = x.HowTo,
-                   URL = x.Url,
-                   RAWGGame = x.Game != null
-                       ? new RAWGGameDTO(
-                           x.Game.Id,
-                           x.Game.Slug,
-                           x.Game.Name,
-                           x.Game.NameOriginal,
-                           x.Game.Description,
-                           x.Game.Metacritic,
-                           x.Game.Released,
-                           x.Game.Tba,
-                           x.Game.Updated,
-                           x.Game.BackgroundImage,
-                           x.Game.BackgroundImageAdditional,
-                           x.Game.Website,
-                           x.Game.Rating,
-                           x.Game.RatingTop,
-                           x.Game.Playtime,
-                           x.Game.ScreenshotsCount,
-                           x.Game.MoviesCount,
-                           x.Game.CreatorsCount,
-                           x.Game.AchievementsCount,
-                           x.Game.ParentAchievementsCount,
-                           x.Game.RedditUrl,
-                           x.Game.RedditCount,
-                           x.Game.TwitchCount,
-                           x.Game.YoutubeCount,
-                           x.Game.ReviewsTextCount,
-                           x.Game.RatingsCount,
-                           x.Game.SuggestionsCount,
-                           x.Game.MetacriticUrl,
-                           x.Game.ParentsCount,
-                           x.Game.AdditionsCount,
-                           x.Game.GameSeriesCount,
-                           x.Game.ReviewsCount,
-                           x.Game.SaturatedColor,
-                           x.Game.DominantColor
-                         )
-                       : null
-               })
-               .SingleOrDefaultAsync();
-
-        if (gameDto is null)
-            return Results.NotFound();
-
-        return Results.Ok(gameDto);
-    }
-    private static async Task<IResult> AddGame(DatabaseContext context,RAWGService rServ, GameTownGamePostRequest game)
-    {
+        if (!Guid.TryParse(id, out var gameId))
+            return Results.BadRequest("Invalid game ID format.");
         try
         {
-            var newGame = new GameTownGame
-            {
-                Title = game.Title,
-                HowTo = game.HowTo,
-                Url = game.Url,
-                GameId = game.RawgGameId,
-                Id = Guid.NewGuid()
-            };
-            if (game.RawgGameId != null)
-            {
-                newGame.Game = await GetRawgGameAsync(context,rServ,game.RawgGameId.Value);
-            }
+            await service.RemoveGameById(gameId);
 
-            context.GameTownGames.Add(newGame);
-            await context.SaveChangesAsync();
-
-            var newGameDto = new GameTownGameDTO
-            {
-                Id = newGame.Id,
-                Title = newGame.Title,
-                HowTo = newGame.HowTo,
-                URL = newGame.Url,
-                RAWGGame = newGame.Game != null ? new RAWGGameDTO(
-                    newGame.Game.Id,
-                    newGame.Game.Slug,
-                    newGame.Game.Name,
-                    newGame.Game.NameOriginal,
-                    newGame.Game.Description,
-                    newGame.Game.Metacritic,
-                    newGame.Game.Released,
-                    newGame.Game.Tba,
-                    newGame.Game.Updated,
-                    newGame.Game.BackgroundImage,
-                    newGame.Game.BackgroundImageAdditional,
-                    newGame.Game.Website,
-                    newGame.Game.Rating,
-                    newGame.Game.RatingTop,
-                    newGame.Game.Playtime,
-                    newGame.Game.ScreenshotsCount,
-                    newGame.Game.MoviesCount,
-                    newGame.Game.CreatorsCount,
-                    newGame.Game.AchievementsCount,
-                    newGame.Game.ParentAchievementsCount,
-                    newGame.Game.RedditUrl,
-                    newGame.Game.RedditCount,
-                    newGame.Game.TwitchCount,
-                    newGame.Game.YoutubeCount,
-                    newGame.Game.ReviewsTextCount,
-                    newGame.Game.RatingsCount,
-                    newGame.Game.SuggestionsCount,
-                    newGame.Game.MetacriticUrl,
-                    newGame.Game.ParentsCount,
-                    newGame.Game.AdditionsCount,
-                    newGame.Game.GameSeriesCount,
-                    newGame.Game.ReviewsCount,
-                    newGame.Game.SaturatedColor,
-                    newGame.Game.DominantColor
-                ) : null
-            };
-
-            return Results.Created($"/games/{newGame.Id}", newGameDto);
+        }catch (KeyNotFoundException ex)
+        {
+            return Results.NotFound(ex.Message);
         }
         catch (Exception ex)
         {
-            return Results.Problem($"An error occurred: {ex.Message}");
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
+        return Results.NoContent();
     }
-    private static async Task<IResult> DeleteGame(DatabaseContext context, string id)
+    private static async Task<IResult> AddGame(RequestGameTownGameDTO game, GTGamesService service)
     {
-        GameTownGame? game = await context.GameTownGames.FindAsync(id);
         if (game == null)
-            return Results.NotFound("Game not found!");
-        context.GameTownGames.Remove(game);
-        await context.SaveChangesAsync();
-        return Results.Ok();
+            return Results.BadRequest("Game data cannot be null.");
+        try
+        {
+            await service.AddGame(game);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return Results.NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+        }
+        return Results.NoContent();
     }
-    private static async Task<IResult> PatchGame(DatabaseContext context,RAWGService rServ, Guid id, GameTownGamePatchRequest patchRequest)
+    private static async Task<IResult> UpdateGame(GameTownGamePatchRequest game, GTGamesService service)
     {
-        var existingGame = await context.GameTownGames.FindAsync(id);
-        if (existingGame is null)
+        if (!Guid.TryParse(game.Id, out var gameId))
+            return Results.BadRequest("Invalid game ID format.");
+        if (game == null)
+            return Results.BadRequest("Game data cannot be null.");
+        try
         {
-            return Results.NotFound();
+            await service.UpdateGame(game);
         }
-        if (patchRequest.Title is not null)
+        catch (KeyNotFoundException ex)
         {
-            existingGame.Title = patchRequest.Title;
+            return Results.NotFound(ex.Message);
         }
-
-        if (patchRequest.HowTo is not null)
+        catch (Exception ex)
         {
-            existingGame.HowTo = patchRequest.HowTo;
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
-
-        if (patchRequest.RawgGameId is not null)
-        {
-            existingGame.Game = await GetRawgGameAsync(context,rServ,patchRequest.RawgGameId.Value);
-            existingGame.GameId = patchRequest.RawgGameId;
-        }
-
-        if (patchRequest.Url is not null)
-        {
-            existingGame.Url = patchRequest.Url;
-        }
-        await context.SaveChangesAsync();
-        var updatedDto = new GameTownGameDTO
-        {
-            Id = existingGame.Id,
-            Title = existingGame.Title,
-            HowTo = existingGame.HowTo,
-            RawgGameId = existingGame.GameId,
-            URL = existingGame.Url,
-            RAWGGame = existingGame.Game != null
-           ? new RAWGGameDTO(
-               existingGame.Game.Id,
-               existingGame.Game.Slug,
-               existingGame.Game.Name,
-               existingGame.Game.NameOriginal,
-               existingGame.Game.Description,
-               existingGame.Game.Metacritic,
-               existingGame.Game.Released,
-               existingGame.Game.Tba,
-               existingGame.Game.Updated,
-               existingGame.Game.BackgroundImage,
-               existingGame.Game.BackgroundImageAdditional,
-               existingGame.Game.Website,
-               existingGame.Game.Rating,
-               existingGame.Game.RatingTop,
-               existingGame.Game.Playtime,
-               existingGame.Game.ScreenshotsCount,
-               existingGame.Game.MoviesCount,
-               existingGame.Game.CreatorsCount,
-               existingGame.Game.AchievementsCount,
-               existingGame.Game.ParentAchievementsCount,
-               existingGame.Game.RedditUrl,
-               existingGame.Game.RedditCount,
-               existingGame.Game.TwitchCount,
-               existingGame.Game.YoutubeCount,
-               existingGame.Game.ReviewsTextCount,
-               existingGame.Game.RatingsCount,
-               existingGame.Game.SuggestionsCount,
-               existingGame.Game.MetacriticUrl,
-               existingGame.Game.ParentsCount,
-               existingGame.Game.AdditionsCount,
-               existingGame.Game.GameSeriesCount,
-               existingGame.Game.ReviewsCount,
-               existingGame.Game.SaturatedColor,
-               existingGame.Game.DominantColor
-           )
-           : null
-        };
-        return Results.Ok(updatedDto);
+        return Results.NoContent();
     }
-    private static async Task<Game> GetRawgGameAsync(DatabaseContext context, RAWGService rServ, int id)
+    private static async Task<IResult> GetGamesPaged(int page, int pageSize, GTGamesService service)
     {
-        var resultingGame = await rServ.GetGameById(id) ?? throw new Exception($"Couldn't find game of {id}");
-        var existingGame = await context.Games.FindAsync(resultingGame.Id);
-        if (existingGame != null)
+        if (page < 1 || pageSize < 1)
+            return Results.BadRequest("Page and page size must be greater than zero.");
+        try
         {
-            context.Entry(existingGame).CurrentValues.SetValues(resultingGame);
+            var games = await service.GetGamePaged(page, pageSize);
+            return Results.Ok(games);
         }
-        else
+        catch (Exception ex)
         {
-            context.Games.Add(resultingGame);
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
-        await context.SaveChangesAsync();
-        return resultingGame;
+    }
+    private static async Task<IResult> SearchGame(string query, int page, int pageSize, GTGamesService service)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return Results.BadRequest("Search query cannot be empty.");
+        if (page < 1 || pageSize < 1)
+            return Results.BadRequest("Page and page size must be greater than zero.");
+        try
+        {
+            var games = await service.SearchGames(query, page, pageSize);
+            return Results.Ok(games);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 }

@@ -15,27 +15,35 @@
    "T4TemplatePath": null,
    "Tables": [
       {
-         "Name": "[dbo].[Developers]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[GameDevelopers]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[GameGenres]",
-         "ObjectType": 0
-      },
-      {
-         "Name": "[dbo].[Games]",
-         "ObjectType": 0
-      },
-      {
          "Name": "[dbo].[GameTownGame]",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[Genres]",
+         "Name": "[dbo].[RAWGDevelopers]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RAWGGames]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RAWGGames_Developers]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RAWGGames_Genres]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RAWGGames_Screenshots]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RAWGGenres]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RAWGScreenshots]",
          "ObjectType": 0
       }
    ],

@@ -1,7 +1,11 @@
-﻿namespace API.Models
+﻿namespace API.Models.Games
 {
     public class GameTownGamePatchRequest
     {
+        /// <summary>
+        /// The unique identifier for the game. Must be a valid GUID format.
+        /// </summary>
+        public required string Id { get; set; }
         /// <summary>
         /// The title of the game.
         /// </summary>

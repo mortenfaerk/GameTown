@@ -1,4 +1,4 @@
-﻿CREATE TABLE [Games] (
+﻿CREATE TABLE [dbo].[RAWGGames] (
     [id] INT PRIMARY KEY,
     [slug] NVARCHAR(255) NOT NULL,
     [name] NVARCHAR(255) NOT NULL,

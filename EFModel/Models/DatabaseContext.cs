@@ -13,18 +13,42 @@ public partial class DatabaseContext : DbContext
     {
     }
 
-    public virtual DbSet<Developer> Developers { get; set; }
-
-    public virtual DbSet<Game> Games { get; set; }
-
     public virtual DbSet<GameTownGame> GameTownGames { get; set; }
 
-    public virtual DbSet<Genre> Genres { get; set; }
+    public virtual DbSet<Rawgdeveloper> Rawgdevelopers { get; set; }
+
+    public virtual DbSet<Rawggame> Rawggames { get; set; }
+
+    public virtual DbSet<Rawggenre> Rawggenres { get; set; }
+
+    public virtual DbSet<Rawgscreenshot> Rawgscreenshots { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<Developer>(entity =>
+        modelBuilder.Entity<GameTownGame>(entity =>
         {
+            entity.ToTable("GameTownGame");
+
+            entity.Property(e => e.Id).HasDefaultValueSql("newid()");
+            entity.Property(e => e.HowTo).IsRequired();
+            entity.Property(e => e.RawggameId).HasColumnName("RAWGGameId");
+            entity.Property(e => e.Title)
+                .IsRequired()
+                .HasMaxLength(500);
+            entity.Property(e => e.Url)
+                .IsRequired()
+                .HasMaxLength(500)
+                .HasColumnName("URL");
+
+            entity.HasOne(d => d.Rawggame).WithMany(p => p.GameTownGames)
+                .HasForeignKey(d => d.RawggameId)
+                .HasConstraintName("FK_GameTownGame_Games");
+        });
+
+        modelBuilder.Entity<Rawgdeveloper>(entity =>
+        {
+            entity.ToTable("RAWGDevelopers");
+
             entity.Property(e => e.Id)
                 .ValueGeneratedNever()
                 .HasColumnName("id");
@@ -40,8 +64,10 @@ public partial class DatabaseContext : DbContext
                 .HasColumnName("slug");
         });
 
-        modelBuilder.Entity<Game>(entity =>
+        modelBuilder.Entity<Rawggame>(entity =>
         {
+            entity.ToTable("RAWGGames");
+
             entity.Property(e => e.Id)
                 .ValueGeneratedNever()
                 .HasColumnName("id");
@@ -110,60 +136,60 @@ public partial class DatabaseContext : DbContext
 
             entity.HasMany(d => d.Developers).WithMany(p => p.Games)
                 .UsingEntity<Dictionary<string, object>>(
-                    "GameDeveloper",
-                    r => r.HasOne<Developer>().WithMany()
+                    "RawggamesDeveloper",
+                    r => r.HasOne<Rawgdeveloper>().WithMany()
                         .HasForeignKey("DeveloperId")
                         .OnDelete(DeleteBehavior.ClientSetNull),
-                    l => l.HasOne<Game>().WithMany()
+                    l => l.HasOne<Rawggame>().WithMany()
                         .HasForeignKey("GameId")
                         .OnDelete(DeleteBehavior.ClientSetNull),
                     j =>
                     {
                         j.HasKey("GameId", "DeveloperId");
-                        j.ToTable("GameDevelopers");
+                        j.ToTable("RAWGGames_Developers");
                         j.IndexerProperty<int>("GameId").HasColumnName("game_id");
                         j.IndexerProperty<int>("DeveloperId").HasColumnName("developer_id");
                     });
 
             entity.HasMany(d => d.Genres).WithMany(p => p.Games)
                 .UsingEntity<Dictionary<string, object>>(
-                    "GameGenre",
-                    r => r.HasOne<Genre>().WithMany()
+                    "RawggamesGenre",
+                    r => r.HasOne<Rawggenre>().WithMany()
                         .HasForeignKey("GenreId")
                         .OnDelete(DeleteBehavior.ClientSetNull),
-                    l => l.HasOne<Game>().WithMany()
+                    l => l.HasOne<Rawggame>().WithMany()
                         .HasForeignKey("GameId")
                         .OnDelete(DeleteBehavior.ClientSetNull),
                     j =>
                     {
                         j.HasKey("GameId", "GenreId");
-                        j.ToTable("GameGenres");
+                        j.ToTable("RAWGGames_Genres");
                         j.IndexerProperty<int>("GameId").HasColumnName("game_id");
                         j.IndexerProperty<int>("GenreId").HasColumnName("genre_id");
                     });
+
+            entity.HasMany(d => d.Screenshots).WithMany(p => p.Games)
+                .UsingEntity<Dictionary<string, object>>(
+                    "RawggamesScreenshot",
+                    r => r.HasOne<Rawgscreenshot>().WithMany()
+                        .HasForeignKey("Screenshotid")
+                        .OnDelete(DeleteBehavior.ClientSetNull),
+                    l => l.HasOne<Rawggame>().WithMany()
+                        .HasForeignKey("Gameid")
+                        .OnDelete(DeleteBehavior.ClientSetNull),
+                    j =>
+                    {
+                        j.HasKey("Gameid", "Screenshotid");
+                        j.ToTable("RAWGGames_Screenshots");
+                        j.IndexerProperty<int>("Gameid").HasColumnName("gameid");
+                        j.IndexerProperty<int>("Screenshotid").HasColumnName("screenshotid");
+                    });
         });
 
-        modelBuilder.Entity<GameTownGame>(entity =>
+        modelBuilder.Entity<Rawggenre>(entity =>
         {
-            entity.ToTable("GameTownGame");
+            entity.ToTable("RAWGGenres");
 
-            entity.Property(e => e.Id).HasDefaultValueSql("newid()");
-            entity.Property(e => e.HowTo).IsRequired();
-            entity.Property(e => e.Title)
-                .IsRequired()
-                .HasMaxLength(500);
-            entity.Property(e => e.Url)
-                .IsRequired()
-                .HasMaxLength(500)
-                .HasColumnName("URL");
-
-            entity.HasOne(d => d.Game).WithMany(p => p.GameTownGames)
-                .HasForeignKey(d => d.GameId)
-                .HasConstraintName("FK_GameTownGame_Games");
-        });
-
-        modelBuilder.Entity<Genre>(entity =>
-        {
             entity.Property(e => e.Id)
                 .ValueGeneratedNever()
                 .HasColumnName("id");
@@ -176,6 +202,20 @@ public partial class DatabaseContext : DbContext
             entity.Property(e => e.Slug)
                 .HasMaxLength(255)
                 .HasColumnName("slug");
+        });
+
+        modelBuilder.Entity<Rawgscreenshot>(entity =>
+        {
+            entity.ToTable("RAWGScreenshots");
+
+            entity.Property(e => e.Id).ValueGeneratedNever();
+            entity.Property(e => e.Height).HasColumnName("height");
+            entity.Property(e => e.Image)
+                .IsRequired()
+                .HasMaxLength(500)
+                .HasColumnName("image");
+            entity.Property(e => e.IsDeleted).HasColumnName("is_deleted");
+            entity.Property(e => e.Width).HasColumnName("width");
         });
 
         OnModelCreatingPartial(modelBuilder);
