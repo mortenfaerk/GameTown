@@ -23,7 +23,7 @@ public static class GamesEndpoints
         if (!string.IsNullOrWhiteSpace(search))
         {
             var searchLower = search.ToLower();
-            query = query.Where(x => x.Title.ToLower().Contains(searchLower));
+            query = query.Where(x => x.Title.Contains(searchLower, StringComparison.CurrentCultureIgnoreCase));
         }
 
         var gamesDto = await query.Select(x => new GameTownGameDTO
@@ -289,12 +289,7 @@ public static class GamesEndpoints
     }
     private static async Task<Game> GetRawgGameAsync(DatabaseContext context, RAWGService rServ, int id)
     {
-        var resultingGame = await rServ.GetGameById(id);
-        if (resultingGame == null)
-        {
-            throw new Exception($"Couldn't find game of {id}");
-        }
-
+        var resultingGame = await rServ.GetGameById(id) ?? throw new Exception($"Couldn't find game of {id}");
         var existingGame = await context.Games.FindAsync(resultingGame.Id);
         if (existingGame != null)
         {

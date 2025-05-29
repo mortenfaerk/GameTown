@@ -4,6 +4,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 VisualStudioVersion = 17.12.35728.132
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "API", "API\API.csproj", "{90F333D9-559C-48BF-AD3B-77152971B4C1}"
+	ProjectSection(ProjectDependencies) = postProject
+		{FADF8C0E-8A77-4CA4-8887-B8941B77ABB3} = {FADF8C0E-8A77-4CA4-8887-B8941B77ABB3}
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aspire.AppHost", "Aspire\Aspire.AppHost\Aspire.AppHost.csproj", "{34BF209F-E08E-4882-B612-24DB277862F0}"
 EndProject
