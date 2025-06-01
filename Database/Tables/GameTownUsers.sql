@@ -1,0 +1,14 @@
+﻿CREATE TABLE [dbo].[GameTownUsers]
+(
+	Id UNIQUEIDENTIFIER PRIMARY KEY DEFAULT(NEWID()),
+    PasswordHash NVARCHAR(256) NOT NULL,
+    Salt NVARCHAR(256) NOT NULL,  
+    Username NVARCHAR(256) NOT NULL UNIQUE,
+    DisplayName NVARCHAR(256) NULL,              
+    IsActive BIT NOT NULL DEFAULT 1,             
+    Notes NVARCHAR(512) NULL,                    
+    CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+    CreatedBy NVARCHAR(256) NULL,
+    LastModifiedAt DATETIME2 NULL DEFAULT SYSUTCDATETIME(),
+    LastModifiedBy NVARCHAR(256) NULL
+)

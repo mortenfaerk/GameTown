@@ -57,6 +57,7 @@
   <ItemGroup>
     <Folder Include="Properties" />
     <Folder Include="Tables" />
+    <Folder Include="PostDeploymentScripts" />
   </ItemGroup>
   <ItemGroup>
     <Build Include="Tables\RAWGGenres.sql" />
@@ -67,8 +68,20 @@
     <Build Include="Tables\RAWGGames.sql" />
     <Build Include="Tables\RAWGScreenshots.sql" />
     <Build Include="Tables\RAWGGames_Screenshots.sql" />
+    <Build Include="Tables\GameTownUsers.sql" />
+    <Build Include="Tables\GameTownRoles.sql" />
+    <Build Include="Tables\GameTownUsers_Roles.sql" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Database.publish.xml" />
+  </ItemGroup>
+  <ItemGroup>
+    <SqlCmdVariable Include="Environment">
+      <DefaultValue>DEV</DefaultValue>
+      <Value>$(SqlCmdVar__1)</Value>
+    </SqlCmdVariable>
+  </ItemGroup>
+  <ItemGroup>
+    <PostDeploy Include="PostDeploymentScripts\Script.PostDeployment1.sql" />
   </ItemGroup>
 </Project>

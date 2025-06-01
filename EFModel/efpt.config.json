@@ -19,6 +19,18 @@
          "ObjectType": 0
       },
       {
+         "Name": "[dbo].[GameTownRoles]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[GameTownUsers]",
+         "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[GameTownUsers_Roles]",
+         "ObjectType": 0
+      },
+      {
          "Name": "[dbo].[RAWGDevelopers]",
          "ObjectType": 0
       },

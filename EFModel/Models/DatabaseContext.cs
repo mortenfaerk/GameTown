@@ -15,6 +15,10 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<GameTownGame> GameTownGames { get; set; }
 
+    public virtual DbSet<GameTownRole> GameTownRoles { get; set; }
+
+    public virtual DbSet<GameTownUser> GameTownUsers { get; set; }
+
     public virtual DbSet<Rawgdeveloper> Rawgdevelopers { get; set; }
 
     public virtual DbSet<Rawggame> Rawggames { get; set; }
@@ -43,6 +47,65 @@ public partial class DatabaseContext : DbContext
             entity.HasOne(d => d.Rawggame).WithMany(p => p.GameTownGames)
                 .HasForeignKey(d => d.RawggameId)
                 .HasConstraintName("FK_GameTownGame_Games");
+        });
+
+        modelBuilder.Entity<GameTownRole>(entity =>
+        {
+            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.CreatedBy)
+                .IsRequired()
+                .HasMaxLength(50);
+            entity.Property(e => e.CreatedDate).HasDefaultValueSql("GETDATE()");
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.ModifiedBy)
+                .IsRequired()
+                .HasMaxLength(50);
+            entity.Property(e => e.ModifiedDate).HasDefaultValueSql("GETDATE()");
+            entity.Property(e => e.Role)
+                .IsRequired()
+                .HasMaxLength(50);
+        });
+
+        modelBuilder.Entity<GameTownUser>(entity =>
+        {
+            entity.HasIndex(e => e.Username, "IX_GameTownUsers_Username").IsUnique();
+
+            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedBy).HasMaxLength(256);
+            entity.Property(e => e.DisplayName).HasMaxLength(256);
+            entity.Property(e => e.IsActive).HasDefaultValue(true);
+            entity.Property(e => e.LastModifiedAt).HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.LastModifiedBy).HasMaxLength(256);
+            entity.Property(e => e.Notes).HasMaxLength(512);
+            entity.Property(e => e.PasswordHash)
+                .IsRequired()
+                .HasMaxLength(256);
+            entity.Property(e => e.Salt)
+                .IsRequired()
+                .HasMaxLength(256);
+            entity.Property(e => e.Username)
+                .IsRequired()
+                .HasMaxLength(256);
+
+            entity.HasMany(d => d.Apiroles).WithMany(p => p.Apiusers)
+                .UsingEntity<Dictionary<string, object>>(
+                    "GameTownUsersRole",
+                    r => r.HasOne<GameTownRole>().WithMany()
+                        .HasForeignKey("ApiroleId")
+                        .OnDelete(DeleteBehavior.ClientSetNull)
+                        .HasConstraintName("FK_APIUsers_APIRoles_APIRoleId"),
+                    l => l.HasOne<GameTownUser>().WithMany()
+                        .HasForeignKey("ApiuserId")
+                        .OnDelete(DeleteBehavior.ClientSetNull)
+                        .HasConstraintName("FK_APIUsers_APIRoles_APIUserId"),
+                    j =>
+                    {
+                        j.HasKey("ApiuserId", "ApiroleId").HasName("PK_APIUsers_APIRoles");
+                        j.ToTable("GameTownUsers_Roles");
+                        j.IndexerProperty<Guid>("ApiuserId").HasColumnName("APIUserId");
+                        j.IndexerProperty<Guid>("ApiroleId").HasColumnName("APIRoleId");
+                    });
         });
 
         modelBuilder.Entity<Rawgdeveloper>(entity =>
