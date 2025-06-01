@@ -1,8 +1,6 @@
 ﻿using API.Models.Games;
 using API.Services;
-using EFModel.Models;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace API.Endpoints;
 
@@ -14,25 +12,33 @@ public static class GamesEndpoints
             .WithTags("GameTown Games")
             .WithOpenApi()
             .WithDescription("Endpoints for managing games in GameTown.");
+        group.MapPost("/Add", AddGameWithFile)
+            .Accepts<AddGameWithFileForm>("multipart/form-data")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status500InternalServerError)
+            .WithName("AddGame")
+            .WithDescription("Uploads a zipped game data file.")
+            .DisableAntiforgery();
         group.MapGet("/{id}", GetGameById).Accepts<string>("text/plain")
             .Produces<ResponseGameTownGameDTO>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .WithName("GetGameById")
             .WithDescription("Retrieves a game from GameTown by its unique identifier. The ID should be a valid GUID format.");
+        group.MapGet("/download/{id}", DownloadGame).Accepts<string>("text/plain")
+            .Produces<FileStreamResult>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status404NotFound)
+            .WithName("DownloadGame")
+            .WithDescription("Downloads a game from GameTown by its unique identifier. The ID should be a valid GUID format.");
         group.MapDelete("/{id}", RemoveGameById).Accepts<string>("text/plain")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .WithName("RemoveGameById")
             .WithDescription("Removes a game from GameTown by its unique identifier. The ID should be a valid GUID format.");
-        group.MapPost("/add",AddGame).Accepts<RequestGameTownGameDTO>("application/json")
-            .Produces(StatusCodes.Status204NoContent)
-            .Produces(StatusCodes.Status400BadRequest)
-            .Produces(StatusCodes.Status404NotFound)
-            .Produces(StatusCodes.Status500InternalServerError)
-            .WithName("AddGame")
-            .WithDescription("Adds a new game to GameTown. The game data should be provided in the request body as JSON.");
         group.MapPatch("/update", UpdateGame).Accepts<GameTownGamePatchRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
@@ -40,7 +46,7 @@ public static class GamesEndpoints
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("UpdateGame")
             .WithDescription("Updates an existing game in GameTown. The game data should be provided in the request body as JSON, including the unique identifier (ID) of the game to be updated.");
-        group.MapGet("/paged/{page}/{pageSize}", GetGamesPaged).Accepts<int>("text/plain")
+        group.MapGet("/getPaged/{page}/{pageSize}", GetGamesPaged).Accepts<int>("text/plain")
             .Accepts<int>("text/plain")
             .Produces<IEnumerable<ResponseGameTownGameDTO>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
@@ -73,23 +79,6 @@ public static class GamesEndpoints
         {
             await service.RemoveGameById(gameId);
 
-        }catch (KeyNotFoundException ex)
-        {
-            return Results.NotFound(ex.Message);
-        }
-        catch (Exception ex)
-        {
-            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
-        }
-        return Results.NoContent();
-    }
-    private static async Task<IResult> AddGame(RequestGameTownGameDTO game, GTGamesService service)
-    {
-        if (game == null)
-            return Results.BadRequest("Game data cannot be null.");
-        try
-        {
-            await service.AddGame(game);
         }
         catch (KeyNotFoundException ex)
         {
@@ -150,5 +139,58 @@ public static class GamesEndpoints
         {
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
+    }
+    private static async Task<IResult> AddGameWithFile([FromForm] AddGameWithFileForm form, GTGamesService _gameService, FileService _fileService)
+    {
+        if (form.File == null)
+            return Results.BadRequest("No file uploaded.");
+
+        var allowedExtensions = new[] { ".zip", ".rar", ".7z" };
+        var fileExtension = Path.GetExtension(form.File.FileName).ToLowerInvariant();
+
+        if (!allowedExtensions.Contains(fileExtension))
+            return Results.BadRequest("Invalid file format. Only .zip, .rar, and .7z files are allowed.");
+
+
+
+        var filePath = _fileService.GetGameFilePath(form.File.FileName);
+        using (var stream = new FileStream(filePath, FileMode.Create))
+        {
+            await form.File.CopyToAsync(stream);
+        }
+
+        var game = new RequestGameTownGameDTO
+        {
+            Title = form.Title,
+            HowTo = form.HowTo,
+            RAWGGameId = form.RAWGGameId
+        };
+
+        try
+        {
+            var fileSizeMb = form.File.Length / (1024.0 * 1024.0);
+            await _gameService.AddGame(game, filePath, fileSizeMb);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return Results.NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+        }
+        return Results.NoContent();
+    }
+    private static async Task<IResult> DownloadGame(string id, GTGamesService service, FileService _fileService)
+    {
+        if (!Guid.TryParse(id, out var gameId))
+            return Results.BadRequest("Invalid game ID format.");
+        var gameUrl = await service.GetGameUrlById(gameId);
+        if (gameUrl == null)
+            return Results.NotFound($"Game with ID {id} not found.");
+        if (!File.Exists(gameUrl))
+            return Results.NotFound("Game file not found.");
+        var stream = new FileStream(gameUrl, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return Results.File(stream, "application/octet-stream", gameUrl);
     }
 }

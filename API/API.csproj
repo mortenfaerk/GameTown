@@ -19,4 +19,8 @@
     <ProjectReference Include="..\EFModel\EFModel.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="wwwroot\media\" />
+  </ItemGroup>
+
 </Project>

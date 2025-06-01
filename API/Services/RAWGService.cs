@@ -2,6 +2,7 @@
 using RestSharp;
 using Newtonsoft.Json;
 using API.Models.Games;
+using API.Models.Games.RAWGData;
 namespace API.Services;
 
 public class RAWGService(string apikey, DatabaseContext _context)
@@ -27,30 +28,33 @@ public class RAWGService(string apikey, DatabaseContext _context)
             .AddParameter("key", APIKey)
             .AddParameter("page", page)
             .AddParameter("page_size", pageSize);
-        
+
+        List<Rawgscreenshot> screenshots = new();
         RestResponse response = await client.ExecuteAsync(request);
-        List<Rawgscreenshot> screenshots = new List<Rawgscreenshot>();
         if (response.Content == null)
             return screenshots;
-        else
-        {
-            var result = JsonConvert.DeserializeObject<RawgScreenshotsResponse>(response.Content);
-            if(result == null || result.Results == null)
-                return screenshots;
-            int foundCount = result.Count;
-            screenshots = result.Results?.ToList() ?? new List<Rawgscreenshot>();
-            while(result.Next != null && screenshots.Count < foundCount)
-            {
-                request = new RestRequest(result.Next, Method.Get).AddParameter("key", APIKey);
-                response = await client.ExecuteAsync(request);
-                if (response.Content == null)
-                    break;
-                result = JsonConvert.DeserializeObject<RawgScreenshotsResponse>(response.Content);
-                if(result != null && result.Results != null)
-                    screenshots.AddRange(result.Results);
-            }
+
+        var result = JsonConvert.DeserializeObject<RawgScreenshotsResponse>(response.Content);
+        if (result?.Results == null)
             return screenshots;
+
+        int foundCount = result.Count;
+        screenshots = result.Results.ToList();
+
+        while (result.Next != null && screenshots.Count < foundCount)
+        {
+            request = new RestRequest(result.Next, Method.Get).AddParameter("key", APIKey);
+            response = await client.ExecuteAsync(request);
+            if (response.Content == null) break;
+
+            result = JsonConvert.DeserializeObject<RawgScreenshotsResponse>(response.Content);
+            if (result?.Results != null)
+                screenshots.AddRange(result.Results);
         }
+
+        await DownloadAndReplaceImageUrlsAsync(screenshots);
+
+        return screenshots;
     }
     public async Task<List<ResponseRAWGGameDTO>> SearchGames(string query, int page = 1, int pageSize = 20)
     {
@@ -67,9 +71,9 @@ public class RAWGService(string apikey, DatabaseContext _context)
         
         var result = JsonConvert.DeserializeObject<RAWGSearchResponse>(response.Content);
         List<ResponseRAWGGameDTO> games = new();
-        if (result?.results != null)
+        if (result?.Results != null)
         {
-            foreach (var game in result.results)
+            foreach (var game in result.Results)
             {
                 games.Add(new ResponseRAWGGameDTO(game));
             }
@@ -102,5 +106,31 @@ public class RAWGService(string apikey, DatabaseContext _context)
         }
         await context.SaveChangesAsync();
     }
+    private async Task DownloadAndReplaceImageUrlsAsync(List<Rawgscreenshot> screenshots)
+    {
+        var httpClient = new HttpClient();
+        var mediaRoot = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "media");
+        Directory.CreateDirectory(mediaRoot);
 
+        foreach (var screenshot in screenshots)
+        {
+            try
+            {
+                var uri = new Uri(screenshot.Image);
+                var fileName = $"{Guid.NewGuid()}{Path.GetExtension(uri.AbsolutePath)}";
+                var localPath = Path.Combine(mediaRoot, fileName);
+
+                var imageBytes = await httpClient.GetByteArrayAsync(screenshot.Image);
+                await File.WriteAllBytesAsync(localPath, imageBytes);
+
+                // Replace Image URL with your API's relative path
+                screenshot.Image = $"/media/{fileName}";
+            }
+            catch (Exception ex)
+            {
+                // Optionally log or handle failure, e.g. skip or keep original URL
+                Console.WriteLine($"Failed to download image {screenshot.Image}: {ex.Message}");
+            }
+        }
+    }
 }

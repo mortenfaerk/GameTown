@@ -1,7 +1,7 @@
 ﻿using EFModel.Models;
 using System.Text.Json.Serialization;
 
-namespace API.Models.Games
+namespace API.Models.Games.RAWGData
 {
     public class RawgScreenshotsResponse
     {

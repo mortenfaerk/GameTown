@@ -1,5 +1,6 @@
 ﻿using API.Services;
 using EFModel.Models;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 
 namespace API.Startup;
@@ -22,6 +23,16 @@ public static class DependenciesConfig
             var dbContext = provider.GetRequiredService<DatabaseContext>();
             var rawgKey = builder.Configuration.GetValue<string>("RAWGApiKey") ?? throw new Exception("The app requires an API key for RAWG to be set!");
             return new RAWGService(rawgKey, dbContext);
+        });
+
+        var GameFilesPath = builder.Configuration.GetValue<string>("GameFilesPath");
+        if (string.IsNullOrWhiteSpace(GameFilesPath) || (!Path.Exists(GameFilesPath)))
+        {
+            throw new Exception("The app requires a GameFilesPath to be set and it must exist!");
+        }
+        builder.Services.AddScoped<FileService>(provider =>
+        {
+            return new FileService(GameFilesPath);
         });
         builder.Services.AddScoped<GTGamesService>();
     }

@@ -17,5 +17,7 @@ public partial class GameTownGame
 
     public string Url { get; set; }
 
+    public double Size { get; set; }
+
     public virtual Rawggame Rawggame { get; set; }
 }

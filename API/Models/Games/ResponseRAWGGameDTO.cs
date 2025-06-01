@@ -38,7 +38,7 @@ public class ResponseRAWGGameDTO(int? Id_, string Slug_, string Name_, string? N
     public int? ReviewsCount { get; set; } = ReviewsCount_;
     public string? SaturatedColor { get; set; } = SaturatedColor_;
     public string? DominantColor { get; set; } = DominantColor_;
-    public Rawgscreenshot[]? Screenshots { get; set; } = rawgscreenshots_;
+    public ResponseGameTownRAWGGameScreenshotDTO[]? Screenshots { get; set; } = rawgscreenshots_?.Select(s => new ResponseGameTownRAWGGameScreenshotDTO(s)).ToArray() ?? Array.Empty<ResponseGameTownRAWGGameScreenshotDTO>();
     public ResponseRAWGGameDTO(Rawggame entity)
             : this(
                 entity.Id,

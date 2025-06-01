@@ -1,5 +1,6 @@
 ﻿using API.Models.Games;
 using EFModel.Models;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 namespace API.Services
 {
@@ -27,22 +28,61 @@ namespace API.Services
             return new ResponseGameTownGameDTO(game);
         
         }
+        public async Task<string?> GetGameUrlById(Guid id)
+        {
+            return  await _context.GameTownGames
+                .Where(g => g.Id == id)
+                .Select(g => g.Url)
+                .FirstOrDefaultAsync();
+        }
         public async Task RemoveGameById(Guid id)
         {
-            var game = await _context.GameTownGames.FindAsync(id);
-            if (game == null)
-                throw new KeyNotFoundException($"Game with ID {id} not found.");
+            var game = await _context.GameTownGames.Include(g=>g.Rawggame).ThenInclude(rg=>rg.Screenshots).FirstOrDefaultAsync(g=>g.Id == id) ?? throw new KeyNotFoundException($"Game with ID {id} not found.");
+            if (game.Rawggame.Screenshots != null)
+            {
+                try
+                {
+                    foreach (var screenshot in game.Rawggame.Screenshots)
+                    {
+                        var fileName = Path.GetFileName(screenshot.Image);
+                        var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "media",fileName);
+                        if (File.Exists(filePath))
+                        {
+                            File.Delete(filePath);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    throw new Exception($"Error deleting screenshots for game {game.Title}: {ex.Message}", ex);
+                }
+            }
+            //Delte gamefile at Url
+            try
+            {
+                var fileName = Path.GetFileName(game.Url);
+                var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot","games",fileName );
+                if (File.Exists(filePath))
+                    {
+                    File.Delete(filePath);
+                }
+            }catch (Exception ex)
+            {
+                throw new Exception($"Error deleting game file for game {game.Title}: {ex.Message}", ex);
+            }
             _context.GameTownGames.Remove(game);
             await _context.SaveChangesAsync();
+            
         }
-        public async Task AddGame(RequestGameTownGameDTO game)
+        public async Task AddGame(RequestGameTownGameDTO game, string fileUrl, double fileSize)
         {
             var newGame = new GameTownGame
             {
-                Id = game.Id,
+                Id = Guid.NewGuid(),
                 Title = game.Title,
                 HowTo = game.HowTo,
-                Url = game.URL,
+                Url = fileUrl,
+                Size = fileSize
             };
             if (game.RAWGGameId != null) { 
                 var rawgGame = await _rawgService.GetGameById((int)game.RAWGGameId) ?? throw new KeyNotFoundException($"RAWG Game with ID {game.RAWGGameId} not found.");
@@ -60,19 +100,14 @@ namespace API.Services
         public async Task UpdateGame(GameTownGamePatchRequest game)
         {
             Guid gameGuid = Guid.Parse(game.Id);
-            var existingGame = await _context.GameTownGames.FindAsync(gameGuid);
-            if (existingGame == null)
-                throw new KeyNotFoundException($"Game with ID {game.Id} not found.");
+            var existingGame = await _context.GameTownGames.FindAsync(gameGuid) ?? throw new KeyNotFoundException($"Game with ID {game.Id} not found.");
             if (game.Title != null)
                 existingGame.Title = game.Title;
             if (game.HowTo != null)
                 existingGame.HowTo = game.HowTo;
             if (game.RawgGameId != null)
             {
-                var rawgGame = await _rawgService.GetGameById((int)game.RawgGameId);
-                if (rawgGame == null)
-                    throw new KeyNotFoundException($"RAWG Game with ID {game.RawgGameId} not found.");
-    
+                var rawgGame = await _rawgService.GetGameById((int)game.RawgGameId) ?? throw new KeyNotFoundException($"RAWG Game with ID {game.RawgGameId} not found.");
                 var screenshots = await _rawgService.GetGameScreenshots((int)game.RawgGameId);
                 rawgGame.Screenshots = screenshots;
 
@@ -97,7 +132,11 @@ namespace API.Services
                 .Skip((page - 1) * page_size)
                 .Take(page_size)
                 .ToListAsync();
-            return games.Select(g => new ResponseGameTownGameDTO(g)).ToList();
+            var results = new List<ResponseGameTownGameDTO>();
+            foreach (var game in games) {
+                results.Add(new ResponseGameTownGameDTO(game));
+                    };
+            return results;
         }
         public async Task<List<ResponseGameTownGameDTO>> SearchGames(string query, int page, int pageSize)
         {

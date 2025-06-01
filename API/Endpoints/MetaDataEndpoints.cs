@@ -7,7 +7,7 @@ namespace API.Endpoints
         public static void AddMetaDataEndpoints(this WebApplication app)
         {
                var group = app.MapGroup("meta")
-                .WithTags("Meta Data")
+                .WithTags("Metadata")
                      .WithOpenApi()
                      .WithDescription("Endpoints for managing metadata related to the application.");
                group.MapGet("/searchMetadata", SearchGame)
