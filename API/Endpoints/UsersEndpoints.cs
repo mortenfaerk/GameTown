@@ -126,7 +126,11 @@ public static class UserEndpoints
         {
             return Results.BadRequest("User identity is null.");
         }
-        var apiPlainsKey = await _userService.CreateUser(userDTO, user.Identity.Name);
+        var userCreationResponse = await _userService.CreateUser(userDTO, user.Identity.Name);
+        if(!userCreationResponse)
+        {
+            return Results.Problem("Failed to create user.", statusCode: 500);
+        }
         return Results.NoContent();
     }
     private static async Task<IResult> GetUser(string userId, UserService _userService)

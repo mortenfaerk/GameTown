@@ -1,26 +1,28 @@
-﻿using API.Models.Users;
+﻿using API.Helpers;
+using API.Models.Auth;
+using API.Models.Users;
 using EFModel.Models;
+using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Security.Cryptography;
-using API.Helpers;
+using System.Text;
 namespace API.Services;
 
-public class UserService
+public class UserService(DatabaseContext dbContext, IConfiguration jwtConfiguration)
 {
-    readonly DatabaseContext _dbContext;
-    public UserService(DatabaseContext dbContext)
-    {
-        _dbContext = dbContext;
-    }
+    readonly DatabaseContext _dbContext = dbContext;
+    readonly IConfiguration _JwtConfiguration = jwtConfiguration.GetSection("JwtSettings");
+    readonly int RefreshExpiresInDays = int.Parse(jwtConfiguration["RefreshExpiresInDays"] ?? "7");
 
     public async Task<bool> CreateUser(UserCreationRequest userDTO, string creatingUser)
     {
 
-        var saltBytes = GenerateSalt();
-        var saltbase64 = Convert.ToBase64String(saltBytes);
-        var passwordHash = HashApiKey(userDTO.Password, saltBytes);
+        var (pwHash, salt) = ApiKeyHelper.HashPassword(userDTO.Password);
 
-        var user = userDTO.ToApiuser(passwordHash, saltbase64);
+        var user = userDTO.ToApiuser(pwHash, salt);
         var now = DateTime.UtcNow;
         user.CreatedAt = now;
         user.CreatedBy = creatingUser;
@@ -205,7 +207,7 @@ public class UserService
                 .FirstOrDefaultAsync(r => r.Id == roleId);
             if (role == null)
                 return RoleDeleteResult.NotFound();
-            if (role.Apiusers.Any())
+            if (role.Apiusers.Count != 0)
                 return RoleDeleteResult.InUse();
             _dbContext.GameTownRoles.Remove(role);
             await _dbContext.SaveChangesAsync();
@@ -218,17 +220,83 @@ public class UserService
         }
 
     }
-    private static byte[] GenerateSalt(int size = 16)
-    {
-        var salt = new byte[size];
-        using var rng = RandomNumberGenerator.Create();
-        rng.GetBytes(salt);
-        return salt;
-    }
-    private static string HashApiKey(string apiKey, byte[] salt, int iterations = 100_000)
-    {
-        using var pbkdf2 = new Rfc2898DeriveBytes(apiKey, salt, iterations, HashAlgorithmName.SHA256);
-        return Convert.ToBase64String(pbkdf2.GetBytes(32));
-    }
 
+    #region Auth
+    public async Task<GameTownUser?> AuthenticateUser(Models.Auth.LoginRequest req)
+    {
+        var matchedUser = await _dbContext.GameTownUsers
+                      .Include(u => u.Apiroles)
+                      .Where(u => u.IsActive && u.Username == req.Username)
+                      .ToListAsync()
+                      .ContinueWith(t =>
+                      t.Result.FirstOrDefault(u => ApiKeyHelper.ValidatePassword(req.Password, u.PasswordHash, u.Salt))
+                      );
+
+        return matchedUser;
+    }
+    public async Task<TokenResponse?> GetToken(GameTownUser user)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_JwtConfiguration["Key"]!));
+        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new List<Claim>()
+                {
+                    new(ClaimTypes.Name, user.Username),
+                    new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+
+                };
+        foreach (var role in user.Apiroles)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role.Role));
+        }
+
+        var expires = DateTime.UtcNow.AddMinutes(int.Parse(_JwtConfiguration["ExpiresInMinutes"]!));
+        var token = new JwtSecurityToken(
+            issuer: _JwtConfiguration["Issuer"],
+            audience: _JwtConfiguration["Audience"],
+            claims: claims,
+            expires: expires,
+            signingCredentials: creds);
+
+        var tokenStr = new JwtSecurityTokenHandler().WriteToken(token);
+        return new TokenResponse { Token = tokenStr, ExpiresUTC = expires};
+    }
+    public async Task<RefreshToken> GenerateAndStoreRefreshToken(GameTownUser user)
+    {
+        var refreshToken = new RefreshToken
+        {
+            Id = Guid.NewGuid(),
+            Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(64)),
+            ExpiresAt = DateTime.UtcNow.AddDays(RefreshExpiresInDays), // Set your desired expiry
+            IsRevoked = false,
+            CreatedAt = DateTime.UtcNow,
+            UserId = user.Id
+        };
+
+        _dbContext.RefreshTokens.Add(refreshToken);
+        await _dbContext.SaveChangesAsync();
+
+        return refreshToken;
+    }
+    public async Task<RefreshTokenValidationResult> ValidateRefreshToken(string token)
+    {
+        var refreshToken = await _dbContext.RefreshTokens
+            .Include(rt => rt.User)
+            .FirstOrDefaultAsync(rt => rt.Token == token && !rt.IsRevoked && rt.ExpiresAt > DateTime.UtcNow);
+
+        if (refreshToken == null)
+            return RefreshTokenValidationResult.InvalidRefreshToken();
+
+        refreshToken.ExpiresAt = DateTime.UtcNow.AddDays(RefreshExpiresInDays);
+        refreshToken.IsRevoked = false;
+        refreshToken.CreatedAt = DateTime.UtcNow;
+
+        var jwtToken = await GetToken(refreshToken.User);
+        if (jwtToken == null)
+            return RefreshTokenValidationResult.ServerError();
+
+        await _dbContext.SaveChangesAsync();
+        return RefreshTokenValidationResult.Success(jwtToken,refreshToken);
+    }
+    #endregion
 }

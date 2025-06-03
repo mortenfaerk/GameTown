@@ -57,6 +57,10 @@
       {
          "Name": "[dbo].[RAWGScreenshots]",
          "ObjectType": 0
+      },
+      {
+         "Name": "[dbo].[RefreshTokens]",
+         "ObjectType": 0
       }
    ],
    "UiHint": null,

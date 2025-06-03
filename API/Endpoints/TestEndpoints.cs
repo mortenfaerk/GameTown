@@ -1,4 +1,6 @@
-﻿using System.Security.Claims;
+﻿using API.Models.Users;
+using API.Services;
+using System.Security.Claims;
 
 namespace API.Endpoints;
 
@@ -17,6 +19,12 @@ public static class TestEndpoints
             .WithName("GetSecureData")
             .Produces(StatusCodes.Status200OK)
             .WithOpenApi();
+        group.MapPost("/add", AddUser).WithDescription("Adds a new user")
+            .Accepts<UserCreationRequest>("application/json")
+            .Produces(StatusCodes.Status204NoContent)
+            .Produces(StatusCodes.Status400BadRequest)
+            .WithName("DEBUG: Add user")
+            .WithOpenApi();
     }
     private static async Task<IResult> GiveUserInfoBack(ClaimsPrincipal user)
     {
@@ -29,6 +37,16 @@ public static class TestEndpoints
         });
 
         return Results.Ok(claims);
+    }
+    private static async Task<IResult> AddUser(UserCreationRequest userDTO, UserService _userService)
+    {
+
+        if (string.IsNullOrEmpty(userDTO.Username) || string.IsNullOrEmpty(userDTO.DisplayName))
+        {
+            return Results.BadRequest("User data is incomplete.");
+        }
+        var apiPlainsKey = await _userService.CreateUser(userDTO,"System");
+        return Results.NoContent();
     }
 
 
