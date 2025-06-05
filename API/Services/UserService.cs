@@ -286,17 +286,15 @@ public class UserService(DatabaseContext dbContext, IConfiguration jwtConfigurat
 
         if (refreshToken == null)
             return RefreshTokenValidationResult.InvalidRefreshToken();
-
-        refreshToken.ExpiresAt = DateTime.UtcNow.AddDays(RefreshExpiresInDays);
-        refreshToken.IsRevoked = false;
-        refreshToken.CreatedAt = DateTime.UtcNow;
+        _dbContext.RefreshTokens.Remove(refreshToken);
+        RefreshToken newRefreshToken = await GenerateAndStoreRefreshToken(refreshToken.User);
 
         var jwtToken = await GetToken(refreshToken.User);
         if (jwtToken == null)
             return RefreshTokenValidationResult.ServerError();
 
         await _dbContext.SaveChangesAsync();
-        return RefreshTokenValidationResult.Success(jwtToken,refreshToken);
+        return RefreshTokenValidationResult.Success(jwtToken, newRefreshToken);
     }
     #endregion
 }

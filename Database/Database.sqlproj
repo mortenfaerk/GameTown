@@ -60,7 +60,7 @@
     <Folder Include="PostDeploymentScripts" />
   </ItemGroup>
   <ItemGroup>
-    <Build Include="PostDeploymentScripts\DevPostDeployment.sql.sql" />
+    <None Include="PostDeploymentScripts\DevPostDeployment.sql.sql" />
     <Build Include="Tables\RAWGGenres.sql" />
     <Build Include="Tables\RAWGGames_Genres.sql" />
     <Build Include="Tables\RAWGDevelopers.sql" />

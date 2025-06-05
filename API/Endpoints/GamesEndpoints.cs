@@ -14,6 +14,7 @@ public static class GamesEndpoints
             .WithDescription("Endpoints for managing games in GameTown.");
         group.MapPost("/Add", AddGameWithFile)
             .Accepts<AddGameWithFileForm>("multipart/form-data")
+            .RequireAuthorization("Contributor")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)

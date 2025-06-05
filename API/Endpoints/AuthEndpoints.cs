@@ -61,16 +61,18 @@ public static class AuthEndpoints
         {
             return Results.Problem("Kunne ikke generere token", statusCode: StatusCodes.Status500InternalServerError);
         }
-
-        var refreshToken = await userService.GenerateAndStoreRefreshToken(matchedUser);
-        var cookieOptions = new CookieOptions
+        if (req.RememberMe)
         {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Expires = refreshToken.ExpiresAt
-        };
-        http.Response.Cookies.Append("refresh_token", refreshToken.Token, cookieOptions);
+            var refreshToken = await userService.GenerateAndStoreRefreshToken(matchedUser);
+            var cookieOptions = new CookieOptions
+            {
+                HttpOnly = true,
+                Secure = true,
+                SameSite = SameSiteMode.Strict,
+                Expires = refreshToken.ExpiresAt
+            };
+            http.Response.Cookies.Append("refresh_token", refreshToken.Token, cookieOptions);
+        }
         return Results.Ok(token);
              
     }
