@@ -15,7 +15,7 @@ app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 
-
+app.ApplyCorsConfig();
 app.AddRootEndpoints();
 app.AddGamesTownGamesEndpoints();
 app.AddMetaDataEndpoints();

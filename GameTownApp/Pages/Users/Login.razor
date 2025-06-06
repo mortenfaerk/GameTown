@@ -1,0 +1,38 @@
+﻿@using GameTownApp.Services;
+@page "/login"
+@inject AuthService AuthService
+@using GameTownApp.Models;
+@using GameTownApp.Models.Auth
+<div class="login-container">
+    <h3>Login</h3>
+    <div class="login-form">
+        <EditForm Model="@loginModel" OnValidSubmit="HandleLogin">
+            <DataAnnotationsValidator />
+            <ValidationSummary />
+            <div>
+                <label for="username">Username</label>
+                <InputText id="username" @bind-Value="loginModel.Username" class="form-control" />
+            </div>
+            <div>
+                <label for="password">Password</label>
+                <InputText id="password" type="password" @bind-Value="loginModel.Password" class="form-control" />
+            </div>
+            <div>
+                <InputCheckbox id="rememberMe" @bind-Value="loginModel.RememberMe" />
+                <label for="rememberMe">Remember me</label>
+            </div>
+            <button type="submit" class="btn btn-primary">Login</button>
+        </EditForm>
+    </div>
+</div>
+@code {
+    LoginModel loginModel = new LoginModel();
+
+    private async Task HandleLogin()
+    {
+        Console.WriteLine("Login clicked");
+        var loginResult = await AuthService.LoginAsync(loginModel);
+        Console.WriteLine($"Login result: {loginResult}");
+    }
+
+}

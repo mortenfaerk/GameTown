@@ -38,6 +38,12 @@ public static class AuthEndpoints
              .Produces<TokenResponse>(StatusCodes.Status200OK)
              .Produces(StatusCodes.Status401Unauthorized)
              .WithOpenApi();
+        group.MapPost("/logout", Logout)
+             .WithDescription("Logs out the user and clears the refresh_token cookie")
+             .WithTags("Authentication")
+             .WithName("Logout")
+             .Produces(StatusCodes.Status204NoContent)
+             .WithOpenApi();
     }
 
     private static async Task<IResult> Login(HttpContext http, LoginRequest req, UserService userService)
@@ -105,5 +111,15 @@ public static class AuthEndpoints
 
         return Results.Ok(refreshTokenValidationResult.TokenResponse);
     }
-
+    private static IResult Logout(HttpContext http)
+    {
+        http.Response.Cookies.Append("refresh_token", "", new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.Strict,
+            Expires = DateTimeOffset.UtcNow.AddDays(-1) // Expire immediately
+        });
+        return Results.NoContent();
+    }
 }

@@ -14,6 +14,7 @@ public static class DependenciesConfig
     {
         builder.AddServiceDefaults();
         builder.Services.AddOpenApiServices();
+        builder.Services.AddCorsServices();
 
         var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
         var RAWGKey = builder.Configuration.GetValue<string>("RAWGApiKey") ?? throw new Exception("The app requires an API key for RAWG to be set!");
