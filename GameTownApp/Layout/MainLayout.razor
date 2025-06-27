@@ -1,4 +1,6 @@
-﻿@inherits LayoutComponentBase
+﻿@using GameTownApp.Services;
+@inherits LayoutComponentBase
+@inject AuthService authService
 <div class="page">
     <div class="sidebar">
         <NavMenu />
@@ -6,7 +8,14 @@
 
     <main>
         <div class="top-row px-4">
-            <a href="login">Login</a>
+            @if(authService.IsAuthenticated)
+            {
+                <NavLink href="user"><span class="oi oi-person" aria-hidden="true" /> @authService.Username</NavLink>
+            }
+            else
+            {
+                <NavLink href="login">Login</NavLink>
+            } 
         </div>
 
         <article class="content px-4">

@@ -9,6 +9,4 @@ public class LoginModel
 
     [Required]
     public string Password { get; set; } = string.Empty;
-
-    public bool RememberMe { get; set; }
 }

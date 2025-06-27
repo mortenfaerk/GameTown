@@ -1,6 +1,7 @@
 ﻿@using GameTownApp.Services;
 @page "/login"
 @inject AuthService AuthService
+@inject NavigationManager NavigationManager
 @using GameTownApp.Models;
 @using GameTownApp.Models.Auth
 <div class="login-container">
@@ -17,23 +18,34 @@
                 <label for="password">Password</label>
                 <InputText id="password" type="password" @bind-Value="loginModel.Password" class="form-control" />
             </div>
-            <div>
-                <InputCheckbox id="rememberMe" @bind-Value="loginModel.RememberMe" />
-                <label for="rememberMe">Remember me</label>
-            </div>
             <button type="submit" class="btn btn-primary">Login</button>
         </EditForm>
+        <div class="login_result">
+            @LoginMsg
+        </div>
     </div>
 </div>
-<span>Logget in: </span>@AuthService.IsAuthenticated.ToString()
 @code {
     LoginModel loginModel = new LoginModel();
-
+    private string LoginMsg = string.Empty;
+    protected override async Task OnInitializedAsync()
+    {
+        //try to login without user interaction /credentials via the perhaos set cookies
+        var refreshed = await AuthService.RefreshTokenAsync();
+        if (refreshed)
+        {
+            NavigationManager.NavigateTo("/");
+        }
+    }
     private async Task HandleLogin()
     {
         Console.WriteLine("Login clicked");
         var loginResult = await AuthService.LoginAsync(loginModel);
-        Console.WriteLine($"Login result: {loginResult}");
+        if(loginResult)
+        {
+            NavigationManager.NavigateTo("/");
+        }
+        LoginMsg = loginResult ? "Login successful!" : "Login failed. Please check your credentials.";
     }
 
 }
