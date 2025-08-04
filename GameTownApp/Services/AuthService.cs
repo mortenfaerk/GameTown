@@ -130,7 +130,24 @@ public class AuthService : AuthenticationStateProvider
         {
             foreach (var kvp in keyValuePairs)
             {
-                claims.Add(new Claim(kvp.Key, kvp.Value.ToString() ?? ""));
+                if (kvp.Key == "role" || kvp.Key == "roles")
+                {
+                    if (kvp.Value is System.Text.Json.JsonElement element && element.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        foreach (var role in element.EnumerateArray())
+                        {
+                            claims.Add(new Claim(ClaimTypes.Role, role.GetString() ?? ""));
+                        }
+                    }
+                    else
+                    {
+                        claims.Add(new Claim(ClaimTypes.Role, kvp.Value.ToString() ?? ""));
+                    }
+                }
+                else
+                {
+                    claims.Add(new Claim(kvp.Key, kvp.Value.ToString() ?? ""));
+                }
             }
         }
 

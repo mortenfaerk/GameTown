@@ -1,0 +1,57 @@
+﻿@attribute [Authorize(Roles ="Admin,Contributor")]
+@using GameTownApp.Services
+@using GameTownApp.Models.Games
+@inject GamesService gamesService
+
+
+<h3 class="mb-4">Search Games</h3>
+
+<form @onsubmit="SearchGamesMetadataAsync">
+    <div class="input-group mb-3">
+        <InputText @bind-Value="SearchQuery" class="form-control" placeholder="Enter game name..." />
+        <button class="btn btn-primary" type="submit" disabled="@IsLoading">
+            @if (IsLoading)
+            {
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                <span class="visually-hidden">Searching...</span>
+            }
+            else
+            {
+                <span>Search</span>
+            }
+        </button>
+    </div>
+</form>
+
+@if (GamesResult != null)
+{
+    @if (GamesResult.Count == 0)
+    {
+        <div class="alert alert-warning mt-3">No games found.</div>
+    }
+    else
+    {
+        <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4 mt-3">
+            @foreach (var game in GamesResult)
+            {
+                <div class="col">
+                    <div class="card h-100 shadow-sm">
+                        @if (!string.IsNullOrEmpty(game.BackgroundImage))
+                        {
+                            <img src="@game.BackgroundImage" class="card-img-top" alt="@game.Name" style="object-fit:cover; height:180px;">
+                        }
+                        <div class="card-body">
+                            <h5 class="card-title">@game.Name</h5>
+                            <p class="card-text text-truncate">@game.Description</p>
+                        </div>
+                        <div class="card-footer">
+                            <small class="text-muted">Released: @game.Released?.ToString("yyyy-MM-dd")</small>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+}
+
+

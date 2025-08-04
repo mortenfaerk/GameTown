@@ -1,5 +1,18 @@
-﻿@page "/user"
-<h3>UserManagement</h3>
+﻿@attribute [Authorize]
+@inject AuthService authService
+@using GameTownApp.Services;
+@using GameTownApp.Pages.Games.Contributors;
+
+@page "/user"
+<!-- If the user has the contributor or admin role link to AddGame-->
+<h1>Welcome, @authService.Username</h1>
+
+<AuthorizeView Roles="Admin,Contributor">
+    <Authorized>
+        <SearchGames/>
+    </Authorized>
+</AuthorizeView>
+
 
 @code {
 
