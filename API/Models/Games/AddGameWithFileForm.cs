@@ -9,7 +9,7 @@ public class AddGameWithFileForm
     public string HowTo { get; set; } = default!;
 
     [FromForm(Name = "rawgGameId")]
-    public int? RAWGGameId { get; set; }
+    public string? RAWGGameId { get; set; }
 
     [FromForm(Name = "file")]
     public IFormFile File { get; set; } = default!;

@@ -1,3 +1,4 @@
+using BlazorBootstrap;
 using GameTownApp.Models.Games;
 using GameTownApp.Services;
 using Microsoft.AspNetCore.Components;
@@ -5,6 +6,7 @@ namespace GameTownApp.Pages.Games.Contributors;
 public partial class SearchGames
 {
     private List<RAWGGameViewModel>? GamesResult;
+    private RAWGGameViewModel? SelectedGame;
     [Inject]
     private GamesService GamesService { get; set; } = default!;
     private string? SearchQuery;
@@ -12,26 +14,23 @@ public partial class SearchGames
     private int PageSize = 20;
 
     private bool IsLoading = false;
-    private async Task SearchGamesMetadataAsync()
+    
+    private async Task<AutoCompleteDataProviderResult<RAWGGameViewModel>> GamesDataProvider(AutoCompleteDataProviderRequest<RAWGGameViewModel> request)
     {
-        if (string.IsNullOrWhiteSpace(SearchQuery))
+        var games = await GamesService.SearchGamesMetadata(request.Filter.Value, 1, 20);
+        return new AutoCompleteDataProviderResult<RAWGGameViewModel>
         {
-            GamesResult = null;
+            Data = games,
+            TotalCount = games.Count
+        };
+    }
+    private async Task OnGameSelected(RAWGGameViewModel? selectedGame)
+    {
+        if(selectedGame != null)
+        {
+            SearchQuery = selectedGame?.Name;
+            SelectedGame = await GamesService.GetGameById(selectedGame.Id.ToString());
             return;
-        }
-        IsLoading = true;
-        try
-        {
-            GamesResult = await GamesService.SearchGamesMetadata(SearchQuery, Page, PageSize);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Error searching games: {ex.Message}");
-            GamesResult = null;
-        }
-        finally
-        {
-            IsLoading = false;
         }
     }
 }

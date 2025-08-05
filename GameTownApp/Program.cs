@@ -18,7 +18,7 @@ builder.Services.AddScoped<AuthService>(provider => new AuthService(apiBaseUrl))
 builder.Services.AddScoped<AuthenticationStateProvider>(provider => provider.GetRequiredService<AuthService>());
 builder.Services.AddAuthorizationCore();
 builder.Services.AddScoped<TokenRefreshHandler>();
-
+builder.Services.AddBlazorBootstrap();
 builder.Services.AddScoped(sp =>
 {
     var authService = sp.GetRequiredService<AuthService>();

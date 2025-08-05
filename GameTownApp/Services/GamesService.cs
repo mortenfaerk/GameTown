@@ -26,5 +26,16 @@ public class GamesService
         return result ?? new List<RAWGGameViewModel>();
 
     }
-
+    public async Task<RAWGGameViewModel?> GetGameById(string gameId)
+    {
+        var url = $"/meta/getGame/{Uri.EscapeDataString(gameId)}";
+        var response = await _http.GetAsync(url);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"Failed to retrieve game with ID {gameId}. Status code: {response.StatusCode}");
+        }
+        var rawJson = await response.Content.ReadAsStringAsync();
+        var result = System.Text.Json.JsonSerializer.Deserialize<RAWGGameViewModel>(rawJson);
+        return result;
+    }
 }

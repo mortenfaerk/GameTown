@@ -19,7 +19,7 @@
         /// <summary>
         /// The ID of the referenced game (if applicable).
         /// </summary>
-        public int? RawgGameId { get; set; }
+        public string? RawgGameId { get; set; }
 
         /// <summary>
         /// A URL containing more details about the game.

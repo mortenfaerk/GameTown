@@ -85,10 +85,10 @@ namespace API.Services
                 Size = fileSize
             };
             if (game.RAWGGameId != null) { 
-                var rawgGame = await _rawgService.GetGameById((int)game.RAWGGameId) ?? throw new KeyNotFoundException($"RAWG Game with ID {game.RAWGGameId} not found.");
+                var rawgGame = await _rawgService.GetGameById(game.RAWGGameId) ?? throw new KeyNotFoundException($"RAWG Game with ID {game.RAWGGameId} not found.");
 
 
-                var screenshots = await _rawgService.GetGameScreenshots((int)game.RAWGGameId);
+                var screenshots = await _rawgService.GetGameScreenshots(game.RAWGGameId);
                 rawgGame.Screenshots = screenshots;
 
                 newGame.RawggameId = rawgGame.Id;
@@ -107,8 +107,8 @@ namespace API.Services
                 existingGame.HowTo = game.HowTo;
             if (game.RawgGameId != null)
             {
-                var rawgGame = await _rawgService.GetGameById((int)game.RawgGameId) ?? throw new KeyNotFoundException($"RAWG Game with ID {game.RawgGameId} not found.");
-                var screenshots = await _rawgService.GetGameScreenshots((int)game.RawgGameId);
+                var rawgGame = await _rawgService.GetGameById(game.RawgGameId) ?? throw new KeyNotFoundException($"RAWG Game with ID {game.RawgGameId} not found.");
+                var screenshots = await _rawgService.GetGameScreenshots(game.RawgGameId);
                 rawgGame.Screenshots = screenshots;
 
                 existingGame.RawggameId = rawgGame.Id;

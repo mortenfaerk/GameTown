@@ -1,4 +1,5 @@
-﻿using API.Services;
+﻿using API.Models.Games;
+using API.Services;
 
 namespace API.Endpoints
 {
@@ -12,13 +13,18 @@ namespace API.Endpoints
                      .WithDescription("Endpoints for managing metadata related to the application.");
                group.MapGet("/searchMetadata", SearchGame)
                 .Accepts<string>("text/plain")
-                .Produces(StatusCodes.Status200OK)
+                .Produces<List<ResponseRAWGGameDTO>>(StatusCodes.Status200OK)
                 .Produces(StatusCodes.Status400BadRequest)
                 .Produces(StatusCodes.Status500InternalServerError)
                 .WithName("SearchMetadata")
                 .WithDescription("Searches for games based on a query string. The query string should not be empty and pagination parameters must be greater than zero.");
-
-
+               group.MapGet("/getGame/{gameid}", GetGame)
+                .Accepts<string>("text/plain")
+                .Produces<ResponseRAWGGameDTO>(StatusCodes.Status200OK)
+                .Produces(StatusCodes.Status400BadRequest)
+                .Produces(StatusCodes.Status500InternalServerError)
+                .WithName("GetGame")
+                .WithDescription("Retrieves a game by its unique identifier. The ID should not be empty.");
         }
 
         private static async Task<IResult> SearchGame(string query, int page, int pageSize, RAWGService rawgService)
@@ -33,6 +39,19 @@ namespace API.Endpoints
                 return Results.Ok(games);
             }
             catch (Exception ex)
+            {
+                return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+            }
+        }
+        private static async Task<IResult> GetGame(string gameid, RAWGService rawgService)
+        {
+            if(string.IsNullOrEmpty(gameid))
+                return Results.BadRequest("Game ID cannot be empty.");
+            try
+            {
+                var game = await rawgService.GetGameById(gameid);
+                return Results.Ok(game);
+            }catch (Exception ex)
             {
                 return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
             }

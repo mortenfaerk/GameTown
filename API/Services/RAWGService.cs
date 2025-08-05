@@ -10,7 +10,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
     private string APIKey { get; set; } = apikey;
     private DatabaseContext context = _context;
 
-    public async Task<Rawggame?> GetGameById(int id)
+    public async Task<Rawggame?> GetGameById(string id)
     {
         var client = new RestClient();
         var request = new RestRequest($"https://api.rawg.io/api/games/{id}", Method.Get).AddParameter("key",APIKey);
@@ -21,7 +21,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
         Rawggame? result = JsonConvert.DeserializeObject<Rawggame?>(response.Content);
         return result;
     }
-    public async Task<List<Rawgscreenshot>> GetGameScreenshots(int id, int page = 1, int pageSize = 20)
+    public async Task<List<Rawgscreenshot>> GetGameScreenshots(string id, int page = 1, int pageSize = 20)
     {
         var client = new RestClient();
         var request = new RestRequest($"https://api.rawg.io/api/games/{id}/screenshots", Method.Get)
@@ -80,7 +80,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
         }
         return games;
     }
-    public async Task AddGameToDb(int id)
+    public async Task AddGameToDb(string id)
     {
         var game = await GetGameById(id) ?? throw new KeyNotFoundException($"Game with ID {id} not found in RAWG API.");
         var screenshots = await GetGameScreenshots(id);
