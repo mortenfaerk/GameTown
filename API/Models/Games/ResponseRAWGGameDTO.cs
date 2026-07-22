@@ -47,7 +47,9 @@ public class ResponseRAWGGameDTO(int? Id_, string Slug_, string Name_, string? N
                 entity.NameOriginal,
                 entity.Description,
                 entity.Metacritic,
-                entity.Released,
+                // Npgsql maps the `date` column to DateOnly; the DTO keeps DateTime? so the
+                // JSON contract (and the frontend view model) stay unchanged.
+                entity.Released?.ToDateTime(TimeOnly.MinValue),
                 entity.Tba,
                 entity.Updated,
                 entity.BackgroundImage,

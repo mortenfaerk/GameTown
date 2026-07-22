@@ -1,4 +1,4 @@
-﻿{
+{
    "CodeGenerationMode": 5,
    "ContextClassName": "DatabaseContext",
    "ContextNamespace": null,
@@ -15,51 +15,51 @@
    "T4TemplatePath": null,
    "Tables": [
       {
-         "Name": "[dbo].[GameTownGame]",
+         "Name": "public.GameTownGame",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[GameTownRoles]",
+         "Name": "public.GameTownRoles",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[GameTownUsers]",
+         "Name": "public.GameTownUsers",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[GameTownUsers_Roles]",
+         "Name": "public.GameTownUsers_Roles",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RAWGDevelopers]",
+         "Name": "public.RAWGDevelopers",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RAWGGames]",
+         "Name": "public.RAWGGames",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RAWGGames_Developers]",
+         "Name": "public.RAWGGames_Developers",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RAWGGames_Genres]",
+         "Name": "public.RAWGGames_Genres",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RAWGGames_Screenshots]",
+         "Name": "public.RAWGGames_Screenshots",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RAWGGenres]",
+         "Name": "public.RAWGGenres",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RAWGScreenshots]",
+         "Name": "public.RAWGScreenshots",
          "ObjectType": 0
       },
       {
-         "Name": "[dbo].[RefreshTokens]",
+         "Name": "public.RefreshTokens",
          "ObjectType": 0
       }
    ],
@@ -69,7 +69,7 @@
    "UseBoolPropertiesWithoutDefaultSql": false,
    "UseDatabaseNames": false,
    "UseDatabaseNamesForRoutines": true,
-   "UseDateOnlyTimeOnly": false,
+   "UseDateOnlyTimeOnly": true,
    "UseDbContextSplitting": false,
    "UseDecimalDataAnnotationForSprocResult": true,
    "UseFluentApiOnly": true,
@@ -83,7 +83,7 @@
    "UseNoNavigations": false,
    "UseNoObjectFilter": false,
    "UseNodaTime": false,
-   "UseNullableReferences": false,
+   "UseNullableReferences": true,
    "UsePrefixNavigationNaming": false,
    "UseSchemaFolders": false,
    "UseSchemaNamespaces": false,

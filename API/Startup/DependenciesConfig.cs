@@ -20,7 +20,7 @@ public static class DependenciesConfig
         var RAWGKey = builder.Configuration.GetValue<string>("RAWGApiKey") ?? throw new Exception("The app requires an API key for RAWG to be set!");
 
         builder.Services.AddDbContext<DatabaseContext>(options =>
-            options.UseSqlServer(connectionString)
+            options.UseNpgsql(connectionString)
             );
         builder.Services.AddScoped<RAWGService>(provider =>
         {

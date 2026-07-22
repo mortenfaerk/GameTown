@@ -1,0 +1,9 @@
+<Solution>
+  <Project Path="API/API.csproj">
+    <BuildDependency Project="GameTownApp/GameTownApp.csproj" />
+  </Project>
+  <Project Path="Aspire/Aspire.AppHost/Aspire.AppHost.csproj" />
+  <Project Path="Aspire/Aspire.ServiceDefaults/Aspire.ServiceDefaults.csproj" />
+  <Project Path="EFModel/EFModel.csproj" />
+  <Project Path="GameTownApp/GameTownApp.csproj" />
+</Solution>
