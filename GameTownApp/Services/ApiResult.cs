@@ -29,16 +29,29 @@ public class ApiResult
         {
             Success = false,
             StatusCode = status,
-            Error = await ExtractErrorAsync(response, status)
+            Error = ExtractError(await response.Content.ReadAsStringAsync(), status)
         };
     }
 
-    private static async Task<string> ExtractErrorAsync(HttpResponseMessage response, int status)
+    /// <summary>
+    /// For responses that never went through HttpClient — the XHR upload path reports a bare status
+    /// and body, and should surface errors identically to everything else.
+    /// </summary>
+    public static ApiResult FromStatus(int status, string? body)
+        => status is >= 200 and < 300
+            ? new ApiResult { Success = true, StatusCode = status }
+            : new ApiResult { Success = false, StatusCode = status, Error = ExtractError(body, status) };
+
+    public static ApiResult Failed(string error, int status = 0)
+        => new() { Success = false, StatusCode = status, Error = error };
+
+    private static string ExtractError(string? rawBody, int status)
     {
         if (status == 401) return "You are not signed in.";
         if (status == 403) return "You do not have permission to do that.";
+        if (status == 413) return "That file is too large for the server to accept.";
 
-        var body = (await response.Content.ReadAsStringAsync()).Trim();
+        var body = (rawBody ?? string.Empty).Trim();
         if (string.IsNullOrEmpty(body))
             return $"Request failed ({status}).";
 

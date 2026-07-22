@@ -1,0 +1,86 @@
+@*
+    Full-screen screenshot viewer. Closed when Index is null.
+
+    Keyboard is first-class here because that is how people actually page through screenshots:
+    Escape closes, arrows move. The overlay takes focus on open so those keys land without the
+    user having to click anything first.
+*@
+
+@if (Index is not null && Images.Count > 0)
+{
+    <div class="lb" role="dialog" aria-modal="true" aria-label="@($"Screenshot {Current + 1} of {Images.Count}")"
+         tabindex="-1" @ref="overlay" @onkeydown="OnKeyDown" @onclick="Close">
+
+        <button type="button" class="lb__close" aria-label="Close viewer" @onclick="Close">
+            <span class="bi bi-x-lg" aria-hidden="true"></span>
+        </button>
+
+        @if (Images.Count > 1)
+        {
+            <button type="button" class="lb__nav lb__nav--prev" aria-label="Previous screenshot"
+                    @onclick="Previous" @onclick:stopPropagation="true">
+                <span class="bi bi-chevron-left" aria-hidden="true"></span>
+            </button>
+        }
+
+        @* stopPropagation so clicking the picture itself doesn't count as clicking the backdrop *@
+        <img class="lb__img" src="@Images[Current]" alt="@($"{Caption} screenshot {Current + 1}")"
+             @onclick:stopPropagation="true" />
+
+        @if (Images.Count > 1)
+        {
+            <button type="button" class="lb__nav lb__nav--next" aria-label="Next screenshot"
+                    @onclick="Next" @onclick:stopPropagation="true">
+                <span class="bi bi-chevron-right" aria-hidden="true"></span>
+            </button>
+        }
+
+        <p class="lb__counter" @onclick:stopPropagation="true">
+            @(Current + 1) / @Images.Count
+            @if (!string.IsNullOrWhiteSpace(Caption))
+            {
+                <span class="lb__caption">@Caption</span>
+            }
+        </p>
+    </div>
+}
+
+@code {
+    [Parameter] public IReadOnlyList<string> Images { get; set; } = [];
+    [Parameter] public string? Caption { get; set; }
+
+    /// <summary>Index of the visible screenshot; null means the viewer is closed.</summary>
+    [Parameter] public int? Index { get; set; }
+    [Parameter] public EventCallback<int?> IndexChanged { get; set; }
+
+    private ElementReference overlay;
+    private bool needsFocus;
+
+    private int Current => Math.Clamp(Index ?? 0, 0, Math.Max(0, Images.Count - 1));
+
+    protected override void OnParametersSet() => needsFocus = Index is not null;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Focus the overlay once it exists, so Escape and the arrow keys work immediately.
+        if (needsFocus && Index is not null)
+        {
+            needsFocus = false;
+            try { await overlay.FocusAsync(); } catch (Exception) { /* element already gone */ }
+        }
+    }
+
+    private Task Close() => IndexChanged.InvokeAsync(null);
+
+    private Task Next() => IndexChanged.InvokeAsync((Current + 1) % Images.Count);
+
+    private Task Previous() => IndexChanged.InvokeAsync((Current - 1 + Images.Count) % Images.Count);
+
+    private Task OnKeyDown(KeyboardEventArgs e) => e.Key switch
+    {
+        "Escape" => Close(),
+        "ArrowRight" => Next(),
+        "ArrowLeft" => Previous(),
+        _ => Task.CompletedTask
+    };
+}

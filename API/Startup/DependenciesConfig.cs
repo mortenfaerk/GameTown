@@ -1,6 +1,7 @@
 ﻿using API.Services;
 using EFModel.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -15,6 +16,21 @@ public static class DependenciesConfig
         builder.AddServiceDefaults();
         builder.Services.AddOpenApiServices();
         builder.Services.AddCorsServices();
+
+        // Game archives are the whole point of this app and routinely exceed the framework defaults,
+        // which are Kestrel's ~28.6 MB request body and a 128 MB multipart limit. Both have to be
+        // lifted: Kestrel rejects first, then the form reader would. Until now anything larger than
+        // ~28.6 MB failed with a 413 while the upload form advertised 2 GB.
+        //
+        // No ceiling is set deliberately. Uploading requires the Contributor policy, so this is not
+        // an anonymous vector, but there is no backstop against a contributor filling the disk.
+        builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = null);
+        builder.Services.Configure<FormOptions>(options =>
+        {
+            options.MultipartBodyLengthLimit = long.MaxValue;
+            options.ValueLengthLimit = int.MaxValue;
+            options.MultipartHeadersLengthLimit = int.MaxValue;
+        });
 
         var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
         var RAWGKey = builder.Configuration.GetValue<string>("RAWGApiKey") ?? throw new Exception("The app requires an API key for RAWG to be set!");

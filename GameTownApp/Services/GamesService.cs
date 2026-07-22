@@ -76,26 +76,11 @@ public class GamesService(HttpClient http)
     // ---------------------------------------------------------------- contributor actions
 
     /// <summary>
-    /// Uploads a game archive. Field names must match the [FromForm(Name = ...)] attributes on the
-    /// API's AddGameWithFileForm, otherwise the model binder silently leaves them null.
+    /// Absolute URL of the upload endpoint. Uploading goes through UploadService/upload.js rather
+    /// than HttpClient, because fetch() cannot report upload progress — so the URL is handed out
+    /// here instead of the request being made here.
     /// </summary>
-    public async Task<ApiResult> AddGame(AddGameRequest request, Stream fileStream, string fileName)
-    {
-        using var content = new MultipartFormDataContent
-        {
-            { new StringContent(request.Title), "title" },
-            { new StringContent(request.HowTo), "howTo" }
-        };
-
-        if (!string.IsNullOrWhiteSpace(request.RawgGameId))
-            content.Add(new StringContent(request.RawgGameId), "rawgGameId");
-
-        var fileContent = new StreamContent(fileStream);
-        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
-        content.Add(fileContent, "file", fileName);
-
-        return await ApiResult.FromResponse(await _http.PostAsync("/GTGames/Add", content));
-    }
+    public string GetAddGameUrl() => $"{_http.BaseAddress}GTGames/Add";
 
     public async Task<ApiResult> UpdateGame(GameTownGamePatchRequest request)
         => await ApiResult.FromResponse(await _http.PatchAsJsonAsync("/GTGames/update", request));

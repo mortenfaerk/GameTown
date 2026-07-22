@@ -1,12 +1,13 @@
 @page "/addgame"
 @attribute [Authorize(Roles = "Admin,Contributor")]
+@implements IAsyncDisposable
 @inject GamesService GamesService
-@inject NavigationManager Navigation
+@inject UploadService UploadService
 
 <PageTitle>Add game</PageTitle>
 
 <h1>Add a game</h1>
-<p class="text-muted">Upload a game archive and, optionally, attach RAWG metadata to it.</p>
+<p class="gt-muted">Upload a game archive and, optionally, attach RAWG metadata to it.</p>
 
 @if (!string.IsNullOrEmpty(Error))
 {
@@ -25,18 +26,20 @@
     <ValidationSummary />
 
     <div class="mb-3">
-        <label class="form-label">Title</label>
-        <InputText class="form-control" @bind-Value="Request.Title" />
+        <label class="form-label" for="game-title">Title</label>
+        <InputText id="game-title" class="form-control" @bind-Value="Request.Title" disabled="@Busy" />
     </div>
 
     <div class="mb-3">
-        <label class="form-label">How to play / install</label>
-        <InputTextArea class="form-control" rows="4" @bind-Value="Request.HowTo" />
+        <label class="form-label" for="game-howto">How to play / install</label>
+        <InputTextArea id="game-howto" class="form-control" rows="4" @bind-Value="Request.HowTo" disabled="@Busy" />
     </div>
 
     <div class="mb-3">
-        <label class="form-label">Game archive</label>
-        <InputFile class="form-control" OnChange="OnFileSelected" accept=".zip,.rar,.7z" />
+        <label class="form-label" for="game-file">Game archive</label>
+        @* @ref so the raw <input> can be handed to the JS uploader. *@
+        <InputFile id="game-file" @ref="fileInput" class="form-control"
+                   OnChange="OnFileSelected" accept=".zip,.rar,.7z" disabled="@Busy" />
         @if (SelectedFile is not null)
         {
             <div class="form-text">@SelectedFile.Name — @FormatSize(SelectedFile.Size)</div>
@@ -52,12 +55,42 @@
         {
             <div class="d-flex align-items-center gap-2 mb-2">
                 <span class="badge bg-success">Attached: @SelectedRawgGame.Name (id @SelectedRawgGame.Id)</span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearRawgGame">Clear</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearRawgGame" disabled="@Busy">Clear</button>
             </div>
         }
     </div>
 
     <RawgGameCard Game="SelectedRawgGame" />
+
+    @if (Busy)
+    {
+        <div class="upload mb-3">
+            <div class="d-flex justify-content-between align-items-baseline mb-1">
+                <span class="gt-data">
+                    @if (TotalBytes > 0)
+                    {
+                        @($"{Percent}% · {FormatSize(UploadedBytes)} of {FormatSize(TotalBytes)}")
+                    }
+                    else
+                    {
+                        @("Starting upload…")
+                    }
+                </span>
+                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="Cancel">Cancel</button>
+            </div>
+
+            <div class="progress" role="progressbar" aria-label="Upload progress"
+                 aria-valuenow="@Percent" aria-valuemin="0" aria-valuemax="100">
+                <div class="progress-bar @(TotalBytes > 0 ? "" : "progress-bar-striped progress-bar-animated")"
+                     style="width: @(TotalBytes > 0 ? Percent : 100)%"></div>
+            </div>
+
+            @if (Percent >= 100)
+            {
+                <p class="gt-data mt-1 mb-0">Transfer complete — the server is still saving it.</p>
+            }
+        </div>
+    }
 
     <button type="submit" class="btn btn-primary" disabled="@Busy">
         @(Busy ? "Uploading…" : "Add game")
@@ -66,15 +99,19 @@
 
 @code {
     private AddGameRequest Request = new();
+    private InputFile? fileInput;
     private IBrowserFile? SelectedFile;
     private RawgGameContract? SelectedRawgGame;
+    private DotNetObjectReference<AddGame>? selfRef;
 
     private bool Busy;
     private string? Error;
     private string? Notice;
 
-    // Blazor caps OpenReadStream at 512 KB unless told otherwise; game archives are far larger.
-    private const long MaxUploadBytes = 2L * 1024 * 1024 * 1024;
+    private long UploadedBytes;
+    private long TotalBytes;
+
+    private int Percent => TotalBytes > 0 ? (int)(UploadedBytes * 100 / TotalBytes) : 0;
 
     private static readonly string[] AllowedExtensions = [".zip", ".rar", ".7z"];
 
@@ -96,12 +133,22 @@
         Request.RawgGameId = null;
     }
 
+    /// <summary>Called from upload.js as the transfer advances.</summary>
+    [JSInvokable]
+    public Task OnUploadProgress(long loaded, long total)
+    {
+        UploadedBytes = loaded;
+        TotalBytes = total;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
     private async Task Submit()
     {
         Error = null;
         Notice = null;
 
-        if (SelectedFile is null)
+        if (SelectedFile is null || fileInput?.Element is null)
         {
             Error = "Please choose a game archive to upload.";
             return;
@@ -115,28 +162,43 @@
         }
 
         Busy = true;
-        try
-        {
-            await using var stream = SelectedFile.OpenReadStream(MaxUploadBytes);
-            var result = await GamesService.AddGame(Request, stream, SelectedFile.Name);
+        UploadedBytes = 0;
+        TotalBytes = 0;
 
-            if (result.Success)
-            {
-                Notice = $"'{Request.Title}' was added.";
-                Request = new AddGameRequest();
-                SelectedFile = null;
-                SelectedRawgGame = null;
-            }
-            else
-            {
-                Error = result.Error;
-            }
-        }
-        catch (Exception ex)
+        selfRef ??= DotNetObjectReference.Create(this);
+
+        // The browser streams the file straight from the input element; it never passes through
+        // .NET, which is what makes large archives viable.
+        var result = await UploadService.UploadGameAsync(
+            fileInput.Element.Value,
+            GamesService.GetAddGameUrl(),
+            Request,
+            selfRef);
+
+        if (result.Success)
         {
-            Error = $"Upload failed: {ex.Message}";
+            Notice = $"'{Request.Title}' was added.";
+            Request = new AddGameRequest();
+            SelectedFile = null;
+            SelectedRawgGame = null;
         }
+        else
+        {
+            Error = result.Error;
+        }
+
         Busy = false;
+        UploadedBytes = 0;
+        TotalBytes = 0;
+    }
+
+    private async Task Cancel() => await UploadService.AbortAsync();
+
+    public async ValueTask DisposeAsync()
+    {
+        // Abort anything still running, or the upload outlives the page it belongs to.
+        await UploadService.AbortAsync();
+        selfRef?.Dispose();
     }
 
     private static string FormatSize(long bytes)

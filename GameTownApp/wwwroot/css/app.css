@@ -361,7 +361,32 @@ code {
     line-height: 1.3;
 }
 
-/* Screenshot strip on the detail page. */
+/* Upload progress. Thin and quiet — it reports, it doesn't perform. */
+.upload .progress {
+    height: 0.55rem;
+    background-color: var(--gt-shelf);
+    border: 1px solid var(--gt-edge);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.upload .progress-bar {
+    background-color: var(--gt-phosphor);
+    transition: width 0.15s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .upload .progress-bar {
+        transition: none;
+    }
+
+    .upload .progress-bar-animated {
+        animation: none;
+    }
+}
+
+/* Screenshot strip on the detail page. Each thumbnail is a button that opens the viewer, so it
+   needs the button chrome stripped back off. */
 .shots {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -374,6 +399,34 @@ code {
         border: 1px solid var(--gt-edge);
         display: block;
     }
+
+.shot {
+    padding: 0;
+    border: none;
+    background: none;
+    border-radius: 5px;
+    cursor: zoom-in;
+    transition: transform 0.15s ease;
+}
+
+    .shot:hover img,
+    .shot:focus-visible img {
+        border-color: var(--gt-phosphor);
+    }
+
+    .shot:hover {
+        transform: translateY(-2px);
+    }
+
+@media (prefers-reduced-motion: reduce) {
+    .shot {
+        transition: none;
+    }
+
+        .shot:hover {
+            transform: none;
+        }
+}
 
 @media (prefers-reduced-motion: reduce) {
     .tile__art {

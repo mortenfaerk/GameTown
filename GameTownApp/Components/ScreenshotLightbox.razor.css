@@ -1,0 +1,118 @@
+/* Full-screen screenshot viewer. Deliberately plain: the screenshot is the content, so the
+   surrounding chrome stays near-invisible and only becomes legible on hover/focus. */
+
+.lb {
+    position: fixed;
+    inset: 0;
+    z-index: 1080; /* above Bootstrap's modal backdrop range */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 4.5rem;
+    background: rgba(8, 9, 9, 0.94);
+    backdrop-filter: blur(3px);
+    cursor: zoom-out;
+    animation: lb-in 0.12s ease-out;
+}
+
+.lb:focus {
+    outline: none; /* it is focused only to receive keys, not as a visible target */
+}
+
+.lb__img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    cursor: default;
+}
+
+.lb__close,
+.lb__nav {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(22, 25, 26, 0.85);
+    border: 1px solid var(--gt-edge);
+    color: var(--gt-mist);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+    .lb__close:hover, .lb__nav:hover,
+    .lb__close:focus-visible, .lb__nav:focus-visible {
+        border-color: var(--gt-phosphor);
+        color: var(--gt-phosphor);
+        background: rgba(22, 25, 26, 0.98);
+    }
+
+.lb__close {
+    top: 1rem;
+    right: 1rem;
+    width: 2.4rem;
+    height: 2.4rem;
+    font-size: 0.95rem;
+}
+
+.lb__nav {
+    top: 50%;
+    transform: translateY(-50%);
+    width: 2.8rem;
+    height: 3.6rem;
+    font-size: 1.3rem;
+}
+
+.lb__nav--prev { left: 1rem; }
+.lb__nav--next { right: 1rem; }
+
+.lb__counter {
+    position: absolute;
+    bottom: 1.1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    margin: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    font-family: var(--gt-mono);
+    font-size: 0.8125rem;
+    color: var(--gt-dim);
+    cursor: default;
+}
+
+.lb__caption {
+    font-family: var(--gt-sans);
+    color: var(--gt-mist);
+}
+
+@keyframes lb-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Tight screens: drop the side padding and move the arrows to the bottom corners. */
+@media (max-width: 640.98px) {
+    .lb {
+        padding: 3rem 0.75rem 4.5rem;
+    }
+
+    .lb__nav {
+        top: auto;
+        bottom: 1rem;
+        transform: none;
+        height: 2.6rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .lb {
+        animation: none;
+    }
+
+    .lb__close, .lb__nav {
+        transition: none;
+    }
+}

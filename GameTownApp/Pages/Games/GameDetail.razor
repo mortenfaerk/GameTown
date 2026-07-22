@@ -84,6 +84,10 @@ else
 
                 <AuthorizeView Roles="Admin,Contributor">
                     <Authorized>
+                        @if (Edit is null)
+                        {
+                            <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="StartEdit">Edit</button>
+                        }
                         @if (Game.RawgGame?.Id is not null)
                         {
                             <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="RefreshMetadata">
@@ -105,6 +109,51 @@ else
         </div>
     </div>
 
+    @if (Edit is not null)
+    {
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Edit game</h5>
+
+                <EditForm Model="Edit" OnValidSubmit="SaveEdit">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary />
+
+                    <div class="mb-3">
+                        <label class="form-label" for="edit-title">Title</label>
+                        <InputText id="edit-title" class="form-control" @bind-Value="Edit.Title" disabled="@Busy" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label" for="edit-howto">How to play / install</label>
+                        <InputTextArea id="edit-howto" class="form-control" rows="4" @bind-Value="Edit.HowTo" disabled="@Busy" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">RAWG match</label>
+                        <p class="gt-data mb-2">
+                            @if (EditRawgName is not null)
+                            {
+                                @($"Currently: {EditRawgName} (id {Edit.RawgGameId})")
+                            }
+                            else
+                            {
+                                @("No metadata attached")
+                            }
+                        </p>
+                        <RawgGamePicker SelectedGameChanged="OnEditRawgSelected"
+                                        Placeholder="Search RAWG to re-match this game…" />
+                    </div>
+
+                    <button type="submit" class="btn btn-primary" disabled="@Busy">
+                        @(Busy ? "Saving…" : "Save changes")
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" disabled="@Busy" @onclick="() => Edit = null">Cancel</button>
+                </EditForm>
+            </div>
+        </div>
+    }
+
     <div class="card mb-4">
         <div class="card-body">
             <h5 class="card-title">How to play</h5>
@@ -122,18 +171,27 @@ else
         </div>
     }
 
-    @if (Screenshots.Count > 0)
+    @if (ShotUrls.Count > 0)
     {
         <h5 class="mb-3">Screenshots</h5>
         <div class="shots mb-4">
-            @foreach (var shot in Screenshots)
+            @for (var i = 0; i < ShotUrls.Count; i++)
             {
-                <img src="@GamesService.ResolveMedia(shot.Image)" alt="Screenshot of @Game.Title" loading="lazy" />
+                var index = i; // captured per iteration, or every button would open the last one
+                <button type="button" class="shot" @onclick="() => lightboxIndex = index"
+                        aria-label="@($"View screenshot {index + 1} of {ShotUrls.Count} full screen")">
+                    <img src="@ShotUrls[index]" alt="Screenshot of @Game.Title" loading="lazy" />
+                </button>
             }
         </div>
     }
 
     <a class="btn btn-outline-secondary" href="/">Back to the library</a>
+
+    <ScreenshotLightbox Images="ShotUrls"
+                        Caption="@Game.Title"
+                        Index="lightboxIndex"
+                        IndexChanged="i => lightboxIndex = i" />
 }
 
 @code {
@@ -146,8 +204,71 @@ else
     private string? Error;
     private string? Notice;
 
+    private int? lightboxIndex;
+
+    private GameTownGamePatchRequest? Edit;
+    private string? EditRawgName;
+
+    /// <summary>
+    /// Pre-populated from the loaded game on purpose: the patch request treats null as "leave
+    /// unchanged", so a blank model would look like an edit that silently did nothing.
+    /// </summary>
+    private void StartEdit()
+    {
+        if (Game is null) return;
+
+        Edit = new GameTownGamePatchRequest
+        {
+            Id = Game.Id.ToString(),
+            Title = Game.Title,
+            HowTo = Game.HowTo,
+            RawgGameId = Game.RawgGame?.Id?.ToString()
+        };
+        EditRawgName = Game.RawgGame?.Name;
+        Error = null;
+        Notice = null;
+    }
+
+    private void OnEditRawgSelected(RawgGameContract? game)
+    {
+        if (Edit is null || game?.Id is null) return;
+        Edit.RawgGameId = game.Id.Value.ToString();
+        EditRawgName = game.Name;
+    }
+
+    private async Task SaveEdit()
+    {
+        if (Edit is null) return;
+
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        var result = await GamesService.UpdateGame(Edit);
+
+        if (result.Success)
+        {
+            Edit = null;
+            await LoadGame();
+            Notice = "Changes saved.";
+        }
+        else
+        {
+            Error = result.Error;
+        }
+
+        Busy = false;
+    }
+
     private List<ScreenshotContract> Screenshots =>
         Game?.RawgGame?.Screenshots.Where(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image)).ToList() ?? [];
+
+    /// <summary>Screenshot URLs already resolved against the API, shared by the strip and the viewer.</summary>
+    private List<string> ShotUrls =>
+        Screenshots.Select(s => GamesService.ResolveMedia(s.Image))
+                   .Where(u => !string.IsNullOrWhiteSpace(u))
+                   .Select(u => u!)
+                   .ToList();
 
     /// <summary>Resolved against the API — /media is served there, not by the app.</summary>
     private string? Cover
