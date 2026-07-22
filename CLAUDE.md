@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-GameTown is a .NET 9 solution for cataloguing and distributing games. Metadata is enriched from the external [RAWG](https://rawg.io) games API, uploaded game archives are stored on disk, and access is gated by JWT-based auth with `Admin`/`Contributor` roles. The frontend is a Blazor WebAssembly SPA that talks to a minimal-API backend.
+GameTown is a .NET 10 solution for cataloguing and distributing games. Metadata is enriched from the external [RAWG](https://rawg.io) games API, uploaded game archives are stored on disk, and access is gated by JWT-based auth with `Admin`/`Contributor` roles. The frontend is a Blazor WebAssembly SPA that talks to a minimal-API backend.
 
 ## Projects
 
@@ -46,6 +46,36 @@ There is **no test project** in this solution.
 ```powershell
 dotnet user-secrets set "RAWGApiKey" "<key>" --project API
 ```
+
+## HTTPS development certificate (needed on Linux)
+
+The SPA and the API are separate origins, so the browser must trust the ASP.NET Core dev certificate
+before the app can call the API. Untrusted, the symptom is misleading: the page itself loads (you can
+click through its warning) but every `fetch` to the API dies with
+`TypeError: NetworkError when attempting to fetch resource` — a cross-origin `fetch` gets no
+click-through prompt.
+
+```bash
+dotnet dev-certs https --trust     # NOT with sudo — trust is per-user
+dotnet dev-certs https --check --trust
+```
+
+Run it **as your own user**. Under `sudo` it trusts a certificate for root, which is not the store
+your browser reads. Then fully quit and reopen the browser — the NSS store at `~/.pki/nssdb` is only
+read at startup, so a reload is not enough. `certutil` (package `nss`) must be present for the
+browser store to be updated.
+
+`--check --trust` reporting *"none of them is trusted"* while the browser works is normal: that check
+uses the **OpenSSL** store, which is separate. .NET-to-.NET calls (including Aspire's dashboard
+telemetry, which otherwise logs `UntrustedRoot` gRPC errors) need:
+
+```bash
+export SSL_CERT_DIR="$HOME/.aspnet/dev-certs/trust:/etc/ssl/certs"
+```
+
+Keep `/etc/ssl/certs` in that list, or every other TLS connection on the machine stops validating.
+GUI-launched IDEs do not read your shell profile — set it in the run configuration or via
+`~/.config/environment.d/`.
 
 ## Architecture notes
 
