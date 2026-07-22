@@ -1,32 +1,78 @@
-﻿<div class="top-row ps-3 navbar navbar-dark">
-    <div class="container-fluid">
-        <a class="navbar-brand" href="">GameTown</a>
-        <button title="Navigation menu" class="navbar-toggler" @onclick="ToggleNavMenu">
-            <span class="navbar-toggler-icon"></span>
-        </button>
-    </div>
+@inject NavigationManager Navigation
+
+@*
+    The sidebar is the navigation home: wordmark, then search, then links grouped by what
+    you are allowed to do. Grouping with visible labels is what makes the contributor and
+    admin areas findable instead of being flat links buried in a list.
+
+    Note the class names: this deliberately does NOT reuse Bootstrap's `.collapse`. It used to,
+    and Bootstrap's `.collapse:not(.show){display:none}` won on load order, hiding the whole nav.
+*@
+
+<div class="gt-brand">
+    <a class="gt-brand__mark" href="">GAMETOWN</a>
+    <button class="gt-brand__toggle" title="Navigation menu" @onclick="ToggleNavMenu">
+        <span class="bi bi-list" aria-hidden="true"></span>
+    </button>
 </div>
 
-<div class="@NavMenuCssClass nav-scrollable" @onclick="ToggleNavMenu">
-    <nav class="nav flex-column">
-        <div class="nav-item px-3">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Spil
-            </NavLink>
-            <NavLink class="nav-link" href="IsAuth" Match="NavLinkMatch.All">
-                <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> AuthTest
-            </NavLink>
-        </div>
+<div class="gt-nav @(collapseNavMenu ? "" : "gt-nav--open")">
+
+    <div class="gt-search">
+        <input class="form-control form-control-sm"
+               type="search"
+               placeholder="Search the library"
+               aria-label="Search the library"
+               value="@Query"
+               @oninput="e => Query = e.Value?.ToString() ?? string.Empty"
+               @onkeyup="OnSearchKey" />
+    </div>
+
+    <nav>
+        <p class="gt-eyebrow gt-nav__label">Browse</p>
+        <NavLink class="gt-nav__link" href="" Match="NavLinkMatch.All">
+            <span class="bi bi-collection-fill" aria-hidden="true"></span> Library
+        </NavLink>
+
+        <AuthorizeView Roles="Admin,Contributor">
+            <Authorized>
+                <p class="gt-eyebrow gt-nav__label">Contribute</p>
+                <NavLink class="gt-nav__link" href="addgame">
+                    <span class="bi bi-plus-square-fill" aria-hidden="true"></span> Add game
+                </NavLink>
+                <NavLink class="gt-nav__link" href="searchmetadata">
+                    <span class="bi bi-search" aria-hidden="true"></span> Browse RAWG
+                </NavLink>
+            </Authorized>
+        </AuthorizeView>
+
+        <AuthorizeView Roles="Admin">
+            <Authorized>
+                <p class="gt-eyebrow gt-nav__label">Administer</p>
+                <NavLink class="gt-nav__link" href="user">
+                    <span class="bi bi-people-fill" aria-hidden="true"></span> Users &amp; roles
+                </NavLink>
+            </Authorized>
+        </AuthorizeView>
     </nav>
 </div>
 
 @code {
     private bool collapseNavMenu = true;
+    private string Query = string.Empty;
 
-    private string? NavMenuCssClass => collapseNavMenu ? "collapse" : null;
+    private void ToggleNavMenu() => collapseNavMenu = !collapseNavMenu;
 
-    private void ToggleNavMenu()
+    /// <summary>
+    /// Search lives in the sidebar but the results belong to the library page, so this navigates
+    /// to /?q=… — which keeps the result set linkable and avoids a shared-state service.
+    /// </summary>
+    private void OnSearchKey(KeyboardEventArgs e)
     {
-        collapseNavMenu = !collapseNavMenu;
+        if (e.Key != "Enter") return;
+
+        Navigation.NavigateTo(string.IsNullOrWhiteSpace(Query)
+            ? "/"
+            : $"/?q={Uri.EscapeDataString(Query)}");
     }
 }

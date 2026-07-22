@@ -1,21 +1,25 @@
-﻿@using GameTownApp.Services;
 @inherits LayoutComponentBase
 @inject AuthService authService
+@inject NavigationManager Navigation
+
 <div class="page">
     <div class="sidebar">
         <NavMenu />
     </div>
 
     <main>
-        <div class="top-row px-4">
-            @if(authService.IsAuthenticated)
-            {
-                <NavLink href="user"><span class="oi oi-person" aria-hidden="true" /> @authService.Username</NavLink>
-            }
-            else
-            {
-                <NavLink href="login">Login</NavLink>
-            } 
+        <div class="top-row px-4 d-flex justify-content-end align-items-center gap-3">
+            @* .text-muted resolved to near-black on this canvas and was invisible; gt-dim is
+               part of the palette and contrast-checked against gt-void. *@
+            <AuthorizeView>
+                <Authorized>
+                    <span class="gt-muted">Signed in as <strong class="gt-mist-strong">@authService.Username</strong></span>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="Logout">Log out</button>
+                </Authorized>
+                <NotAuthorized>
+                    <NavLink href="login">Log in</NavLink>
+                </NotAuthorized>
+            </AuthorizeView>
         </div>
 
         <article class="content px-4">
@@ -23,3 +27,11 @@
         </article>
     </main>
 </div>
+
+@code {
+    private async Task Logout()
+    {
+        await authService.LogoutAsync();
+        Navigation.NavigateTo("/", forceLoad: false);
+    }
+}

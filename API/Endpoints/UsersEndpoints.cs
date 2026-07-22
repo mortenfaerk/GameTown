@@ -32,7 +32,7 @@ public static class UserEndpoints
         group.MapGet("/get", GetUser).WithDescription("Get user")
             .RequireAuthorization("Admin")
             .Accepts<string>("application/json")
-            .Produces<UserDTO>(StatusCodes.Status200OK)
+            .Produces<UserContract>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .WithName("Get user")
@@ -58,13 +58,13 @@ public static class UserEndpoints
             .WithOpenApi();
         group.MapGet("/getAll", GetAllUsers).WithDescription("Get all users")
             .RequireAuthorization("Admin")
-            .Produces<List<UserDTO>>(StatusCodes.Status200OK)
+            .Produces<List<UserContract>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("Get all users")
             .WithOpenApi();
         group.MapGet("/getAllRoles", GetAllRoles).WithDescription("Get all roles")
             .RequireAuthorization("Admin")
-            .Produces<List<RoleDTO>>(StatusCodes.Status200OK)
+            .Produces<List<RoleContract>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("Get all roles")
             .WithOpenApi();

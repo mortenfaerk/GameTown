@@ -1,77 +1,14 @@
-﻿@attribute [Authorize(Roles ="Admin,Contributor")]
-@using GameTownApp.Services
-@using GameTownApp.Models.Games
-@inject GamesService gamesService
+@page "/searchmetadata"
+@attribute [Authorize(Roles = "Admin,Contributor")]
 
+@* Thin wrapper now: the picker and the card are shared with AddGame. *@
 
 <h3 class="mb-4">Search Games</h3>
-<AutoComplete TItem="RAWGGameViewModel"
-              DataProvider="GamesDataProvider"
-              @bind-Value="SearchQuery"
-              Placeholder="Type to search games..."
-              PropertyName="Name"
-              OnChanged="(RAWGGameViewModel game) => OnGameSelected(game)"
-              Class="mb-3" />
 
-@if (SelectedGame != null)
-{
-    <div class="card mb-4 shadow-sm">
-        <div class="row g-0">
-            <div class="col-md-4">
-                @if (!string.IsNullOrEmpty(SelectedGame.BackgroundImage))
-                {
-                    <img src="@SelectedGame.BackgroundImage" class="img-fluid rounded-start" alt="@SelectedGame.Name" />
-                }
-                else
-                {
-                    <div class="bg-secondary text-white d-flex align-items-center justify-content-center" style="height: 200px;">
-                        <span class="oi oi-image"></span> No Image
-                    </div>
-                }
-            </div>
-            <div class="col-md-8">
-                <div class="card-body">
-                    <h4 class="card-title">@SelectedGame.Name</h4>
-                    @if (!string.IsNullOrEmpty(SelectedGame.Description))
-                    {
-                        <div class="card-text mb-2">
-                            @((MarkupString)SelectedGame.Description)
-                        </div>
-                    }
-                    <ul class="list-group list-group-flush mb-3">
-                        <li class="list-group-item">
-                            <span class="oi oi-calendar"></span>
-                            <strong> Released:</strong> @SelectedGame.Released?.ToString("yyyy-MM-dd")
-                        </li>
-                        <li class="list-group-item">
-                            <span class="oi oi-star"></span>
-                            <strong> Metacritic:</strong> @(SelectedGame.Metacritic ?? 0)
-                        </li>
-                        <li class="list-group-item">
-                            <span class="oi oi-star"></span>
-                            <strong> Rating:</strong> @SelectedGame.Rating
-                        </li>
-                        <li class="list-group-item">
-                            <span class="oi oi-clock"></span>
-                            <strong> Playtime:</strong> @SelectedGame.Playtime hours
-                        </li>
-                        <li class="list-group-item">
-                            <span class="oi oi-tags"></span>
-                            <strong> Genres:</strong> @string.Join(", ", SelectedGame.Genres.Select(g => g.Name))
-                        </li>
-                        <li class="list-group-item">
-                            <span class="oi oi-people"></span>
-                            <strong> Developers:</strong> @string.Join(", ", SelectedGame.Developers.Select(d => d.Name))
-                        </li>
-                    </ul>
-                    @if (!string.IsNullOrEmpty(SelectedGame.Website))
-                    {
-                        <a href="@SelectedGame.Website" class="btn btn-primary" target="_blank">
-                            <span class="oi oi-link-intact"></span> Official Website
-                        </a>
-                    }
-                </div>
-            </div>
-        </div>
-    </div>
+<RawgGamePicker SelectedGameChanged="game => SelectedGame = game" />
+
+<RawgGameCard Game="SelectedGame" ShowScreenshots="true" />
+
+@code {
+    private RawgGameContract? SelectedGame;
 }

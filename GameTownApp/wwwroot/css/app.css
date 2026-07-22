@@ -1,65 +1,210 @@
-html, body {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-    background-color: rgb(15, 15, 15); /* Deep background */
-    color: #e0e0e0;
+/* ============================================================================
+   GameTown — a private shelf for freeware games on the LAN.
+
+   Design intent: box art is the point, so the chrome stays quiet and the cover
+   tile is the one element carrying personality. Palette keeps the teal/near-black
+   already established here rather than importing a new identity.
+
+   Everything is self-hosted (fonts included) so the library still renders when the
+   LAN has no internet — the same reason cover art is downloaded to /media/.
+   ========================================================================= */
+
+/* ---------------------------------------------------------------- typefaces */
+/* Archivo is variable across width (62–125%), so one file gives both the body
+   text and the expanded display cut used for titles. */
+@font-face {
+    font-family: 'Archivo';
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 62% 125%;
+    font-display: swap;
+    src: url('../fonts/Archivo-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Typography focus */
+@font-face {
+    font-family: 'Archivo';
+    font-style: normal;
+    font-weight: 100 900;
+    font-stretch: 62% 125%;
+    font-display: swap;
+    src: url('../fonts/Archivo-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('../fonts/JetBrainsMono-latin.woff2') format('woff2');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'JetBrains Mono';
+    font-style: normal;
+    font-weight: 400 700;
+    font-display: swap;
+    src: url('../fonts/JetBrainsMono-latin-ext.woff2') format('woff2');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ---------------------------------------------------------------- tokens */
+:root {
+    --gt-void: #0F0F0F; /* page ground */
+    --gt-shelf: #16191A; /* raised surface: cards, sidebar */
+    --gt-edge: #232829; /* hairlines */
+    --gt-phosphor: #00B48F; /* accent, focus, hover */
+    --gt-deep: #005B41; /* pressed / active */
+    --gt-mist: #D0F2EC; /* primary text */
+    --gt-dim: #7E918C; /* secondary text — replaces the unreadable .text-muted */
+    --gt-sans: 'Archivo', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --gt-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* Feed our palette into Bootstrap so its components inherit it. */
+    --bs-body-bg: var(--gt-void);
+    --bs-body-color: var(--gt-mist);
+    --bs-border-color: var(--gt-edge);
+    --bs-secondary-color: var(--gt-dim);
+    --bs-link-color: var(--gt-phosphor);
+    --bs-link-hover-color: var(--gt-mist);
+    --bs-primary: var(--gt-phosphor);
+    --bs-font-sans-serif: var(--gt-sans);
+    --bs-body-font-family: var(--gt-sans);
+}
+
+/* ---------------------------------------------------------------- base */
+html, body {
+    font-family: var(--gt-sans);
+    background-color: var(--gt-void);
+    color: var(--gt-mist);
+    font-synthesis-weight: none;
+}
+
+h1, h2, h3, h4, h5 {
+    font-stretch: 112%; /* the expanded display cut */
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--gt-mist);
+}
+
+h1 {
+    font-size: clamp(1.75rem, 1.2rem + 1.6vw, 2.5rem);
+    font-weight: 800;
+}
+
 h1:focus {
     outline: none;
 }
 
-/* Links and buttons - teal highlights */
+/* Machine values — sizes, counts, ids — are set in mono because they are data,
+   not prose. Used nowhere else. */
+.gt-data {
+    font-family: var(--gt-mono);
+    font-size: 0.8125rem;
+    letter-spacing: -0.02em;
+    color: var(--gt-dim);
+}
+
+.gt-muted {
+    color: var(--gt-dim);
+}
+
+/* Lifts a word back to full contrast inside otherwise dimmed text. */
+.gt-mist-strong {
+    color: var(--gt-mist);
+}
+
+/* Small caps-ish section label for the sidebar groups. */
+.gt-eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--gt-dim);
+}
+
 a, .btn-link {
-    color: rgb(0, 129, 112); /* Vivid teal for action */
+    color: var(--gt-phosphor);
     text-decoration: none;
 }
 
     a:hover, .btn-link:hover {
-        color: rgb(0, 91, 65); /* Darker teal on hover */
+        color: var(--gt-mist);
     }
 
-/* Buttons */
+/* ---------------------------------------------------------------- controls */
 .btn-primary {
-    color: rgb(15, 15, 15);
-    background-color: rgb(0, 129, 112);
-    border-color: rgb(0, 91, 65);
+    --bs-btn-color: var(--gt-void);
+    --bs-btn-bg: var(--gt-phosphor);
+    --bs-btn-border-color: var(--gt-phosphor);
+    --bs-btn-hover-color: var(--gt-void);
+    --bs-btn-hover-bg: #2ED3B0;
+    --bs-btn-hover-border-color: #2ED3B0;
+    --bs-btn-active-bg: var(--gt-deep);
+    --bs-btn-active-border-color: var(--gt-deep);
+    font-weight: 600;
 }
 
-    .btn-primary:hover {
-        background-color: rgb(0, 91, 65);
-        border-color: rgb(0, 91, 65);
+.btn-outline-secondary {
+    --bs-btn-color: var(--gt-mist);
+    --bs-btn-border-color: var(--gt-edge);
+    --bs-btn-hover-bg: var(--gt-shelf);
+    --bs-btn-hover-border-color: var(--gt-phosphor);
+    --bs-btn-hover-color: var(--gt-mist);
+}
+
+.card {
+    --bs-card-bg: var(--gt-shelf);
+    --bs-card-border-color: var(--gt-edge);
+}
+
+.form-control, .form-select {
+    background-color: var(--gt-shelf);
+    border-color: var(--gt-edge);
+    color: var(--gt-mist);
+}
+
+    .form-control::placeholder {
+        color: var(--gt-dim);
     }
 
+    .form-control:focus, .form-select:focus {
+        background-color: var(--gt-shelf);
+        border-color: var(--gt-phosphor);
+        color: var(--gt-mist);
+    }
+
+/* One visible focus treatment everywhere, in the accent. */
+:focus-visible,
 .btn:focus, .btn:active:focus,
-.btn-link.nav-link:focus,
-.form-control:focus, .form-check-input:focus {
-    box-shadow: 0 0 0 0.1rem rgb(15, 15, 15), 0 0 0 0.25rem rgba(0, 129, 112, 0.5);
+.form-control:focus, .form-check-input:focus, .form-select:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--gt-void), 0 0 0 4px var(--gt-phosphor);
 }
 
-/* Layout padding */
 .content {
     padding-top: 1.1rem;
 }
 
-/* Validation */
+/* ---------------------------------------------------------------- validation */
 .valid.modified:not([type=checkbox]) {
-    outline: 1px solid rgb(0, 129, 112);
+    outline: 1px solid var(--gt-phosphor);
 }
 
 .invalid {
-    outline: 1px solid #f44336;
+    outline: 1px solid #F4635A;
 }
 
 .validation-message {
-    color: #ef5350;
+    color: #F4635A;
 }
 
-/* Blazor error UI */
+/* ---------------------------------------------------------------- blazor chrome */
 #blazor-error-ui {
-    color-scheme: dark;
-    background: rgb(35, 45, 63); /* Panel background */
-    color: #ffffff;
+    background: var(--gt-shelf);
+    color: var(--gt-mist);
+    border-top: 1px solid var(--gt-phosphor);
     bottom: 0;
     box-shadow: 0 -1px 4px rgba(0, 0, 0, 0.5);
     display: none;
@@ -78,8 +223,8 @@ a, .btn-link {
     }
 
 .blazor-error-boundary {
-    background: url(data:image/svg+xml;base64,...your_existing_svg...) no-repeat 1rem/1.8rem, #d32f2f;
-    padding: 1rem 1rem 1rem 3.7rem;
+    background: #8C2F2A;
+    padding: 1rem;
     color: white;
 }
 
@@ -87,7 +232,6 @@ a, .btn-link {
         content: "An error has occurred.";
     }
 
-/* Loading spinner */
 .loading-progress {
     position: relative;
     display: block;
@@ -98,14 +242,14 @@ a, .btn-link {
 
     .loading-progress circle {
         fill: none;
-        stroke: rgb(35, 45, 63);
+        stroke: var(--gt-edge);
         stroke-width: 0.6rem;
         transform-origin: 50% 50%;
         transform: rotate(-90deg);
     }
 
         .loading-progress circle:last-child {
-            stroke: rgb(0, 129, 112);
+            stroke: var(--gt-phosphor);
             stroke-dasharray: calc(3.141 * var(--blazor-load-percentage, 0%) * 0.8), 500%;
             transition: stroke-dasharray 0.05s ease-in-out;
         }
@@ -113,31 +257,131 @@ a, .btn-link {
 .loading-progress-text {
     position: absolute;
     text-align: center;
-    font-weight: bold;
+    font-family: var(--gt-mono);
     inset: calc(20vh + 3.25rem) 0 auto 0.2rem;
-    color: rgb(0, 129, 112);
+    color: var(--gt-phosphor);
 }
 
     .loading-progress-text:after {
         content: var(--blazor-load-percentage-text, "Loading");
     }
 
-/* Code coloring */
 code {
-    color: #ce93d8;
-    background-color: rgb(35, 45, 63);
+    font-family: var(--gt-mono);
+    color: var(--gt-phosphor);
+    background-color: var(--gt-shelf);
     padding: 2px 4px;
     border-radius: 4px;
 }
 
-/* Form placeholders */
-.form-floating > .form-control-plaintext::placeholder,
-.form-floating > .form-control::placeholder {
-    color: #aaaaaa;
-    text-align: end;
+/* ============================================================================
+   The shelf — the one place this design spends its boldness.
+   3:4 is box-art proportion; the phosphor edge only appears on hover so a still
+   page stays calm.
+   ========================================================================= */
+.shelf {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 1.75rem 1.25rem;
 }
 
-.form-floating > .form-control-plaintext:focus::placeholder,
-.form-floating > .form-control:focus::placeholder {
-    text-align: start;
+.tile {
+    display: block;
+    color: inherit;
+}
+
+.tile__art {
+    position: relative;
+    aspect-ratio: 3 / 4;
+    border-radius: 6px;
+    overflow: hidden;
+    background-color: var(--gt-shelf);
+    border: 1px solid var(--gt-edge);
+    transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+    .tile__art img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+.tile:hover .tile__art,
+.tile:focus-visible .tile__art {
+    transform: translateY(-4px);
+    border-color: var(--gt-phosphor);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--gt-phosphor);
+}
+
+/* Games with no cover get their initials rather than a grey "no image" slab,
+   so a sparse shelf still looks deliberate. */
+.tile__fallback {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--gt-sans);
+    font-stretch: 125%;
+    font-weight: 800;
+    font-size: 2.75rem;
+    letter-spacing: -0.03em;
+    color: var(--gt-phosphor);
+    background:
+        radial-gradient(120% 100% at 50% 0%, rgba(0, 180, 143, 0.16), transparent 70%),
+        var(--gt-shelf);
+}
+
+.tile__size {
+    position: absolute;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    font-family: var(--gt-mono);
+    font-size: 0.6875rem;
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    color: var(--gt-mist);
+    background: rgba(15, 15, 15, 0.82);
+    backdrop-filter: blur(2px);
+}
+
+.tile__title {
+    margin: 0.6rem 0 0.1rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    font-stretch: 105%;
+    line-height: 1.25;
+    color: var(--gt-mist);
+}
+
+.tile__meta {
+    font-size: 0.8125rem;
+    color: var(--gt-dim);
+    line-height: 1.3;
+}
+
+/* Screenshot strip on the detail page. */
+.shots {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 0.75rem;
+}
+
+    .shots img {
+        width: 100%;
+        border-radius: 5px;
+        border: 1px solid var(--gt-edge);
+        display: block;
+    }
+
+@media (prefers-reduced-motion: reduce) {
+    .tile__art {
+        transition: none;
+    }
+
+    .tile:hover .tile__art,
+    .tile:focus-visible .tile__art {
+        transform: none;
+    }
 }

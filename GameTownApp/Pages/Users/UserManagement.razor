@@ -1,19 +1,414 @@
-﻿@attribute [Authorize]
-@inject AuthService authService
-@using GameTownApp.Services;
-@using GameTownApp.Pages.Games.Contributors;
-
 @page "/user"
-<!-- If the user has the contributor or admin role link to AddGame-->
-<h1>Welcome, @authService.Username</h1>
+@attribute [Authorize(Roles = "Admin")]
+@inject UserService UserService
 
-<AuthorizeView Roles="Admin,Contributor">
-    <Authorized>
-        <SearchGames/>
-    </Authorized>
-</AuthorizeView>
+<PageTitle>User management</PageTitle>
 
+<h1>User management</h1>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="alert alert-danger alert-dismissible">
+        @Error
+        <button type="button" class="btn-close" @onclick="() => Error = null"></button>
+    </div>
+}
+@if (!string.IsNullOrEmpty(Notice))
+{
+    <div class="alert alert-success alert-dismissible">
+        @Notice
+        <button type="button" class="btn-close" @onclick="() => Notice = null"></button>
+    </div>
+}
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button class="nav-link @(Tab == "users" ? "active" : "")" @onclick='() => Tab = "users"'>Users</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(Tab == "roles" ? "active" : "")" @onclick='() => Tab = "roles"'>Roles</button>
+    </li>
+</ul>
+
+@if (Loading)
+{
+    <p><em>Loading…</em></p>
+}
+else if (Tab == "users")
+{
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">Users (@Users.Count)</h4>
+        <button class="btn btn-primary" @onclick="StartCreateUser">New user</button>
+    </div>
+
+    @if (NewUser is not null)
+    {
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">New user</h5>
+                <EditForm Model="NewUser" OnValidSubmit="CreateUser">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary />
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label class="form-label">Username</label>
+                            <InputText class="form-control" @bind-Value="NewUser.Username" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Password</label>
+                            <InputText type="password" class="form-control" @bind-Value="NewUser.Password" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Display name</label>
+                            <InputText class="form-control" @bind-Value="NewUser.DisplayName" />
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Notes</label>
+                            <InputText class="form-control" @bind-Value="NewUser.Notes" />
+                        </div>
+                    </div>
+                    <div class="form-check mt-2">
+                        <InputCheckbox class="form-check-input" @bind-Value="NewUser.IsActive" id="newUserActive" />
+                        <label class="form-check-label" for="newUserActive">Active</label>
+                    </div>
+                    <div class="mt-3">
+                        <button type="submit" class="btn btn-success" disabled="@Busy">Create</button>
+                        <button type="button" class="btn btn-secondary" @onclick="() => NewUser = null">Cancel</button>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    }
+
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Display name</th>
+                <th>Active</th>
+                <th>Roles</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var user in Users)
+            {
+                <tr>
+                    <td>@user.UserName</td>
+                    <td>@user.Displayname</td>
+                    <td>
+                        @if (user.IsActive)
+                        {
+                            <span class="badge bg-success">Yes</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary">No</span>
+                        }
+                    </td>
+                    <td>
+                        @foreach (var role in user.Roles)
+                        {
+                            <span class="badge bg-info text-dark me-1">
+                                @role.Name
+                                <button class="btn btn-sm btn-link p-0 ms-1 text-dark"
+                                        title="Remove role"
+                                        @onclick="() => RemoveRole(user, role)">&times;</button>
+                            </span>
+                        }
+                        @if (AssignableRoles(user).Any())
+                        {
+                            <select class="form-select form-select-sm d-inline-block w-auto ms-1"
+                                    @onchange="e => AssignRole(user, e.Value?.ToString())">
+                                <option value="">+ add role…</option>
+                                @foreach (var role in AssignableRoles(user))
+                                {
+                                    <option value="@role.Id">@role.Name</option>
+                                }
+                            </select>
+                        }
+                    </td>
+                    <td class="text-end">
+                        @if (ConfirmDeleteUserId == user.Id)
+                        {
+                            <span class="me-2">Delete @user.UserName?</span>
+                            <button class="btn btn-sm btn-danger" disabled="@Busy" @onclick="() => DeleteUser(user)">Yes</button>
+                            <button class="btn btn-sm btn-secondary" @onclick="() => ConfirmDeleteUserId = null">No</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => StartEditUser(user)">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDeleteUserId = user.Id">Delete</button>
+                        }
+                    </td>
+                </tr>
+
+                @if (EditUser is not null && EditUser.Id == user.Id)
+                {
+                    <tr>
+                        <td colspan="5">
+                            <EditForm Model="EditUser" OnValidSubmit="SaveUser">
+                                <DataAnnotationsValidator />
+                                <div class="row g-2">
+                                    <div class="col-md-4">
+                                        <label class="form-label">Username</label>
+                                        <InputText class="form-control" @bind-Value="EditUser.Username" />
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Display name</label>
+                                        <InputText class="form-control" @bind-Value="EditUser.DisplayName" />
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label class="form-label">Notes</label>
+                                        <InputText class="form-control" @bind-Value="EditUser.Notes" />
+                                    </div>
+                                </div>
+                                <div class="form-check mt-2">
+                                    <input type="checkbox" class="form-check-input" id="editActive"
+                                           checked="@(EditUser.IsActive ?? false)"
+                                           @onchange="e => EditUser.IsActive = (bool?)e.Value" />
+                                    <label class="form-check-label" for="editActive">Active</label>
+                                </div>
+                                <div class="mt-3">
+                                    <button type="submit" class="btn btn-success" disabled="@Busy">Save</button>
+                                    <button type="button" class="btn btn-secondary" @onclick="() => EditUser = null">Cancel</button>
+                                </div>
+                            </EditForm>
+                        </td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4 class="mb-0">Roles (@Roles.Count)</h4>
+        <button class="btn btn-primary" @onclick="() => NewRole = new RoleCreationRequest()">New role</button>
+    </div>
+
+    @if (NewRole is not null)
+    {
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">New role</h5>
+                <EditForm Model="NewRole" OnValidSubmit="CreateRole">
+                    <DataAnnotationsValidator />
+                    <ValidationSummary />
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-4">
+                            <label class="form-label">Name</label>
+                            <InputText class="form-control" @bind-Value="NewRole.Name" />
+                        </div>
+                        <div class="col-md-3">
+                            <div class="form-check">
+                                <InputCheckbox class="form-check-input" @bind-Value="NewRole.IsActive" id="newRoleActive" />
+                                <label class="form-check-label" for="newRoleActive">Active</label>
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <button type="submit" class="btn btn-success" disabled="@Busy">Create</button>
+                            <button type="button" class="btn btn-secondary" @onclick="() => NewRole = null">Cancel</button>
+                        </div>
+                    </div>
+                </EditForm>
+            </div>
+        </div>
+    }
+
+    <table class="table table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Active</th>
+                <th>Created</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var role in Roles)
+            {
+                <tr>
+                    <td>
+                        @if (EditRole is not null && EditRole.Id == role.Id)
+                        {
+                            <input class="form-control form-control-sm" value="@EditRole.Role"
+                                   @onchange="e => EditRole.Role = e.Value?.ToString()" />
+                        }
+                        else
+                        {
+                            @role.Name
+                        }
+                    </td>
+                    <td>
+                        @if (EditRole is not null && EditRole.Id == role.Id)
+                        {
+                            <input type="checkbox" class="form-check-input" checked="@(EditRole.IsActive ?? false)"
+                                   @onchange="e => EditRole.IsActive = (bool?)e.Value" />
+                        }
+                        else if (role.IsActive)
+                        {
+                            <span class="badge bg-success">Yes</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary">No</span>
+                        }
+                    </td>
+                    <td>@role.CreatedDate.ToString("yyyy-MM-dd")</td>
+                    <td class="text-end">
+                        @if (EditRole is not null && EditRole.Id == role.Id)
+                        {
+                            <button class="btn btn-sm btn-success" disabled="@Busy" @onclick="SaveRole">Save</button>
+                            <button class="btn btn-sm btn-secondary" @onclick="() => EditRole = null">Cancel</button>
+                        }
+                        else if (ConfirmDeleteRoleId == role.Id)
+                        {
+                            <span class="me-2">Delete @role.Name?</span>
+                            <button class="btn btn-sm btn-danger" disabled="@Busy" @onclick="() => DeleteRole(role)">Yes</button>
+                            <button class="btn btn-sm btn-secondary" @onclick="() => ConfirmDeleteRoleId = null">No</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-primary"
+                                    @onclick="() => EditRole = new RoleUpdateRequest { Id = role.Id, Role = role.Name, IsActive = role.IsActive }">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => ConfirmDeleteRoleId = role.Id">Delete</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
 
 @code {
+    private string Tab = "users";
+    private bool Loading = true;
+    private bool Busy;
+    private string? Error;
+    private string? Notice;
 
+    private List<UserContract> Users = [];
+    private List<RoleContract> Roles = [];
+
+    private UserCreationRequest? NewUser;
+    private UserUpdateRequest? EditUser;
+    private RoleCreationRequest? NewRole;
+    private RoleUpdateRequest? EditRole;
+
+    private Guid? ConfirmDeleteUserId;
+    private Guid? ConfirmDeleteRoleId;
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        Loading = true;
+        try
+        {
+            Users = await UserService.GetAllUsers();
+            Roles = await UserService.GetAllRoles();
+        }
+        catch (Exception ex)
+        {
+            Error = $"Could not load users and roles: {ex.Message}";
+        }
+        Loading = false;
+    }
+
+    /// <summary>Roles the user does not already hold — the only ones worth offering.</summary>
+    private IEnumerable<RoleContract> AssignableRoles(UserContract user)
+        => Roles.Where(r => user.Roles.All(existing => existing.Id != r.Id));
+
+    private void StartCreateUser()
+    {
+        NewUser = new UserCreationRequest();
+        EditUser = null;
+    }
+
+    private void StartEditUser(UserContract user)
+    {
+        EditUser = new UserUpdateRequest
+        {
+            Id = user.Id ?? Guid.Empty,
+            Username = user.UserName,
+            DisplayName = user.Displayname,
+            IsActive = user.IsActive,
+            Notes = user.Notes
+        };
+        NewUser = null;
+        ConfirmDeleteUserId = null;
+    }
+
+    /// <summary>Runs an API call, surfacing the message on failure and reloading on success.</summary>
+    private async Task Run(Func<Task<ApiResult>> action, string successMessage)
+    {
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        var result = await action();
+        if (result.Success)
+        {
+            Notice = successMessage;
+            await Reload();
+        }
+        else
+        {
+            Error = result.Error;
+        }
+
+        Busy = false;
+    }
+
+    private async Task CreateUser()
+    {
+        var request = NewUser!;
+        await Run(() => UserService.AddUser(request), $"User '{request.Username}' created.");
+        if (Error is null) NewUser = null;
+    }
+
+    private async Task SaveUser()
+    {
+        var request = EditUser!;
+        await Run(() => UserService.UpdateUser(request), "User updated.");
+        if (Error is null) EditUser = null;
+    }
+
+    private async Task DeleteUser(UserContract user)
+    {
+        ConfirmDeleteUserId = null;
+        await Run(() => UserService.DeleteUser(user.Id!.Value), $"User '{user.UserName}' deleted.");
+    }
+
+    private async Task AssignRole(UserContract user, string? roleId)
+    {
+        if (!Guid.TryParse(roleId, out var parsed)) return;
+        await Run(() => UserService.AddUserToRole(user.Id!.Value, parsed), "Role assigned.");
+    }
+
+    private async Task RemoveRole(UserContract user, RoleContract role)
+        => await Run(() => UserService.RemoveUserFromRole(user.Id!.Value, role.Id), "Role removed.");
+
+    private async Task CreateRole()
+    {
+        var request = NewRole!;
+        await Run(() => UserService.AddRole(request), $"Role '{request.Name}' created.");
+        if (Error is null) NewRole = null;
+    }
+
+    private async Task SaveRole()
+    {
+        var request = EditRole!;
+        await Run(() => UserService.UpdateRole(request), "Role updated.");
+        if (Error is null) EditRole = null;
+    }
+
+    private async Task DeleteRole(RoleContract role)
+    {
+        ConfirmDeleteRoleId = null;
+        // A role that is still assigned comes back as a 400 with an explanatory message.
+        await Run(() => UserService.DeleteRole(role.Id), $"Role '{role.Name}' deleted.");
+    }
 }

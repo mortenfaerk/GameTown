@@ -1,4 +1,4 @@
-﻿using GameTownApp.Models.Auth;
+﻿
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using System.Net.Http.Json;
@@ -23,7 +23,7 @@ public class AuthService : AuthenticationStateProvider
             BaseAddress = new Uri(apiBaseUrl)
         };
     }
-    public async Task<bool> LoginAsync(LoginModel model)
+    public async Task<bool> LoginAsync(LoginRequest model)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "auth/login")
         {

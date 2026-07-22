@@ -2,8 +2,6 @@
 @page "/login"
 @inject AuthService AuthService
 @inject NavigationManager NavigationManager
-@using GameTownApp.Models;
-@using GameTownApp.Models.Auth
 <div class="login-container">
     <h3>Login</h3>
     <div class="login-form">
@@ -26,7 +24,7 @@
     </div>
 </div>
 @code {
-    LoginModel loginModel = new LoginModel();
+    LoginRequest loginModel = new LoginRequest();
     private string LoginMsg = string.Empty;
     protected override async Task OnInitializedAsync()
     {

@@ -22,7 +22,7 @@ public class UserService(DatabaseContext dbContext, IConfiguration jwtConfigurat
 
         var (pwHash, salt) = ApiKeyHelper.HashPassword(userDTO.Password);
 
-        var user = userDTO.ToApiuser(pwHash, salt);
+        var user = userDTO.ToEntity(pwHash, salt);
         var now = DateTime.UtcNow;
         user.CreatedAt = now;
         user.CreatedBy = creatingUser;
@@ -33,14 +33,14 @@ public class UserService(DatabaseContext dbContext, IConfiguration jwtConfigurat
         await _dbContext.SaveChangesAsync();
         return true;
     }
-    public async Task<UserDTO?> GetUserById(Guid id)
+    public async Task<UserContract?> GetUserById(Guid id)
     {
         var user = await _dbContext.GameTownUsers
             .Include(u => u.Apiroles)
             .FirstOrDefaultAsync(u => u.Id == id);
         if (user == null)
             return null;
-        return new UserDTO(user);
+        return user.ToContract();
     }
     public async Task<UserUpdateResult> UpdateUser(UserUpdateRequest userDTO, string modifyingUser)
     {
@@ -96,17 +96,17 @@ public class UserService(DatabaseContext dbContext, IConfiguration jwtConfigurat
             return UserDeleteResult.Failed("A database error occurred while deleting the user.");
         }
     }
-    public async Task<List<UserDTO>> GetAllUsers()
+    public async Task<List<UserContract>> GetAllUsers()
     {
         var users = await _dbContext.GameTownUsers
             .Include(u => u.Apiroles)
             .ToListAsync();
-        return users.Select(u => new UserDTO(u)).ToList();
+        return users.Select(u => u.ToContract()).ToList();
     }
-    public async Task<List<RoleDTO>> GetAllRoles()
+    public async Task<List<RoleContract>> GetAllRoles()
     {
         var roles = await _dbContext.GameTownRoles.ToListAsync();
-        return roles.Select(r => new RoleDTO(r)).ToList();
+        return roles.Select(r => r.ToContract()).ToList();
     }
     public async Task<UserRoleUpdateResult> AddUserToRole(Guid userId, Guid roleId)
     {
@@ -222,7 +222,7 @@ public class UserService(DatabaseContext dbContext, IConfiguration jwtConfigurat
     }
 
     #region Auth
-    public async Task<GameTownUser?> AuthenticateUser(Models.Auth.LoginRequest req)
+    public async Task<GameTownUser?> AuthenticateUser(LoginRequest req)
     {
         var matchedUser = await _dbContext.GameTownUsers
                       .Include(u => u.Apiroles)

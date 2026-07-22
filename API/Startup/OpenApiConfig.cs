@@ -35,14 +35,15 @@ public static class OpenApiConfig
     {
         if (app.Environment.IsDevelopment())
         {
-            app.MapOpenApi();
+            // Dev-only, and must opt out of the global fallback policy or the docs UI 401s.
+            app.MapOpenApi().AllowAnonymous();
             app.MapScalarApiReference(options =>
             {
                 options.Title = "GameTown API";
                 options.Theme = ScalarTheme.Saturn;
                 options.Layout = ScalarLayout.Modern;
                 options.HideClientButton = true;
-            });
+            }).AllowAnonymous();
         }
     }
 }

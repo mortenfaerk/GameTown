@@ -1,7 +1,177 @@
-﻿@page "/"
+@page "/"
+@inject GamesService GamesService
 
-<PageTitle>Home</PageTitle>
+@* Public by design: anyone on the LAN browses and downloads. Only contributing is gated. *@
 
-<h1>Hello, world!</h1>
+<PageTitle>GameTown</PageTitle>
 
-Welcome to your new app.
+<div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-4">
+    <h1 class="mb-0">@(IsSearching ? "Results" : "Library")</h1>
+
+    @if (IsSearching)
+    {
+        <span class="gt-muted">
+            matching &ldquo;<span class="gt-mist-strong">@Q</span>&rdquo;
+            <a class="ms-2" href="/">Clear</a>
+        </span>
+    }
+    else if (!Loading && Games.Count > 0)
+    {
+        <span class="gt-data">@Games.Count on this page</span>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="alert alert-danger">@Error</div>
+}
+
+@if (Loading)
+{
+    <p class="gt-muted">Loading the shelf…</p>
+}
+else if (Games.Count == 0)
+{
+    <div class="card">
+        <div class="card-body">
+            @if (IsSearching)
+            {
+                <p class="mb-0">Nothing matches &ldquo;@Q&rdquo;. <a href="/">Show the whole library</a>.</p>
+            }
+            else
+            {
+                <p class="mb-1">The shelf is empty.</p>
+                <AuthorizeView Roles="Admin,Contributor">
+                    <Authorized>
+                        <p class="gt-muted mb-0"><a href="addgame">Add the first game</a>.</p>
+                    </Authorized>
+                    <NotAuthorized>
+                        <p class="gt-muted mb-0">A contributor needs to upload something first.</p>
+                    </NotAuthorized>
+                </AuthorizeView>
+            }
+        </div>
+    </div>
+}
+else
+{
+    <div class="shelf">
+        @foreach (var game in Games)
+        {
+            var cover = CoverFor(game);
+            <a class="tile" href="@($"/game/{game.Id}")">
+                <div class="tile__art">
+                    @if (cover is not null)
+                    {
+                        <img src="@cover" alt="Cover art for @game.Title" loading="lazy" />
+                    }
+                    else
+                    {
+                        <div class="tile__fallback">@Initials(game.Title)</div>
+                    }
+                    <span class="tile__size">@FormatSize(game.Size)</span>
+                </div>
+                <p class="tile__title">@game.Title</p>
+                <p class="tile__meta">
+                    @if (game.RawgGame?.Genres.Count > 0)
+                    {
+                        @string.Join(" · ", game.RawgGame.Genres.Take(3).Select(g => g.Name))
+                    }
+                    else
+                    {
+                        <span>&nbsp;</span>
+                    }
+                </p>
+            </a>
+        }
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mt-5">
+        <button class="btn btn-sm btn-outline-secondary" disabled="@(Page <= 1)" @onclick="() => Load(Page - 1)">Previous</button>
+        <span class="gt-data">Page @Page</span>
+        @* The API returns a bare list with no total, so a full page implies there may be more. *@
+        <button class="btn btn-sm btn-outline-secondary" disabled="@(Games.Count < PageSize)" @onclick="() => Load(Page + 1)">Next</button>
+    </div>
+}
+
+@code {
+    /// <summary>Set by the sidebar search, which navigates to /?q=… so results stay linkable.</summary>
+    [SupplyParameterFromQuery(Name = "q")]
+    public string? Q { get; set; }
+
+    private List<GameContract> Games = [];
+    private int Page = 1;
+    private const int PageSize = 24;
+    private bool Loading = true;
+    private string? Error;
+    private string? loadedQuery;
+
+    private bool hasLoaded;
+
+    private bool IsSearching => !string.IsNullOrWhiteSpace(Q);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Re-runs whenever ?q= changes, including navigating back to the unfiltered library.
+        //
+        // The guard keys off an explicit flag rather than Loading: parameters get set again whenever
+        // the cascading auth state resolves or changes (e.g. right after login), and if that landed
+        // mid-request the old guard let a *second* concurrent Load start. Two in-flight fetches then
+        // raced to assign Games, which is why the shelf sometimes came up empty.
+        if (hasLoaded && loadedQuery == Q) return;
+
+        hasLoaded = true;
+        loadedQuery = Q;
+        await Load(1);
+    }
+
+    private async Task Load(int page)
+    {
+        if (page < 1) return;
+
+        Loading = true;
+        Error = null;
+        try
+        {
+            Games = IsSearching
+                ? await GamesService.Search(Q!, page, PageSize)
+                : await GamesService.GetPaged(page, PageSize);
+            Page = page;
+        }
+        catch (Exception ex)
+        {
+            Error = $"Could not load the library: {ex.Message}";
+            Games = [];
+        }
+        Loading = false;
+    }
+
+    /// <summary>
+    /// Cover art, then the first screenshot, then nothing — callers fall back to initials.
+    /// The screenshot step matters because RAWG does not always supply a background image.
+    /// Resolved against the API, since that is what serves /media.
+    /// </summary>
+    private string? CoverFor(GameContract game)
+    {
+        var rawg = game.RawgGame;
+        if (rawg is null) return null;
+
+        var path = !string.IsNullOrWhiteSpace(rawg.BackgroundImage)
+            ? rawg.BackgroundImage
+            : rawg.Screenshots.FirstOrDefault(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image))?.Image;
+
+        return GamesService.ResolveMedia(path);
+    }
+
+    private static string Initials(string title)
+    {
+        var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return "?";
+        var letters = words.Where(w => char.IsLetterOrDigit(w[0])).Take(2).Select(w => char.ToUpperInvariant(w[0]));
+        var result = string.Concat(letters);
+        return string.IsNullOrEmpty(result) ? "?" : result;
+    }
+
+    private static string FormatSize(double megabytes)
+        => megabytes < 1 ? $"{megabytes * 1024:0.#} KB" : $"{megabytes:0.#} MB";
+}

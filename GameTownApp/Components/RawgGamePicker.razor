@@ -1,0 +1,54 @@
+@using GameTownApp.Services
+@inject GamesService GamesService
+
+@*
+    Autocomplete over the RAWG metadata proxy. Emits the *full* record for the chosen game:
+    the search endpoint only returns a summary (no description or screenshots), so the selection
+    is re-fetched via /meta/getGame before being handed to the parent.
+*@
+
+<AutoComplete TItem="RawgGameContract"
+              DataProvider="GamesDataProvider"
+              @bind-Value="SearchQuery"
+              Placeholder="@Placeholder"
+              PropertyName="Name"
+              OnChanged="OnGameSelected"
+              Class="@Class" />
+
+@code {
+    /// <summary>Fires with the fully-populated game, or null when the selection is cleared.</summary>
+    [Parameter] public EventCallback<RawgGameContract?> SelectedGameChanged { get; set; }
+
+    [Parameter] public string Placeholder { get; set; } = "Type to search games...";
+    [Parameter] public string? Class { get; set; } = "mb-3";
+
+    private string? SearchQuery;
+
+    private async Task<AutoCompleteDataProviderResult<RawgGameContract>> GamesDataProvider(
+        AutoCompleteDataProviderRequest<RawgGameContract> request)
+    {
+        var games = await GamesService.SearchGamesMetadata(request.Filter?.Value ?? string.Empty, 1, 20);
+        return new AutoCompleteDataProviderResult<RawgGameContract>
+        {
+            Data = games,
+            TotalCount = games.Count
+        };
+    }
+
+    private async Task OnGameSelected(RawgGameContract? selected)
+    {
+        if (selected is null)
+        {
+            await SelectedGameChanged.InvokeAsync(null);
+            return;
+        }
+
+        SearchQuery = selected.Name;
+
+        var full = selected.Id is null
+            ? selected
+            : await GamesService.GetRawgGameById(selected.Id.Value.ToString());
+
+        await SelectedGameChanged.InvokeAsync(full ?? selected);
+    }
+}

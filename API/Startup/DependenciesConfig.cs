@@ -78,6 +78,19 @@ public static class DependenciesConfig
             {
                 policy.RequireRole("Contributor", "Admin");
             });
+
+            // Secure by default. Endpoints used to be anonymous unless someone remembered to add a
+            // policy, and three of them were missed — leaving game edit/delete and the RAWG proxy
+            // open to anyone on the network. Now an endpoint must opt OUT with .AllowAnonymous().
+            //
+            // This only requires a signed-in user, not a role, so anything that needs a role still
+            // declares .RequireAuthorization("Contributor"/"Admin") explicitly.
+            //
+            // Static files are unaffected: Program.cs runs UseStaticFiles() before UseAuthorization(),
+            // so /media cover art stays public. Do not reorder that middleware.
+            options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+                .RequireAuthenticatedUser()
+                .Build();
         });
         #endregion
     }

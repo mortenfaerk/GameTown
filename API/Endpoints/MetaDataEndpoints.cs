@@ -7,20 +7,24 @@ namespace API.Endpoints
     {
         public static void AddMetaDataEndpoints(this WebApplication app)
         {
+               // These proxy the RAWG API using our key, and only contributor screens call them
+               // (the add-game picker and the RAWG browser). Gating the group keeps the key from
+               // being spent by anyone who can reach the host.
                var group = app.MapGroup("meta")
                 .WithTags("Metadata")
+                     .RequireAuthorization("Contributor")
                      .WithOpenApi()
                      .WithDescription("Endpoints for managing metadata related to the application.");
                group.MapGet("/searchMetadata", SearchGame)
                 .Accepts<string>("text/plain")
-                .Produces<List<ResponseRAWGGameDTO>>(StatusCodes.Status200OK)
+                .Produces<List<RawgGameContract>>(StatusCodes.Status200OK)
                 .Produces(StatusCodes.Status400BadRequest)
                 .Produces(StatusCodes.Status500InternalServerError)
                 .WithName("SearchMetadata")
                 .WithDescription("Searches for games based on a query string. The query string should not be empty and pagination parameters must be greater than zero.");
                group.MapGet("/getGame/{gameid}", GetGame)
                 .Accepts<string>("text/plain")
-                .Produces<ResponseRAWGGameDTO>(StatusCodes.Status200OK)
+                .Produces<RawgGameContract>(StatusCodes.Status200OK)
                 .Produces(StatusCodes.Status400BadRequest)
                 .Produces(StatusCodes.Status500InternalServerError)
                 .WithName("GetGame")
@@ -50,7 +54,9 @@ namespace API.Endpoints
             try
             {
                 var game = await rawgService.GetGameById(gameid);
-                return Results.Ok(game);
+                // Map to the contract rather than returning the EF entity: the contract is where
+                // the description gets sanitised, and it avoids serialising navigation collections.
+                return game is null ? Results.NotFound($"Game with ID {gameid} not found.") : Results.Ok(game.ToContract());
             }catch (Exception ex)
             {
                 return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);

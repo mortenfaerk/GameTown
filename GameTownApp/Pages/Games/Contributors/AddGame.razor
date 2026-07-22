@@ -1,5 +1,147 @@
-﻿<h3>AddGame</h3>
+@page "/addgame"
+@attribute [Authorize(Roles = "Admin,Contributor")]
+@inject GamesService GamesService
+@inject NavigationManager Navigation
+
+<PageTitle>Add game</PageTitle>
+
+<h1>Add a game</h1>
+<p class="text-muted">Upload a game archive and, optionally, attach RAWG metadata to it.</p>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="alert alert-danger alert-dismissible">
+        @Error
+        <button type="button" class="btn-close" @onclick="() => Error = null"></button>
+    </div>
+}
+@if (!string.IsNullOrEmpty(Notice))
+{
+    <div class="alert alert-success">@Notice</div>
+}
+
+<EditForm Model="Request" OnValidSubmit="Submit">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <div class="mb-3">
+        <label class="form-label">Title</label>
+        <InputText class="form-control" @bind-Value="Request.Title" />
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">How to play / install</label>
+        <InputTextArea class="form-control" rows="4" @bind-Value="Request.HowTo" />
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">Game archive</label>
+        <InputFile class="form-control" OnChange="OnFileSelected" accept=".zip,.rar,.7z" />
+        @if (SelectedFile is not null)
+        {
+            <div class="form-text">@SelectedFile.Name — @FormatSize(SelectedFile.Size)</div>
+        }
+        <div class="form-text">Allowed formats: .zip, .rar, .7z</div>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label">RAWG metadata (optional)</label>
+        <RawgGamePicker SelectedGameChanged="OnRawgGameSelected"
+                        Placeholder="Search RAWG for this game…" />
+        @if (SelectedRawgGame is not null)
+        {
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <span class="badge bg-success">Attached: @SelectedRawgGame.Name (id @SelectedRawgGame.Id)</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearRawgGame">Clear</button>
+            </div>
+        }
+    </div>
+
+    <RawgGameCard Game="SelectedRawgGame" />
+
+    <button type="submit" class="btn btn-primary" disabled="@Busy">
+        @(Busy ? "Uploading…" : "Add game")
+    </button>
+</EditForm>
 
 @code {
+    private AddGameRequest Request = new();
+    private IBrowserFile? SelectedFile;
+    private RawgGameContract? SelectedRawgGame;
 
+    private bool Busy;
+    private string? Error;
+    private string? Notice;
+
+    // Blazor caps OpenReadStream at 512 KB unless told otherwise; game archives are far larger.
+    private const long MaxUploadBytes = 2L * 1024 * 1024 * 1024;
+
+    private static readonly string[] AllowedExtensions = [".zip", ".rar", ".7z"];
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        SelectedFile = e.File;
+        Error = null;
+    }
+
+    private void OnRawgGameSelected(RawgGameContract? game)
+    {
+        SelectedRawgGame = game;
+        Request.RawgGameId = game?.Id?.ToString();
+    }
+
+    private void ClearRawgGame()
+    {
+        SelectedRawgGame = null;
+        Request.RawgGameId = null;
+    }
+
+    private async Task Submit()
+    {
+        Error = null;
+        Notice = null;
+
+        if (SelectedFile is null)
+        {
+            Error = "Please choose a game archive to upload.";
+            return;
+        }
+
+        var extension = Path.GetExtension(SelectedFile.Name).ToLowerInvariant();
+        if (!AllowedExtensions.Contains(extension))
+        {
+            Error = "Invalid file format. Only .zip, .rar and .7z files are allowed.";
+            return;
+        }
+
+        Busy = true;
+        try
+        {
+            await using var stream = SelectedFile.OpenReadStream(MaxUploadBytes);
+            var result = await GamesService.AddGame(Request, stream, SelectedFile.Name);
+
+            if (result.Success)
+            {
+                Notice = $"'{Request.Title}' was added.";
+                Request = new AddGameRequest();
+                SelectedFile = null;
+                SelectedRawgGame = null;
+            }
+            else
+            {
+                Error = result.Error;
+            }
+        }
+        catch (Exception ex)
+        {
+            Error = $"Upload failed: {ex.Message}";
+        }
+        Busy = false;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        double mb = bytes / (1024.0 * 1024.0);
+        return mb < 1 ? $"{bytes / 1024.0:0.#} KB" : $"{mb:0.##} MB";
+    }
 }

@@ -17,7 +17,10 @@ public static class AuthEndpoints
 {
     public static void AddAuthEndpoints(this WebApplication app)
     {
+        // Necessarily anonymous — these are how you obtain a token in the first place. Must opt out
+        // of the global fallback policy, or logging in would require already being logged in.
         var group = app.MapGroup("/auth")
+           .AllowAnonymous()
            .WithTags("Authentication")
            .WithOpenApi()
            .WithDescription("Endpoints for API key authentication and JWT token issuance");

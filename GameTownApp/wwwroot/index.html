@@ -1,20 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GameTownApp</title>
+    <title>GameTown</title>
     <base href="/" />
-    <link href="https://cdn.jsdelivr.net/npm/open-iconic@1.1.1/font/css/open-iconic-bootstrap.min.css" rel="stylesheet" />
-    <link href="css/app.css" rel="stylesheet" />
-    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+
+    <!--
+        Load order matters and used to be wrong: GameTownApp.styles.css was loaded BEFORE Bootstrap,
+        so Bootstrap's `.collapse:not(.show){display:none}` beat the sidebar's own
+        `.collapse{display:block}` at equal specificity and hid the entire nav at every width.
+        Framework first, our tokens next, component-scoped styles last.
+
+        data-bs-theme="dark" is what stops Bootstrap rendering light cards and unreadable
+        .text-muted on top of the near-black canvas.
+    -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" integrity="sha384-LN+7fdVzj6u52u30Kp6M/trliBMCMKTyK833zpbD+pXdCLuTusPj697FH4R/5mcr" crossorigin="anonymous" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="_content/Blazor.Bootstrap/blazor.bootstrap.css" />
     <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="GameTownApp.styles.css" />
+
     <link rel="icon" type="image/png" href="favicon.png" />
-    <link href="GameTownApp.styles.css" rel="stylesheet" />
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-LN+7fdVzj6u52u30Kp6M/trliBMCMKTyK833zpbD+pXdCLuTusPj697FH4R/5mcr" crossorigin="anonymous">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css">
-    <link href="_content/Blazor.Bootstrap/blazor.bootstrap.css" rel="stylesheet" />
 </head>
 
 <body>
@@ -27,10 +35,11 @@
     </div>
 
     <div id="blazor-error-ui">
-        An unhandled error has occurred.
+        Something went wrong.
         <a href="." class="reload">Reload</a>
         <span class="dismiss">🗙</span>
     </div>
+
     <script src="_framework/blazor.webassembly.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.7/dist/js/bootstrap.bundle.min.js" integrity="sha384-ndDqU0Gzau9qJ1lfW4pNLlhNTkCfHzAVBReH9diLvGRem5+R9g2FzA8ZGN954O5Q" crossorigin="anonymous"></script>
     <script src="_content/Blazor.Bootstrap/blazor.bootstrap.js"></script>

@@ -1,0 +1,73 @@
+@inject GamesService GamesService
+
+@*
+    Presentation of a single RAWG game. Genres and Developers render for real now — the old
+    ResponseRAWGGameDTO never serialised them, so these lists were always empty.
+
+    Images go through ResolveMedia: metadata straight from RAWG carries absolute CDN URLs (passed
+    through untouched), while anything already re-hosted is a /media path that has to be resolved
+    against the API rather than this app.
+*@
+
+@if (Game is not null)
+{
+    <div class="card mb-4 shadow-sm">
+        <div class="row g-0">
+            <div class="col-md-4">
+                @if (!string.IsNullOrEmpty(Game.BackgroundImage))
+                {
+                    <img src="@GamesService.ResolveMedia(Game.BackgroundImage)" class="img-fluid rounded-start" alt="@Game.Name" />
+                }
+                else
+                {
+                    <div class="tile__fallback" style="min-height: 200px;">@(Game.Name.Length > 0 ? Game.Name[..1].ToUpperInvariant() : "?")</div>
+                }
+            </div>
+            <div class="col-md-8">
+                <div class="card-body">
+                    <h4 class="card-title">@Game.Name</h4>
+
+                    @if (!string.IsNullOrEmpty(Game.Description))
+                    {
+                        <div class="card-text mb-2">@((MarkupString)Game.Description)</div>
+                    }
+
+                    <ul class="list-group list-group-flush mb-3">
+                        <li class="list-group-item"><strong>Released:</strong> @(Game.Released?.ToString("yyyy-MM-dd") ?? "—")</li>
+                        <li class="list-group-item"><strong>Metacritic:</strong> @(Game.Metacritic?.ToString() ?? "—")</li>
+                        <li class="list-group-item"><strong>Rating:</strong> @(Game.Rating?.ToString("0.0") ?? "—")</li>
+                        <li class="list-group-item"><strong>Playtime:</strong> @(Game.Playtime is null ? "—" : $"{Game.Playtime} hours")</li>
+                        <li class="list-group-item">
+                            <strong>Genres:</strong>
+                            @(Game.Genres.Count == 0 ? "—" : string.Join(", ", Game.Genres.Select(g => g.Name)))
+                        </li>
+                        <li class="list-group-item">
+                            <strong>Developers:</strong>
+                            @(Game.Developers.Count == 0 ? "—" : string.Join(", ", Game.Developers.Select(d => d.Name)))
+                        </li>
+                    </ul>
+
+                    @if (!string.IsNullOrEmpty(Game.Website))
+                    {
+                        <a href="@Game.Website" class="btn btn-primary" target="_blank" rel="noopener">Official Website</a>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (ShowScreenshots && Game.Screenshots.Count > 0)
+    {
+        <div class="shots mb-4">
+            @foreach (var shot in Game.Screenshots.Where(s => !s.IsDeleted))
+            {
+                <img src="@GamesService.ResolveMedia(shot.Image)" alt="Screenshot of @Game.Name" loading="lazy" />
+            }
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public RawgGameContract? Game { get; set; }
+    [Parameter] public bool ShowScreenshots { get; set; }
+}

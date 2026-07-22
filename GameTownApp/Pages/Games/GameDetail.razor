@@ -1,0 +1,256 @@
+@page "/game/{Id}"
+@inject GamesService GamesService
+@inject NavigationManager Navigation
+
+@* Public, like the library. Download needs no auth either — only editing does. *@
+
+<PageTitle>@(Game?.Title ?? "Game")</PageTitle>
+
+@if (Loading)
+{
+    <p class="gt-muted">Loading…</p>
+}
+else if (Error is not null && Game is null)
+{
+    <div class="alert alert-danger">@Error</div>
+    <a class="btn btn-outline-secondary" href="/">Back to the library</a>
+}
+else if (Game is null)
+{
+    <div class="card">
+        <div class="card-body">
+            <p class="mb-2">That game is not on the shelf.</p>
+            <a class="btn btn-outline-secondary" href="/">Back to the library</a>
+        </div>
+    </div>
+}
+else
+{
+    @if (!string.IsNullOrEmpty(Error))
+    {
+        <div class="alert alert-danger alert-dismissible">
+            @Error
+            <button type="button" class="btn-close" @onclick="() => Error = null"></button>
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(Notice))
+    {
+        <div class="alert alert-success alert-dismissible">
+            @Notice
+            <button type="button" class="btn-close" @onclick="() => Notice = null"></button>
+        </div>
+    }
+
+    <div class="row g-4 mb-4">
+        <div class="col-12 col-md-4 col-lg-3">
+            <div class="tile__art">
+                @if (Cover is not null)
+                {
+                    <img src="@Cover" alt="Cover art for @Game.Title" />
+                }
+                else
+                {
+                    <div class="tile__fallback">@Initials(Game.Title)</div>
+                }
+            </div>
+        </div>
+
+        <div class="col-12 col-md-8 col-lg-9">
+            <h1 class="mb-1">@Game.Title</h1>
+            <p class="gt-data mb-3">
+                @FormatSize(Game.Size)
+                @if (Game.RawgGame?.Released is not null)
+                {
+                    <span> · released @Game.RawgGame.Released.Value.ToString("yyyy-MM-dd")</span>
+                }
+                @if (Game.RawgGame?.Metacritic is not null)
+                {
+                    <span> · metacritic @Game.RawgGame.Metacritic</span>
+                }
+            </p>
+
+            @if (Game.RawgGame is not null)
+            {
+                <p class="mb-1"><span class="gt-muted">Genres:</span>
+                    @(Game.RawgGame.Genres.Count == 0 ? "—" : string.Join(", ", Game.RawgGame.Genres.Select(g => g.Name)))
+                </p>
+                <p class="mb-3"><span class="gt-muted">Developers:</span>
+                    @(Game.RawgGame.Developers.Count == 0 ? "—" : string.Join(", ", Game.RawgGame.Developers.Select(d => d.Name)))
+                </p>
+            }
+
+            <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-primary" href="@GamesService.GetDownloadUrl(Game.Id)">Download</a>
+
+                <AuthorizeView Roles="Admin,Contributor">
+                    <Authorized>
+                        @if (Game.RawgGame?.Id is not null)
+                        {
+                            <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="RefreshMetadata">
+                                @(Busy ? "Refreshing…" : "Refresh metadata")
+                            </button>
+                        }
+                        @if (ConfirmDelete)
+                        {
+                            <button class="btn btn-danger" disabled="@Busy" @onclick="Delete">Confirm delete</button>
+                            <button class="btn btn-outline-secondary" @onclick="() => ConfirmDelete = false">Cancel</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-outline-danger" @onclick="() => ConfirmDelete = true">Delete</button>
+                        }
+                    </Authorized>
+                </AuthorizeView>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">How to play</h5>
+            <p class="card-text mb-0" style="white-space: pre-wrap;">@Game.HowTo</p>
+        </div>
+    </div>
+
+    @if (Game.RawgGame is not null && !string.IsNullOrWhiteSpace(Game.RawgGame.Description))
+    {
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">About</h5>
+                <div class="card-text">@((MarkupString)Game.RawgGame.Description)</div>
+            </div>
+        </div>
+    }
+
+    @if (Screenshots.Count > 0)
+    {
+        <h5 class="mb-3">Screenshots</h5>
+        <div class="shots mb-4">
+            @foreach (var shot in Screenshots)
+            {
+                <img src="@GamesService.ResolveMedia(shot.Image)" alt="Screenshot of @Game.Title" loading="lazy" />
+            }
+        </div>
+    }
+
+    <a class="btn btn-outline-secondary" href="/">Back to the library</a>
+}
+
+@code {
+    [Parameter] public string Id { get; set; } = string.Empty;
+
+    private GameContract? Game;
+    private bool Loading = true;
+    private bool Busy;
+    private bool ConfirmDelete;
+    private string? Error;
+    private string? Notice;
+
+    private List<ScreenshotContract> Screenshots =>
+        Game?.RawgGame?.Screenshots.Where(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image)).ToList() ?? [];
+
+    /// <summary>Resolved against the API — /media is served there, not by the app.</summary>
+    private string? Cover
+    {
+        get
+        {
+            var rawg = Game?.RawgGame;
+            if (rawg is null) return null;
+            var path = !string.IsNullOrWhiteSpace(rawg.BackgroundImage)
+                ? rawg.BackgroundImage
+                : Screenshots.FirstOrDefault()?.Image;
+            return GamesService.ResolveMedia(path);
+        }
+    }
+
+    private string? loadedId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Only reload when the route id actually changes. Parameters are set again on every
+        // cascading auth-state change, and reloading on each one caused redundant fetches.
+        if (loadedId == Id) return;
+        loadedId = Id;
+        await LoadGame();
+    }
+
+    private async Task LoadGame()
+    {
+        Loading = true;
+
+        if (!Guid.TryParse(Id, out var gameId))
+        {
+            Error = "That is not a valid game id.";
+            Loading = false;
+            return;
+        }
+
+        try
+        {
+            Game = await GamesService.GetById(gameId);
+        }
+        catch (Exception ex)
+        {
+            Error = $"Could not load the game: {ex.Message}";
+        }
+        Loading = false;
+    }
+
+    /// <summary>
+    /// Re-sends the game's existing RAWG id, which routes through EnsureRawgGamePersisted and
+    /// refreshes every stored field. Repairs rows written before the snake_case deserialisation
+    /// fix — those have no cover art — and picks up later changes on RAWG's side.
+    /// </summary>
+    private async Task RefreshMetadata()
+    {
+        if (Game?.RawgGame?.Id is null) return;
+
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        var result = await GamesService.UpdateGame(new GameTownGamePatchRequest
+        {
+            Id = Game.Id.ToString(),
+            RawgGameId = Game.RawgGame.Id.Value.ToString()
+        });
+
+        if (result.Success)
+        {
+            await LoadGame();
+            Notice = "Metadata refreshed from RAWG.";
+        }
+        else
+        {
+            Error = result.Error;
+        }
+
+        Busy = false;
+    }
+
+    private async Task Delete()
+    {
+        if (Game is null) return;
+
+        Busy = true;
+        var result = await GamesService.DeleteGame(Game.Id);
+        Busy = false;
+
+        if (result.Success)
+            Navigation.NavigateTo("/");
+        else
+            Error = result.Error;
+    }
+
+    private static string Initials(string title)
+    {
+        var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return "?";
+        var letters = words.Where(w => char.IsLetterOrDigit(w[0])).Take(2).Select(w => char.ToUpperInvariant(w[0]));
+        var result = string.Concat(letters);
+        return string.IsNullOrEmpty(result) ? "?" : result;
+    }
+
+    private static string FormatSize(double megabytes)
+        => megabytes < 1 ? $"{megabytes * 1024:0.#} KB" : $"{megabytes:0.#} MB";
+}

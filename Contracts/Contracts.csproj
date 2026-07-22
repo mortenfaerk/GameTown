@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>GameTown.Contracts</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    Wire contracts shared by API and GameTownApp. This project must stay dependency-free:
+    no EF Core, no ASP.NET Core. Entity <-> contract mapping lives in API/Mapping/.
+  -->
+
+</Project>

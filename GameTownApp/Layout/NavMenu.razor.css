@@ -1,69 +1,111 @@
-.navbar-toggler {
-    background-color: rgba(0, 129, 112, 0.2);
-    border: 1px solid rgba(0, 129, 112, 0.5);
+/* Sidebar. Class names are ours (gt-*) rather than Bootstrap's, so no framework rule can
+   collide with them again — the previous `.collapse` reuse is what hid this whole panel. */
+
+.gt-brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 3.5rem;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--gt-edge);
 }
 
-.top-row {
-    min-height: 3.5rem;
-    background: rgb(15, 15, 15);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.6);
+.gt-brand__mark {
+    font-family: var(--gt-sans);
+    font-stretch: 125%;
+    font-weight: 800;
+    font-size: 1.05rem;
+    letter-spacing: 0.08em;
+    color: var(--gt-phosphor);
+    text-decoration: none;
+    white-space: nowrap;
 }
 
-.navbar-brand {
-    font-size: 1.1rem;
-    color: rgb(0, 129, 112);
+    .gt-brand__mark:hover {
+        color: var(--gt-mist);
+    }
+
+.gt-brand__toggle {
+    background: transparent;
+    border: 1px solid var(--gt-edge);
+    border-radius: 4px;
+    color: var(--gt-mist);
+    padding: 0.15rem 0.45rem;
+    line-height: 1;
 }
 
-.nav-item {
+/* Hidden by default on narrow screens; the wide-screen rule below shows it. */
+.gt-nav {
+    display: none;
+    padding: 0.9rem 0.75rem 1.25rem;
+}
+
+.gt-nav--open {
+    display: block;
+}
+
+.gt-search {
+    margin-bottom: 1.1rem;
+}
+
+.gt-nav__label {
+    margin: 1.25rem 0 0.35rem 0.5rem;
+}
+
+    .gt-nav__label:first-of-type {
+        margin-top: 0;
+    }
+
+/* ::deep because NavLink renders the anchor itself. */
+::deep a.gt-nav__link {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    height: 2.4rem;
+    padding: 0 0.75rem;
+    border-radius: 5px;
+    color: var(--gt-mist);
     font-size: 0.9rem;
-    padding-bottom: 0.5rem;
+    text-decoration: none;
+    transition: background-color 0.15s ease, color 0.15s ease;
 }
 
-    .nav-item:first-of-type {
-        padding-top: 1rem;
+    ::deep a.gt-nav__link:hover {
+        background-color: rgba(0, 180, 143, 0.12);
+        color: var(--gt-mist);
     }
 
-    .nav-item:last-of-type {
-        padding-bottom: 1rem;
+    ::deep a.gt-nav__link.active {
+        background-color: rgba(0, 180, 143, 0.18);
+        color: var(--gt-phosphor);
+        font-weight: 600;
+        box-shadow: inset 2px 0 0 var(--gt-phosphor);
     }
 
-    .nav-item ::deep a {
-        color: #d0f2ec;
-        border-radius: 4px;
-        height: 3rem;
-        display: flex;
-        align-items: center;
-        line-height: 3rem;
-        padding: 0 1rem;
-        transition: background-color 0.2s ease, color 0.2s ease;
+    ::deep a.gt-nav__link .bi {
+        color: var(--gt-dim);
+        font-size: 0.95rem;
     }
 
-        .nav-item ::deep a.active {
-            background-color: rgba(0, 91, 65, 0.8);
-            color: #ffffff;
-        }
-
-        .nav-item ::deep a:hover {
-            background-color: rgba(0, 129, 112, 0.3);
-            color: white;
-        }
-
-/* Optional: give icons a soft tint */
-.bi {
-    filter: brightness(0.9) saturate(0.8);
-}
+    ::deep a.gt-nav__link.active .bi,
+    ::deep a.gt-nav__link:hover .bi {
+        color: var(--gt-phosphor);
+    }
 
 @media (min-width: 641px) {
-    .navbar-toggler {
+    .gt-brand__toggle {
         display: none;
     }
 
-    .collapse {
+    .gt-nav {
         display: block;
-    }
-
-    .nav-scrollable {
         height: calc(100vh - 3.5rem);
         overflow-y: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    ::deep a.gt-nav__link {
+        transition: none;
     }
 }
