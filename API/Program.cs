@@ -75,3 +75,8 @@ if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development
 app.MapFallbackToFile("index.html").AllowAnonymous();
 
 app.Run();
+
+// Exposes the implicit Program class generated from these top-level statements so the test project
+// can boot the real application through WebApplicationFactory<Program>. Without this it is internal
+// and the tests would have to duplicate startup, which would test a different app than ships.
+public partial class Program;

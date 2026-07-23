@@ -32,7 +32,23 @@ dotnet run --project GameTownApp                  # run just the frontend
 - API docs (Scalar UI) are at `/scalar/v1`; the `https` profile opens it on launch.
 - The frontend resolves its API base URL by environment: `https://localhost:7188` in Development, `https://api.gametowndev.com` otherwise (`GameTownApp/Program.cs`).
 
-There is **no test project** in this solution.
+### Tests
+
+```bash
+dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
+```
+
+55 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the installer uses, so DDL/model drift fails here.
+
+They are written against the bug classes this codebase has actually produced, all of which compiled and ran:
+
+- **`ApiRoutingTests` asserts on `Content-Type`, not just status.** Under SPA-fallback hosting an unmatched route returns `200 text/html`, so a status-only assertion passes while the caller parses a web page as JSON. This is how `.Accepts<T>()` on GET routes went unnoticed.
+- **`AuthenticationTests`** pins the three cookie settings that fail silently: not `Secure` (or the browser discards it over the LAN's plain HTTP), `SameSite=Lax` (the CSRF mitigation), and rejections as 401/403 rather than a 302 to HTML.
+- **`SettingsTests`** boots with no RAWG key configured and asserts a saved key becomes visible to the running service — proof that `RAWGService`/`FileService` still read per call rather than capturing at startup.
+- **`SchemaTests`** compares a fresh install against an upgraded one object-by-object, which is the only place baseline/migration drift would show.
+- **`FileContainmentTests`** covers `FileService.TryResolveWithin`, the check that keeps a stored path from escaping the archive directory.
+
+Prefer adding to these over writing a new harness.
 
 ## Required configuration (user secrets)
 

@@ -197,10 +197,10 @@ feed straight past the sanitiser.
   regardless of sanitiser bugs, and it is the proper compensating control for accepted risk 1. It
   needs care with Blazor WASM's `wasm-unsafe-eval` requirement, and a wrong directive white-screens
   the app — so it wants its own pass with browser verification.
-- **No automated tests.** There is no test project at all. Several of the issues above were found by
-  hand after reaching production-shaped code; an HTTP-level suite covering the anonymous-vs-role
-  matrix, a CORS preflight, and a media fetch at the URL the *browser* composes would have caught most
-  of them.
+- **Browser-level testing.** `Tests/GameTown.Tests` now covers the HTTP surface — the
+  anonymous/Contributor/Admin matrix, the cookie's flags, and the content-type guard — but nothing
+  exercises the SPA in a real browser. The Blazor `AuthenticationStateProvider`, the upload progress
+  bar and media rendering are unverified above the wire.
 
 ## Re-running a review
 

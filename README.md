@@ -167,11 +167,17 @@ dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=$HOME
 [CLAUDE.md](CLAUDE.md) has the full setup, including the HTTPS dev-certificate trust step that Linux
 needs before the browser will talk to the API.
 
-There is currently **no test project** — the largest remaining gap. Each migration phase was verified
-by hand against a running instance, and almost every bug found in the process produced a *working
-build*: routes that returned a web page instead of JSON, a cookie the browser silently discarded, a
-keyring that reset on restart, services still serving configuration captured at startup. None of it
-would have been caught by compiling.
+```bash
+dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
+```
+
+55 tests, mostly HTTP-level against the real app on a throwaway database. They are aimed squarely at
+the failure mode this codebase produces: almost every bug found while building it compiled and ran —
+routes returning a web page instead of JSON, a cookie the browser silently discarded, a keyring that
+reset on restart, services still serving configuration captured at startup. So the tests assert on
+things like `Content-Type` and cookie flags, not just status codes.
+
+Not covered: the SPA in a real browser.
 
 ## Further reading
 
