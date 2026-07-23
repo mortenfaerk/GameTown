@@ -12,8 +12,11 @@ builder.RootComponents.Add<App>("#app");
 builder.RootComponents.Add<HeadOutlet>("head::after");
 
 
-var environment = builder.HostEnvironment.Environment;
-var apiBaseUrl = environment =="Development" ? "https://localhost:7188" : "https://api.gametowndev.com";
+// The API serves this bundle, so the API *is* wherever the app was loaded from. This used to be a
+// compile-time choice between a localhost port and a hard-coded hostname, which meant a build was
+// tied to one deployment; resolving it at runtime is what lets one published artifact run on any
+// LAN — someone else's install, a different port, a reverse proxy — with no rebuild.
+var apiBaseUrl = builder.HostEnvironment.BaseAddress;
 builder.Services.AddScoped<AuthService>(provider => new AuthService(apiBaseUrl));
 builder.Services.AddScoped<AuthenticationStateProvider>(provider => provider.GetRequiredService<AuthService>());
 builder.Services.AddAuthorizationCore();

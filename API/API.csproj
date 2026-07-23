@@ -9,6 +9,9 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
+    <!-- Serves the Blazor WASM client from this project so both are one origin: it maps the
+         _framework/ assets and the Brotli-compressed bundle that UseBlazorFrameworkFiles needs. -->
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.10" />
     <!-- AspNetCore.OpenApi 10.0.10 pulls Microsoft.OpenApi 2.0.0, which has a high-severity
          advisory (GHSA-v5pm-xwqc-g5wc). Pin the latest 2.x; 3.x is a breaking API change. -->
@@ -25,6 +28,10 @@
     <ProjectReference Include="..\Aspire\Aspire.ServiceDefaults\Aspire.ServiceDefaults.csproj" />
     <ProjectReference Include="..\EFModel\EFModel.csproj" />
     <ProjectReference Include="..\Contracts\Contracts.csproj" />
+    <!-- The SPA is published INTO this project's wwwroot. One origin means no CORS, a normal
+         SameSite=Lax cookie instead of SameSite=None, and one artifact that runs on any LAN
+         without a recompile. -->
+    <ProjectReference Include="..\GameTownApp\GameTownApp.csproj" />
   </ItemGroup>
 
   <ItemGroup>
