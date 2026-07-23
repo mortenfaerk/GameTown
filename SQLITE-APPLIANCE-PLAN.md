@@ -15,6 +15,35 @@ Phases are ordered so each one is verifiable against a working app before the ne
 
 ---
 
+## Status
+
+Work is on branch `sqlite-appliance`. The build is green at every commit.
+
+| Phase | State |
+|---|---|
+| 1 — SQLite | **Done**, verified (`5550f2c`, `a5bfa84`) |
+| 2a — single origin | **Done**, verified (`4e9250c`) |
+| 2b — cookie auth | Not started |
+| 3 — config + settings GUI | Not started |
+| 4 — first run + install | Not started |
+| 5 — schema upgrades | Not started |
+
+**Resume at 2b.** Everything below Phase 2's "Swap JWT for ASP.NET Core cookie auth" heading is
+still outstanding; CORS, both delegating handlers, the `RefreshTokens` table and the JWT bearer
+setup are all still in place and still working, so the tree is coherent rather than half-migrated.
+
+Two things learned in Phase 1 that the later phases should reuse:
+
+- **SQLite's failure mode is silence.** Every trap found so far (foreign keys off, `ValueGeneratedNever`
+  on Guid keys, scaffolder type inference, GUID text casing) produced a *working* build that would
+  have corrupted data later. Assume the same of anything new and prove it with a probe.
+- **A throwaway verification harness paid for itself repeatedly.** It caught the FK/cascade behaviour
+  and would have caught the un-wired WAL call had it asserted on `journal_mode`. There is still no
+  test project; the harness lives only in scratch. Wiring an equivalent into the repo is worth doing
+  before Phase 3 adds settings that can be edited at runtime.
+
+---
+
 ## Phase 1 — PostgreSQL → SQLite
 
 The schema is a good fit: 11 tables, no `jsonb`, no arrays, no full-text search. Search is already
