@@ -1,15 +1,7 @@
-﻿using API.Helpers;
-using API.Models.Auth;
 using API.Services;
-using EFModel.Models;
-using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using System.Security.Claims;
-using System.Text;
-
 
 namespace API.Endpoints;
 
@@ -17,111 +9,82 @@ public static class AuthEndpoints
 {
     public static void AddAuthEndpoints(this WebApplication app)
     {
-        // Necessarily anonymous — these are how you obtain a token in the first place. Must opt out
-        // of the global fallback policy, or logging in would require already being logged in.
+        // Necessarily anonymous — this is how you sign in in the first place. Must opt out of the
+        // global fallback policy, or logging in would require already being logged in.
+        //
+        // /me is in the same group and also anonymous: it is the question "am I signed in?", and it
+        // has to be answerable by someone who is not.
         var group = app.MapGroup("/auth")
            .AllowAnonymous()
            .WithTags("Authentication")
            .WithOpenApi()
-           .WithDescription("Endpoints for API key authentication and JWT token issuance");
+           .WithDescription("Sign-in, sign-out, and the current user's identity");
 
-        group.MapPost("/login", Login).WithDescription("Get a JWT Token for use in other endpoints")
+        group.MapPost("/login", Login)
              .Accepts<LoginRequest>("application/json")
-             .WithTags("Authentication")
+             .Produces<CurrentUser>(StatusCodes.Status200OK)
+             .Produces(StatusCodes.Status401Unauthorized)
              .WithName("Login")
-             .Produces<TokenResponse>(StatusCodes.Status200OK)
-             .Produces(StatusCodes.Status401Unauthorized)
-             .Produces(StatusCodes.Status500InternalServerError)
-             .Produces(StatusCodes.Status403Forbidden)
+             .WithDescription("Signs in and issues the auth cookie")
              .WithOpenApi();
-        group.MapPost("/refresh", RefreshToken)
-             .WithDescription("Refresh a JWT Token if the refresh_token cookie is still valid")
-             .WithTags("Authentication")
-             .WithName("RefreshToken")
-             .Produces<TokenResponse>(StatusCodes.Status200OK)
-             .Produces(StatusCodes.Status401Unauthorized)
-             .WithOpenApi();
-        group.MapPost("/logout", Logout)
-             .WithDescription("Logs out the user and clears the refresh_token cookie")
-             .WithTags("Authentication")
-             .WithName("Logout")
+        // The (Delegate) cast is not decoration. Logout's signature — Task<IResult>(HttpContext) —
+        // is implicitly convertible to RequestDelegate, so overload resolution prefers
+        // MapPost(string, RequestDelegate), which returns IEndpointConventionBuilder and has no
+        // .Produces(). The cast forces the MapPost(string, Delegate) overload and a
+        // RouteHandlerBuilder. Login and Me avoid this by accident: Login takes extra parameters and
+        // Me returns a bare IResult, so neither matches RequestDelegate.
+        group.MapPost("/logout", (Delegate)Logout)
              .Produces(StatusCodes.Status204NoContent)
+             .WithName("Logout")
+             .WithDescription("Signs out and clears the auth cookie")
+             .WithOpenApi();
+        group.MapGet("/me", Me)
+             .Produces<CurrentUser>(StatusCodes.Status200OK)
+             .Produces(StatusCodes.Status401Unauthorized)
+             .WithName("CurrentUser")
+             .WithDescription("Returns the signed-in user, or 401 when anonymous")
              .WithOpenApi();
     }
 
     private static async Task<IResult> Login(HttpContext http, LoginRequest req, UserService userService)
     {
-        if (http.Request.Cookies.TryGetValue("refresh_token", out var existingRefreshToken))
-        {
-            var refreshResult = await RefreshToken(http, userService);
-            switch (refreshResult)
-            {
-                case Ok<TokenResponse> ok:
-                    return ok;
-            }
-        }
         var matchedUser = await userService.AuthenticateUser(req);
         if (matchedUser == null)
         {
             return Results.Unauthorized();
         }
-        var token = await userService.GetToken(matchedUser);
-        if (token == null)
-        {
-            return Results.Problem("Kunne ikke generere token", statusCode: StatusCodes.Status500InternalServerError);
-        }
-       
-        var refreshToken = await userService.GenerateAndStoreRefreshToken(matchedUser);
-        var cookieOptions = new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.None,
-            Expires = refreshToken.ExpiresAt
-        };
-        http.Response.Cookies.Append("refresh_token", refreshToken.Token, cookieOptions);
-        
-        return Results.Ok(token);
-             
-    }
-    private static async Task<IResult> RefreshToken(HttpContext http, UserService userService)
-    {
-        if (!http.Request.Cookies.TryGetValue("refresh_token", out var refreshToken))
-        {
-            return Results.Unauthorized();
-        }
 
-        var refreshTokenValidationResult = await userService.ValidateRefreshToken(refreshToken);
-        if (refreshTokenValidationResult.IsRefreshTokenInvalid)
-        {
-            return Results.Unauthorized();
-        }else if (!refreshTokenValidationResult.IsSuccessful)
-        {
-            return Results.Problem("Kunne ikke validere refresh token", statusCode: StatusCodes.Status500InternalServerError);
-        }
-        if(refreshTokenValidationResult.RefreshToken == null || refreshTokenValidationResult.TokenResponse == null)
-        {
-            return Results.Problem("Kunne ikke generere token", statusCode: StatusCodes.Status500InternalServerError);
-        }
-        http.Response.Cookies.Append("refresh_token", refreshTokenValidationResult.RefreshToken.Token, new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.None,
-            Expires = refreshTokenValidationResult.RefreshToken.ExpiresAt
-        });
+        var principal = UserService.BuildPrincipal(matchedUser);
 
-        return Results.Ok(refreshTokenValidationResult.TokenResponse);
+        // IsPersistent keeps the session across a browser restart, which is what people expect from
+        // a media box on their own network. Sliding expiration (configured on the scheme) then
+        // renews it as they use it — that pairing is what replaced the rotating refresh token.
+        await http.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme,
+            principal,
+            new AuthenticationProperties { IsPersistent = true });
+
+        return Results.Ok(ToCurrentUser(principal));
     }
-    private static IResult Logout(HttpContext http)
+
+    private static async Task<IResult> Logout(HttpContext http)
     {
-        http.Response.Cookies.Append("refresh_token", "", new CookieOptions
-        {
-            HttpOnly = true,
-            Secure = true,
-            SameSite = SameSiteMode.Strict,
-            Expires = DateTimeOffset.UtcNow.AddDays(-1) // Expire immediately
-        });
+        await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return Results.NoContent();
     }
+
+    private static IResult Me(HttpContext http)
+    {
+        if (http.User.Identity?.IsAuthenticated != true)
+        {
+            return Results.Unauthorized();
+        }
+        return Results.Ok(ToCurrentUser(http.User));
+    }
+
+    private static CurrentUser ToCurrentUser(ClaimsPrincipal principal) => new()
+    {
+        Username = principal.Identity?.Name ?? string.Empty,
+        Roles = principal.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList(),
+    };
 }

@@ -7,9 +7,18 @@ using API.Models.Games.RAWGData;
 using Microsoft.EntityFrameworkCore;
 namespace API.Services;
 
-public class RAWGService(string apikey, DatabaseContext _context)
+public class RAWGService(SettingsService _settings, DatabaseContext _context)
 {
-    private string APIKey { get; set; } = apikey;
+    /// <summary>
+    /// The RAWG key, read per call rather than captured at construction so the settings page can
+    /// change it without a restart. Throws when unset: RAWG is optional overall — the app runs and
+    /// games can be added by hand — but a call that has already reached this point cannot proceed
+    /// without a key, and failing here is clearer than sending an unauthenticated request.
+    /// </summary>
+    private async Task<string> GetApiKeyAsync()
+        => await _settings.GetRawgApiKeyAsync()
+           ?? throw new InvalidOperationException(
+               "No RAWG API key is configured. Set one under Administer -> Settings, or add games manually.");
     private DatabaseContext context = _context;
 
     /// <summary>
@@ -26,7 +35,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
     public async Task<Rawggame?> GetGameById(string id)
     {
         var client = new RestClient();
-        var request = new RestRequest($"https://api.rawg.io/api/games/{id}", Method.Get).AddParameter("key",APIKey);
+        var request = new RestRequest($"https://api.rawg.io/api/games/{id}", Method.Get).AddParameter("key", await GetApiKeyAsync());
         RestResponse response = await client.ExecuteAsync(request);
 
         if (response.Content == null)
@@ -38,7 +47,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
     {
         var client = new RestClient();
         var request = new RestRequest($"https://api.rawg.io/api/games/{id}/screenshots", Method.Get)
-            .AddParameter("key", APIKey)
+            .AddParameter("key", await GetApiKeyAsync())
             .AddParameter("page", page)
             .AddParameter("page_size", pageSize);
 
@@ -56,7 +65,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
 
         while (result.Next != null && screenshots.Count < foundCount)
         {
-            request = new RestRequest(result.Next, Method.Get).AddParameter("key", APIKey);
+            request = new RestRequest(result.Next, Method.Get).AddParameter("key", await GetApiKeyAsync());
             response = await client.ExecuteAsync(request);
             if (response.Content == null) break;
 
@@ -74,7 +83,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
     {
         var client = new RestClient();
         var request = new RestRequest("https://api.rawg.io/api/games", Method.Get)
-            .AddParameter("key", APIKey)
+            .AddParameter("key", await GetApiKeyAsync())
             .AddParameter("page", page)
             .AddParameter("page_size", pageSize)
             .AddParameter("search", query);
@@ -156,7 +165,7 @@ public class RAWGService(string apikey, DatabaseContext _context)
     }
 
     /// <summary>Removes a locally re-hosted file that a refresh has just replaced.</summary>
-    private static void DeleteSupersededMedia(string? previousPath, string? currentPath)
+    private void DeleteSupersededMedia(string? previousPath, string? currentPath)
     {
         if (string.IsNullOrWhiteSpace(previousPath)
             || !previousPath.StartsWith("/media/")
@@ -167,8 +176,9 @@ public class RAWGService(string apikey, DatabaseContext _context)
 
         try
         {
-            var path = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot",
-                                    previousPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+            var mediaRoot = _settings.MediaDirectory;
+            var fileName = Path.GetFileName(previousPath);
+            var path = Path.Combine(mediaRoot, fileName);
             if (File.Exists(path)) File.Delete(path);
         }
         catch (Exception ex)
@@ -272,7 +282,8 @@ public class RAWGService(string apikey, DatabaseContext _context)
         return resolved;
     }
     /// <summary>
-    /// Downloads a remote image into wwwroot/media and returns its local "/media/{guid}.ext" path,
+    /// Downloads a remote image into the configured media directory and returns its local
+    /// "/media/{guid}.ext" path,
     /// so the library keeps working on a LAN with no internet. Returns null if the download fails
     /// (callers keep the original URL). Already-local paths are passed through untouched, which
     /// makes refreshing a game's metadata idempotent.
@@ -282,7 +293,11 @@ public class RAWGService(string apikey, DatabaseContext _context)
         if (string.IsNullOrWhiteSpace(remoteUrl) || remoteUrl.StartsWith("/media/"))
             return remoteUrl;
 
-        var mediaRoot = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "media");
+        // The data directory, NOT wwwroot. Re-hosted art used to be written inside the published
+        // application, where an in-place upgrade deletes it along with the rest of the app folder —
+        // silently emptying the library's covers. The stored "/media/..." URLs are unchanged; only
+        // the physical location moved, and Program.cs maps that request path onto this directory.
+        var mediaRoot = _settings.MediaDirectory;
         Directory.CreateDirectory(mediaRoot);
 
         try

@@ -7,4 +7,5 @@
   <Project Path="Contracts/Contracts.csproj" />
   <Project Path="EFModel/EFModel.csproj" />
   <Project Path="GameTownApp/GameTownApp.csproj" />
+  <Project Path="Tests/GameTown.Tests/GameTown.Tests.csproj" />
 </Solution>

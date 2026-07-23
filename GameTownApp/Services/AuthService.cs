@@ -1,4 +1,3 @@
-﻿
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.WebAssembly.Http;
 using System.Net.Http.Json;
@@ -6,160 +5,111 @@ using System.Security.Claims;
 
 namespace GameTownApp.Services;
 
+/// <summary>
+/// Authentication state, backed by the server's auth cookie.
+///
+/// The browser holds an HttpOnly cookie it cannot read, so this class does not — and cannot — hold a
+/// token. It asks the server who the caller is (GET /auth/me) and caches the answer for rendering.
+/// That is a genuine improvement on the JWT arrangement it replaced, where the SPA parsed claims out
+/// of a token sitting in WASM memory: readable by any injected script, and self-asserted rather than
+/// server-asserted.
+///
+/// Note what is NOT here any more: no token expiry tracking, no refresh timer, no delegating
+/// handler. The cookie's sliding expiration renews it server-side, so there is nothing to schedule.
+/// </summary>
 public class AuthService : AuthenticationStateProvider
 {
     private readonly HttpClient _http;
-    private string? _jwtToken;
-    private DateTime? _tokenExpiration;
-    public string? Username { get; private set; }
-    public List<string> Roles { get; private set; } = new();
 
-    public bool IsAuthenticated => !string.IsNullOrEmpty(_jwtToken);
+    public string? Username { get; private set; }
+    public List<string> Roles { get; private set; } = [];
+    public bool IsAuthenticated => Username is not null;
 
     public AuthService(string apiBaseUrl)
     {
-        _http = new HttpClient
-        {
-            BaseAddress = new Uri(apiBaseUrl)
-        };
+        _http = new HttpClient { BaseAddress = new Uri(apiBaseUrl) };
     }
+
     public async Task<bool> LoginAsync(LoginRequest model)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "auth/login")
         {
             Content = JsonContent.Create(model)
         };
-
-
-        request.Options.Set(
-            new HttpRequestOptionsKey<BrowserRequestCredentials>("BrowserRequestCredentials"),
-            BrowserRequestCredentials.Include
-        );
+        // Same-origin now, but stated explicitly: this request both sends and receives the auth
+        // cookie, and it is the one call where getting that wrong silently produces a signed-in
+        // server and a signed-out browser.
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
 
         var response = await _http.SendAsync(request);
-        if (response.IsSuccessStatusCode)
+        if (!response.IsSuccessStatusCode)
         {
-            var tokenResponse = await response.Content.ReadFromJsonAsync<TokenResponse>();
-            if (tokenResponse?.Token is not null)
-            {
-                _jwtToken = tokenResponse.Token;
-                _tokenExpiration = tokenResponse.ExpiresUTC;
-                NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
-                return true;
-            }
+            Apply(null);
+            return false;
         }
-        _jwtToken = null;
-        _tokenExpiration = null;
-        NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
-        return false;
+
+        Apply(await response.Content.ReadFromJsonAsync<CurrentUser>());
+        return IsAuthenticated;
     }
-    public async Task<bool> RefreshTokenAsync()
+
+    /// <summary>
+    /// Asks the server who we are. Returns false when anonymous — which is an ordinary answer, not
+    /// an error: a visitor with no cookie gets 401 here and simply browses the library signed out.
+    /// </summary>
+    public async Task<bool> RefreshUserAsync()
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, "auth/refresh");
-
-        request.Options.Set(
-            new HttpRequestOptionsKey<BrowserRequestCredentials>("BrowserRequestCredentials"),
-            BrowserRequestCredentials.Include
-        );
+        var request = new HttpRequestMessage(HttpMethod.Get, "auth/me");
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
 
         var response = await _http.SendAsync(request);
-
-        if (response.IsSuccessStatusCode)
+        if (!response.IsSuccessStatusCode)
         {
-            var tokenResponse = await response.Content.ReadFromJsonAsync<TokenResponse>();
-            if (tokenResponse?.Token is not null)
-            {
-                _jwtToken = tokenResponse.Token;
-                _tokenExpiration = tokenResponse.ExpiresUTC;
-                NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
-                return true;
-            }
+            Apply(null);
+            return false;
         }
-        _jwtToken = null;
-        _tokenExpiration = null;
-        NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
-        return false;
+
+        Apply(await response.Content.ReadFromJsonAsync<CurrentUser>());
+        return IsAuthenticated;
     }
+
     public async Task LogoutAsync()
     {
-        await _http.PostAsync("auth/logout", null);
-        _jwtToken = null;
-        _tokenExpiration = null;
+        var request = new HttpRequestMessage(HttpMethod.Post, "auth/logout");
+        request.SetBrowserRequestCredentials(BrowserRequestCredentials.Include);
+        try
+        {
+            await _http.SendAsync(request);
+        }
+        catch
+        {
+            // The server being unreachable must not trap someone in a signed-in UI; drop the local
+            // state regardless and let the next call discover the truth.
+        }
+        Apply(null);
+    }
+
+    public override Task<AuthenticationState> GetAuthenticationStateAsync()
+    {
+        var identity = IsAuthenticated
+            ? new ClaimsIdentity(BuildClaims(), authenticationType: "gametown")
+            : new ClaimsIdentity();
+
+        return Task.FromResult(new AuthenticationState(new ClaimsPrincipal(identity)));
+    }
+
+    private IEnumerable<Claim> BuildClaims()
+    {
+        yield return new Claim(ClaimTypes.Name, Username!);
+        foreach (var role in Roles)
+        {
+            yield return new Claim(ClaimTypes.Role, role);
+        }
+    }
+
+    private void Apply(CurrentUser? user)
+    {
+        Username = user?.Username;
+        Roles = user?.Roles ?? [];
         NotifyAuthenticationStateChanged(GetAuthenticationStateAsync());
-    }
-
-    public string? GetToken() => _jwtToken;
-    public DateTime? GetTokenExpiration() => _tokenExpiration;
-
-    public override async Task<AuthenticationState> GetAuthenticationStateAsync()
-    {
-        var identity = new ClaimsIdentity();
-        Username = null;
-        Roles.Clear();
-        if (IsAuthenticated && _tokenExpiration > DateTime.UtcNow && !string.IsNullOrEmpty(_jwtToken))
-        {
-            var claims = ParseClaimsFromJwt(_jwtToken).ToList();
-            identity = new ClaimsIdentity(claims, "jwt");
-
-            Username = claims.FirstOrDefault(c => c.Type == ClaimTypes.Name)?.Value;
-            Roles = claims
-                .Where(c => c.Type == ClaimTypes.Role)
-                .Select(c => c.Value)
-                .ToList();
-            _http.DefaultRequestHeaders.Authorization =
-           new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _jwtToken);
-        }
-        else
-        {
-            _http.DefaultRequestHeaders.Authorization = null;
-        }
-        var user = new ClaimsPrincipal(identity);
-        var state = new AuthenticationState(user);
-
-        return state;
-    }
-
-    private List<Claim> ParseClaimsFromJwt(string jwt)
-    {
-        var claims = new List<Claim>();
-        var payload = jwt.Split('.')[1];
-        var jsonBytes = ParseBase64WithoutPadding(payload);
-        var keyValuePairs = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(jsonBytes);
-
-        if (keyValuePairs != null)
-        {
-            foreach (var kvp in keyValuePairs)
-            {
-                if (kvp.Key == "role" || kvp.Key == "roles")
-                {
-                    if (kvp.Value is System.Text.Json.JsonElement element && element.ValueKind == System.Text.Json.JsonValueKind.Array)
-                    {
-                        foreach (var role in element.EnumerateArray())
-                        {
-                            claims.Add(new Claim(ClaimTypes.Role, role.GetString() ?? ""));
-                        }
-                    }
-                    else
-                    {
-                        claims.Add(new Claim(ClaimTypes.Role, kvp.Value.ToString() ?? ""));
-                    }
-                }
-                else
-                {
-                    claims.Add(new Claim(kvp.Key, kvp.Value.ToString() ?? ""));
-                }
-            }
-        }
-
-        return claims;
-    }
-    private byte[] ParseBase64WithoutPadding(string base64)
-    {
-        switch (base64.Length % 4)
-        {
-            case 2: base64 += "=="; break;
-            case 3: base64 += "="; break;
-        }
-        return Convert.FromBase64String(base64);
     }
 }

@@ -8,10 +8,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="10.0.10" />
-    <!-- Npgsql 10.0.3 pins Relational 10.0.4; reference it directly so the 10.0.10 we
-         compile against is also the one resolved at runtime (otherwise: FileNotFoundException). -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.10" />
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.10">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -20,6 +18,12 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
+    <!-- Direct reference purely to override a transitive one. Microsoft.EntityFrameworkCore.Sqlite
+         10.0.10 pulls SQLitePCLRaw.lib.e_sqlite3 2.1.11, which carries a high-severity advisory
+         (GHSA-2m69-gcr7-jv3q) and raises NU1903 on every build. Unlike the AngleSharp pin described
+         in SECURITY-NOTES.md this one is an ordinary version range, so bumping the bundle to 2.1.12
+         resolves it. Remove once the EF Core package depends on a fixed version by itself. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.12" />
   </ItemGroup>
 
 </Project>

@@ -8,6 +8,15 @@ public static class GamesEndpoints
 {
     public static void AddGamesTownGamesEndpoints(this WebApplication app)
     {
+        // NB: no .Accepts<T>() on the GET routes below, and do not add any.
+        //
+        // Accepts describes a request BODY, and it applies a content-type constraint to the endpoint.
+        // A GET carries no body and no Content-Type, so `.Accepts<int>("text/plain")` made these
+        // routes unmatchable by any normal client — including this app's own HttpClient.
+        //
+        // That used to surface as a 404. Since the API began serving the SPA it is far worse: the
+        // request falls through to MapFallbackToFile and comes back 200 text/html, so the caller sees
+        // success and tries to parse the SPA shell as JSON.
         var group = app.MapGroup("/GTGames")
             .WithTags("GameTown Games")
             .WithOpenApi()
@@ -25,21 +34,21 @@ public static class GamesEndpoints
         // Browsing and downloading are public by design (anyone on the LAN); everything that
         // mutates requires Contributor. The global fallback policy means the reads below have to
         // opt out explicitly.
-        group.MapGet("/{id}", GetGameById).Accepts<string>("text/plain")
+        group.MapGet("/{id}", GetGameById)
             .AllowAnonymous()
             .Produces<GameContract>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .WithName("GetGameById")
             .WithDescription("Retrieves a game from GameTown by its unique identifier. The ID should be a valid GUID format.");
-        group.MapGet("/download/{id}", DownloadGame).Accepts<string>("text/plain")
+        group.MapGet("/download/{id}", DownloadGame)
             .AllowAnonymous()
             .Produces<FileStreamResult>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .WithName("DownloadGame")
             .WithDescription("Downloads a game from GameTown by its unique identifier. The ID should be a valid GUID format.");
-        group.MapDelete("/{id}", RemoveGameById).Accepts<string>("text/plain")
+        group.MapDelete("/{id}", RemoveGameById)
             .RequireAuthorization("Contributor")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
@@ -54,18 +63,15 @@ public static class GamesEndpoints
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("UpdateGame")
             .WithDescription("Updates an existing game in GameTown. The game data should be provided in the request body as JSON, including the unique identifier (ID) of the game to be updated.");
-        group.MapGet("/getPaged/{page}/{pageSize}", GetGamesPaged).Accepts<int>("text/plain")
+        group.MapGet("/getPaged/{page}/{pageSize}", GetGamesPaged)
             .AllowAnonymous()
-            .Accepts<int>("text/plain")
             .Produces<IEnumerable<GameContract>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("GetGamesPaged")
             .WithDescription("Retrieves a paginated list of games from GameTown. The page and page size must be greater than zero.");
-        group.MapGet("/search/", SearchGame).Accepts<GameTownGameSearchRequest>("text/plain")
+        group.MapGet("/search/", SearchGame)
             .AllowAnonymous()
-            .Accepts<int>("text/plain")
-            .Accepts<int>("text/plain")
             .Produces<IEnumerable<GameContract>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status500InternalServerError)
@@ -150,24 +156,27 @@ public static class GamesEndpoints
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
     }
-    private static async Task<IResult> AddGameWithFile([FromForm] AddGameWithFileForm form, GTGamesService _gameService, FileService _fileService)
+    private static async Task<IResult> AddGameWithFile([FromForm] AddGameWithFileForm form, GTGamesService _gameService, FileService _fileService, SettingsService _settings)
     {
         if (form.File == null)
             return Results.BadRequest("No file uploaded.");
 
-        var allowedExtensions = new[] { ".zip", ".rar", ".7z" };
+        // The allowlist is configurable (admin settings) rather than hard-coded, and it is checked
+        // HERE rather than only in the browser: the file picker's accept filter is a convenience,
+        // not a control, since anything can POST to this endpoint directly.
         var fileExtension = Path.GetExtension(form.File.FileName).ToLowerInvariant();
-
-        if (!allowedExtensions.Contains(fileExtension))
-            return Results.BadRequest("Invalid file format. Only .zip, .rar, and .7z files are allowed.");
-
+        if (!await _fileService.IsAllowedFileTypeAsync(form.File.FileName))
+        {
+            var allowed = string.Join(", ", await _settings.GetAllowedFileTypesAsync());
+            return Results.BadRequest($"Invalid file format. Allowed types: {allowed}.");
+        }
 
 
         // Never build a path from the client-supplied name: identically named uploads would
         // overwrite each other, and "../" would escape GameFilesPath entirely. The friendly name
         // shown on download is derived from the game's Title instead.
         var storedFileName = $"{Guid.NewGuid()}{fileExtension}";
-        var filePath = _fileService.GetGameFilePath(storedFileName);
+        var filePath = await _fileService.GetGameFilePathAsync(storedFileName);
         using (var stream = new FileStream(filePath, FileMode.Create))
         {
             await form.File.CopyToAsync(stream);
@@ -204,7 +213,8 @@ public static class GamesEndpoints
             return Results.NotFound($"Game with ID {id} not found.");
 
         // Never open a stored path directly — it must be proven to live inside GameFilesPath.
-        if (!_fileService.TryResolveGameFile(gameFile.Url, out var resolvedPath) || !File.Exists(resolvedPath))
+        var (resolved, resolvedPath) = await _fileService.TryResolveGameFileAsync(gameFile.Url);
+        if (!resolved || !File.Exists(resolvedPath))
             return Results.NotFound("Game file not found.");
 
         var stream = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read);

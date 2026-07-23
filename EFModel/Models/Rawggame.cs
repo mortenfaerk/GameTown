@@ -17,7 +17,7 @@ public partial class Rawggame
 
     public int? Metacritic { get; set; }
 
-    public DateOnly? Released { get; set; }
+    public DateTime? Released { get; set; }
 
     public bool? Tba { get; set; }
 

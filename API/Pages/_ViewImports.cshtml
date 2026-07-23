@@ -1,0 +1,8 @@
+@namespace API.Pages
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+
+@*
+    Without this file the tag helpers are inactive, and the consequence is not cosmetic: a plain
+    <form method="post"> then emits no __RequestVerificationToken, while Razor Pages still validates
+    antiforgery on POST. Every submission fails with a bare 400 and no explanation.
+*@

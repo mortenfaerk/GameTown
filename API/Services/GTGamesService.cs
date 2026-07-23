@@ -89,7 +89,8 @@ namespace API.Services
             // in the database unlink a file anywhere the service can write.
             try
             {
-                if (_fileService.TryResolveGameFile(game.Url, out var filePath) && File.Exists(filePath))
+                var (resolved, filePath) = await _fileService.TryResolveGameFileAsync(game.Url);
+                if (resolved && File.Exists(filePath))
                 {
                     File.Delete(filePath);
                 }
