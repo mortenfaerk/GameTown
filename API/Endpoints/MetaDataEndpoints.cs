@@ -16,14 +16,12 @@ namespace API.Endpoints
                      .WithOpenApi()
                      .WithDescription("Endpoints for managing metadata related to the application.");
                group.MapGet("/searchMetadata", SearchGame)
-                .Accepts<string>("text/plain")
                 .Produces<List<RawgGameContract>>(StatusCodes.Status200OK)
                 .Produces(StatusCodes.Status400BadRequest)
                 .Produces(StatusCodes.Status500InternalServerError)
                 .WithName("SearchMetadata")
                 .WithDescription("Searches for games based on a query string. The query string should not be empty and pagination parameters must be greater than zero.");
                group.MapGet("/getGame/{gameid}", GetGame)
-                .Accepts<string>("text/plain")
                 .Produces<RawgGameContract>(StatusCodes.Status200OK)
                 .Produces(StatusCodes.Status400BadRequest)
                 .Produces(StatusCodes.Status500InternalServerError)

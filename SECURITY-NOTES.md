@@ -113,6 +113,22 @@ Two consequences worth holding onto:
 > `Access-Control-Allow-Origin` header was written — which once broke login entirely. Same-origin
 > hosting removed CORS and that whole hazard with it.
 
+### Never put `.Accepts<T>(...)` on a GET or DELETE
+
+`Accepts` describes a request **body**, and it applies a content-type constraint to the endpoint. A
+GET or DELETE carries no body and no `Content-Type`, so the route becomes unmatchable by any normal
+client — including this app's own `HttpClient`.
+
+Four routes shipped this way (`GET /GTGames/getPaged`, `/GTGames/search`, `/GTGames/{id}`,
+`/meta/*`, plus `GET /users/get` and `DELETE /users/delete`). While the SPA was a separate origin the
+symptom was a 404. Since the API began serving the SPA it is worse: the request falls through to
+`MapFallbackToFile` and returns **200 `text/html`**, so the caller sees success and parses the SPA
+shell as JSON.
+
+That is the general hazard of SPA-fallback hosting — a mis-declared API route no longer 404s, it
+silently returns a web page. When an API call behaves strangely, check the response `Content-Type`
+before anything else.
+
 ### The settings endpoints are more sensitive than they look
 
 `POST /settings/check-path` takes an arbitrary server path from the client and reports whether it

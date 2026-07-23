@@ -31,7 +31,6 @@ public static class UserEndpoints
 
         group.MapGet("/get", GetUser).WithDescription("Get user")
             .RequireAuthorization("Admin")
-            .Accepts<string>("application/json")
             .Produces<UserContract>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
@@ -49,7 +48,6 @@ public static class UserEndpoints
             .WithOpenApi();
         group.MapDelete("/delete", DeleteUser).WithDescription("Delete user")
             .RequireAuthorization("Admin")
-            .Accepts<Guid>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status404NotFound)
