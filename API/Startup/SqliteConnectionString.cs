@@ -24,8 +24,30 @@ public static class SqliteConnectionString
                 "No database connection string configured. Expected something like " +
                 "\"Data Source=/var/lib/gametown/gametown.db\".");
 
-        var b = new SqliteConnectionStringBuilder(connectionString) { ForeignKeys = true };
-        return b.ToString();
+        try
+        {
+            var b = new SqliteConnectionStringBuilder(connectionString) { ForeignKeys = true };
+            return b.ToString();
+        }
+        catch (ArgumentException ex)
+        {
+            // The overwhelmingly likely cause is a connection string left over from the PostgreSQL
+            // era — GameTown was database-first on Npgsql before it moved to SQLite. SqliteConnection-
+            // StringBuilder rejects `Host=`/`Port=`/`Username=` with a keyword error that gives no
+            // hint of that, and it happens at startup, so the process just aborts (exit 134). Name the
+            // real cause instead.
+            var looksLikePostgres = connectionString.Contains("Host=", StringComparison.OrdinalIgnoreCase)
+                                 || connectionString.Contains("Username=", StringComparison.OrdinalIgnoreCase);
+            var hint = looksLikePostgres
+                ? " This looks like a PostgreSQL connection string. GameTown uses SQLite now — set " +
+                  "ConnectionStrings:DefaultConnection to \"Data Source=/path/to/gametown.db\" (in " +
+                  "development: dotnet user-secrets set \"ConnectionStrings:DefaultConnection\" " +
+                  "\"Data Source=$HOME/gametown/gametown.db\" --project API)."
+                : string.Empty;
+
+            throw new InvalidOperationException(
+                $"The configured connection string is not a valid SQLite one.{hint}", ex);
+        }
     }
 
     /// <summary>
