@@ -107,44 +107,110 @@ read transactions. Without WAL a large download can block a metadata write.
 
 ## Phase 2 — Single origin, and delete the auth plumbing
 
-The API project serves the WASM bundle from `wwwroot` and hosts the endpoints. One process, one
-origin, one port.
+### 2a — hosting (DONE, `4e9250c`)
 
-### Deletions
+The API serves the WASM bundle; the client resolves its base address at runtime. `MapFallbackToFile`
+is `.AllowAnonymous()` because the authorization `FallbackPolicy` treats it as an endpoint like any
+other — without that, `index.html` sits behind auth and a signed-out visitor cannot reach the page
+that would let them sign in.
 
-- `API/Startup/CorsConfig.cs` — gone entirely, along with the `UseCors()`-ordering invariant in
-  `Program.cs` that broke login once.
-- `GameTownApp/Helpers/TokenRefreshHandler.cs` and `CookieHandler.cs` — gone.
-- The JWT parsing in `AuthService.cs:122-160` and its private `HttpClient` — gone.
-- `GamesService.ResolveMedia` (`GamesService.cs:58-75`) — `/media/x.jpg` now just resolves.
-- The compile-time API base URL in `GameTownApp/Program.cs:16` — relative paths instead. **This is
-  what makes one published artifact run on every operator's LAN without a recompile.**
+### 2b — swap JWT for ASP.NET Core cookie auth
 
-### Swap JWT for ASP.NET Core cookie auth
+The client stops holding a token at all. Same-origin means an ordinary `SameSite=Lax` cookie, and
+cookie auth with `SlidingExpiration = true` does the job that `/auth/refresh`, the `refresh_token`
+cookie, `RefreshTokenValidationResult` and the `RefreshTokens` table currently do between them.
 
-Same-origin means a normal `SameSite=Lax` cookie. The client no longer holds a token at all.
+#### This is a real security-posture regression: CSRF comes back
 
-**This deletes the entire refresh-token mechanism.** Cookie auth with `SlidingExpiration = true`
-does the job that `/auth/refresh`, the `refresh_token` cookie, `RefreshTokenValidationResult` and the
-`RefreshTokens` table currently do between them. Drop the table in the Phase 1 schema rewrite rather
-than migrating it.
+**Write this up in SECURITY-NOTES.md, not just a code comment.** It is the one genuine regression in
+the whole migration and the notes exist for exactly this kind of knowingly-accepted trade.
 
-Replace client-side claim parsing with a `GET /auth/me` endpoint returning username + roles; the
-`AuthenticationStateProvider` calls that.
+A bearer token is attached by *our* code, so a cross-site request never carries it — JWT-in-header is
+structurally CSRF-immune. A cookie is attached by the *browser*, so it is not. The mitigation:
 
-**Persist Data Protection keys to disk** (`PersistKeysToFileSystem`). Cookie auth encrypts the auth
-cookie with them, and the default in-memory keyring means every restart silently logs everyone out —
-which will look like a bug in the settings page, since saving settings restarts the app.
+- `SameSite=Lax` withholds the cookie on cross-site subresource requests, including cross-site
+  `POST`/`fetch`. That kills classic CSRF.
+- Lax **does** send the cookie on top-level cross-site GET navigation. So the mitigation holds only
+  because every state-changing route is `POST`/`PATCH`/`DELETE`. Record that as a standing
+  invariant: **a GET must never mutate state.** It is currently true and easy to break by accident.
+- Residual risk (same-site attacker, non-conforming browser) is acceptable for a LAN appliance.
+  Antiforgery tokens are the documented upgrade path if this ever faces the internet.
 
-### Consequences
+Recommendation: accept with `SameSite=Lax`, documented — do not silently adopt it.
 
-- `upload.js` drops its `token` parameter; the auth cookie rides along automatically. The pre-flight
-  refresh in `UploadService.cs:31-37` goes away with it.
-- `UseHttpsRedirection()` becomes conditional — see Phase 4.
-- `Contracts` stays exactly as it is. It is still the wire contract, and still the boundary that must
-  never gain an EF Core reference.
-- Aspire's orchestration role largely disappears with only one runnable project. Keep it for the
-  dashboard/telemetry or drop it — it stops being the entry point either way.
+#### Server work
+
+`API/Endpoints/AuthEndpoints.cs` shrinks a lot. `Login` currently tries a refresh first
+(`AuthEndpoints.cs:54-62`), issues a JWT, then mints and stores a refresh token; it becomes
+authenticate → build `ClaimsPrincipal` → `SignInAsync`. `Logout` becomes `SignOutAsync`.
+`RefreshToken` is deleted outright.
+
+`UserService.GetToken` (`UserService.cs:237`) already assembles exactly the claims we need — name,
+identifier, one `ClaimTypes.Role` per role. Keep that claim-building and drop only the JWT encoding
+around it. `GenerateAndStoreRefreshToken` and `ValidateRefreshToken` go.
+
+Add `GET /auth/me` returning username + roles for the client's `AuthenticationStateProvider`.
+
+**Four configuration traps, all of which produce a working build:**
+
+1. **Cookie auth answers a 401 with a 302 to a login page.** That is the ASP.NET default and it is
+   wrong for an API — `fetch` follows the redirect and gets `200 text/html`, so the client sees
+   success and parses HTML as JSON. Override `Events.OnRedirectToLogin` to return 401.
+2. **Do the same for `OnRedirectToAccessDenied` → 403**, or a role failure (`Contributor`/`Admin`)
+   redirects to HTML instead of returning 403.
+3. **`SecurePolicy` must be `SameAsRequest`, not the default `Always`.** The appliance default is
+   HTTP on a LAN (Phase 4); `Always` marks the cookie `Secure` and the browser then silently drops
+   it over HTTP, so login appears to succeed and every subsequent request is anonymous.
+4. **Persist Data Protection keys to disk** (`PersistKeysToFileSystem` into the data directory). The
+   default keyring is in-memory, so every restart invalidates every auth cookie. This will present
+   as "saving a setting logs everyone out" in Phase 3, which reads as a settings bug, not a crypto
+   one.
+
+#### Dropping RefreshTokens is a cross-file cascade — land it as one commit
+
+Removing the table means re-scaffolding, which deletes the `RefreshToken` entity, which breaks
+everything referencing it. All of this has to move together or the tree will not compile:
+
+- `Database/sqlite/01_schema.sql` — drop the table, re-scaffold `EFModel`.
+- `EFModel/DatabaseContextConfiguration.cs` — remove the `Entity<RefreshToken>()` line. **This is the
+  one that is easy to forget**, because it is hand-written and outside `Models/`.
+- `API/Models/Auth/RefreshTokenValidationResult.cs` — delete.
+- `UserService` — the two refresh methods, and the `GameTownUser.RefreshTokens` navigation goes away
+  with the scaffold.
+
+Grep for `RefreshToken` across the solution before calling 2b buildable.
+
+#### Client work
+
+- Rewrite `AuthService` around `GET /auth/me`; delete the JWT parsing (`AuthService.cs:122-160`) and
+  its private `HttpClient` — the reason that second client existed (avoiding recursion through the
+  refresh handler) disappears with the handler.
+- Delete `TokenRefreshHandler.cs`. **Verify rather than assume** whether `CookieHandler.cs` can go —
+  same-origin `fetch` should carry cookies by default, but confirm the WASM `HttpClient` credential
+  default instead of trusting it.
+- `GameTownApp/Program.cs` startup restore currently calls `RefreshTokenAsync()` inside a try/catch
+  so an unreachable API cannot white-screen the app. Keep that guard exactly as it is; only the call
+  changes, to `/auth/me`.
+- `upload.js` drops its `token` parameter, and the pre-flight refresh in `UploadService.cs:31-37`
+  goes with it — the cookie rides along on a same-origin XHR.
+- One grep for anything else reading the JWT (Scalar's authorize affordance, `TestEndpoints`).
+
+#### Then delete CORS
+
+`API/Startup/CorsConfig.cs` and the `UseCors()` call, along with the ordering invariant in
+`Program.cs` that broke login once. **Do this last** — deleting it before same-origin auth works
+leaves a broken app whose cause is not obvious.
+
+Also: `GamesService.ResolveMedia` (`GamesService.cs:58-75`) becomes unnecessary, `Contracts` stays
+exactly as it is, and Aspire stops being the entry point with only one runnable project (keep it for
+the dashboard or drop it).
+
+#### How you will know it works
+
+Boot with no cookie: `/auth/me` returns 401 and the app renders anonymous. Log in: the library still
+lists, `Administer` appears in the nav, `/users/getAll` returns 200. Then **restart the process** and
+reload — still signed in, which is what proves Data Protection keys persisted. Finally confirm a
+role failure returns a real 403 and not a 302 to HTML.
 
 ---
 
@@ -253,6 +319,31 @@ refactor above. Anything Kestrel-level (bind address, port) cannot. Keep restart
 of this GUI entirely rather than showing a "restart required" banner: they belong to the install
 script, and a settings page that can make the app unreachable is a support burden on someone else's LAN.
 
+### Storage and caching
+
+A `Settings` table of key/value rows, read through a scoped `SettingsService`. Key/value rather than a
+one-row-many-columns table because Phase 5 then adds a setting with an INSERT instead of an
+`ALTER TABLE`.
+
+Caching is the subtle part. Reading every setting from SQLite on every request is fine at this scale,
+so **start with no cache** — it removes an entire class of "saved it, nothing changed" bug. If a cache
+is added later it must be invalidated on save, and the invalidation has to be reachable from the
+endpoint that writes: a scoped service holding a private dictionary silently gives every request its
+own stale copy, which looks exactly like the save having failed.
+
+Defaults belong in code, not in seed rows. An unset key should fall back to a documented default so a
+half-populated table cannot leave the app in an unbootable state.
+
+### How you will know it works
+
+A probe that changes `RAWGApiKey` through `PATCH /settings`, then — **without restarting** — resolves
+`RAWGService` and confirms it sees the new value. That single check is what proves the constructor-arg
+refactor actually happened; every other part of this phase can look correct while the services quietly
+keep serving their startup values.
+
+Alongside that: saving a setting must not sign anyone out (proves Phase 2b's Data Protection work),
+and `POST /settings/validate-path` must return 403 for a Contributor.
+
 ---
 
 ## Phase 4 — First run and distribution
@@ -265,9 +356,25 @@ the first admin account and collects the Phase 3 settings.
 Server-rendered specifically because it runs before the app is configured — booting the whole SPA into
 a broken-config state just to render a form is the thing we are avoiding.
 
+Wiring notes:
+
+- `AddRazorPages()` and `MapRazorPages()` have to be added; the API has never hosted Pages. Page
+  routes match before `MapFallbackToFile`, so `/setup` will not be swallowed by the SPA fallback —
+  but the fallback's `.AllowAnonymous()` must not be read as blanket permission: the setup page needs
+  its own gate.
+- **The gate is "no admin user exists", evaluated per request**, not a startup flag. A flag captured
+  at boot stays open for the life of the process after the admin is created.
+- Creating the first admin runs in a transaction with the username-uniqueness check inside it. Two
+  concurrent setup submissions are a real race but a low-stakes one on a LAN; a transaction is
+  enough, do not build a locking scheme for it.
+- Once an admin exists `/setup` returns 404, not a redirect — a redirect confirms the endpoint exists
+  and is worth probing.
+
 **Remove the seeded `test` / `123456` admin from the seed script.** Accepted risk #3 in
 SECURITY-NOTES.md is scoped to "a dev box"; shipping it to strangers turns it into a default
-credential on every install. First-run account creation replaces it.
+credential on every install. First-run account creation replaces it. Note the Phase 1 seed still
+carries it and is marked accordingly — deleting it is part of *this* phase, and `02_seed.sql` then
+seeds only the two roles.
 
 ### TLS posture
 
@@ -288,21 +395,54 @@ private CA cannot be installed on a guest's phone.
 
 - Self-contained `dotnet publish` avoids making the runtime a prerequisite — worth the artifact size
   for a one-line installer.
-- Create a data directory (SQLite file, Data Protection keys, uploaded archives), `chmod 600` on the
-  database, dedicated service user.
-- systemd unit.
+- Create a data directory, dedicated service user, `chmod 600` on the database. **The four things
+  that must live there and survive an upgrade: the SQLite file, the Data Protection keyring, uploaded
+  archives, and re-hosted media.** Anything left in the app directory is destroyed by the next
+  install — see the Phase 3 media move.
+- systemd unit; the data directory path is passed as an env var, since it is the one thing that must
+  be known before the app starts.
 - No credentials to generate — SQLite removed that whole class of install-time secret. Data Protection
   keys are generated by the framework on first boot; they just need a persistent, private directory.
+- The install script is also the *upgrade* script: it must detect an existing data directory and
+  leave it alone. Test that path deliberately, because it is the one nobody runs until it matters.
+
+### How you will know it works
+
+Install into an empty directory: the app boots with no configuration and `/setup` is reachable.
+Create the admin: `/setup` now 404s and login works. Then **run the installer again over the same
+data directory** and confirm the library, uploads and media all survive — that is the check that
+would have caught the `wwwroot/media` bug.
 
 ---
 
 ## Phase 5 — Schema upgrades
 
-There is no path today from an installed v1 to a v2 schema. Distribution makes that mandatory.
+There is no path today from an installed v1 to a v2 schema. Distribution makes that mandatory: an
+operator who installed last month must be able to take a new build without losing their library.
 
-Numbered idempotent SQL scripts plus a `schema_version` table, applied at startup. This fits the
-existing database-first model where the DDL is the source of truth — EF Core migrations would fight
-the scaffolding workflow rather than help it.
+Numbered idempotent SQL scripts plus a `schema_version` table, applied at startup inside a
+transaction. This fits the existing database-first model where the DDL is the source of truth — EF
+Core migrations would fight the scaffolding workflow rather than help it.
+
+Notes:
+
+- **The SQLite version floor is the bundled `e_sqlite3`, not the host OS.** Because SQLitePCLRaw ships
+  the native library, `ALTER TABLE ... DROP COLUMN` (3.35+) and modern upsert syntax are safe to rely
+  on regardless of what the operator's machine has installed. This is the opposite of the usual
+  "assume an ancient SQLite" caution and it makes migrations considerably less painful.
+- `01_schema.sql` stays the source of truth for a *fresh* install; the numbered scripts carry an
+  existing database forward. Both must end at the same schema — a mismatch between them is the
+  classic failure here, and it only shows up on upgraded installs, never in development.
+- Wrap each script in a transaction and record the version in the same transaction, so a failed
+  upgrade leaves the database at the previous version rather than half-applied.
+- Back up the database file before applying anything. It is one file — the cheapest possible safety
+  net, and it turns a failed migration into a restore instead of a support thread.
+
+### How you will know it works
+
+Take a database created by an *older* schema, run the app, and confirm it upgrades and serves. Then
+confirm a fresh install and an upgraded install produce the same `PRAGMA table_info` for every table
+— that is the check that catches `01_schema.sql` and the numbered scripts drifting apart.
 
 ---
 
