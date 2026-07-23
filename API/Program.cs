@@ -15,6 +15,16 @@ app.UseBlazorFrameworkFiles();
 
 app.UseStaticFiles();
 
+// Re-hosted cover art and screenshots, served from the DATA directory rather than wwwroot.
+//
+// They used to be written into the published application's own wwwroot/media, which meant an
+// in-place upgrade — replacing the app folder — silently deleted every cover in the library. The
+// stored URLs are unchanged ("/media/{guid}.ext"); only the physical location moved.
+//
+// Like UseStaticFiles above, this must stay ahead of UseAuthorization: the library page is browsable
+// anonymously, and the authorization fallback policy would otherwise put the artwork behind login.
+app.UseMediaFiles();
+
 app.UseHttpsRedirection();
 
 // No CORS. The SPA and the API are the same origin now, so there is no preflight, no
@@ -29,6 +39,7 @@ app.AddGamesTownGamesEndpoints();
 app.AddMetaDataEndpoints();
 app.AddUserEndpoints();
 app.AddAuthEndpoints();
+app.AddSettingsEndpoints();
 if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development")
 {
     app.AddTestEndpoints();

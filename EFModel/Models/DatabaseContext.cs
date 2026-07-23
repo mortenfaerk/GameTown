@@ -29,6 +29,8 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<Rawgscreenshot> Rawgscreenshots { get; set; }
 
+    public virtual DbSet<Setting> Settings { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<GameTownGame>(entity =>
@@ -235,6 +237,11 @@ public partial class DatabaseContext : DbContext
                 .HasColumnType("boolean")
                 .HasColumnName("is_deleted");
             entity.Property(e => e.Width).HasColumnName("width");
+        });
+
+        modelBuilder.Entity<Setting>(entity =>
+        {
+            entity.HasKey(e => e.Key);
         });
 
         OnModelCreatingPartial(modelBuilder);

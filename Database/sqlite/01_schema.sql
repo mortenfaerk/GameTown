@@ -95,6 +95,22 @@ CREATE TABLE "GameTownUsers_Roles" (
 -- JWT-plus-rotating-refresh-token scheme it replaced needed server-side storage,
 -- and this does not.
 
+-- ---------------------------------------------------------------- settings
+-- Runtime-editable configuration, so an operator can change things from the admin
+-- UI instead of editing files and restarting.
+--
+-- Key/value rather than one row of many columns: adding a setting is then an INSERT
+-- rather than an ALTER TABLE, which matters once installs in the field have to be
+-- migrated forward (see Phase 5 in SQLITE-APPLIANCE-PLAN.md).
+--
+-- Deliberately NOT seeded. Defaults live in code (SettingsService), so a missing row
+-- means "use the default" and a half-populated table cannot leave the app unbootable.
+
+CREATE TABLE "Settings" (
+    "Key"   TEXT NOT NULL PRIMARY KEY,
+    "Value" TEXT NULL
+);
+
 -- ---------------------------------------------------------------- RAWG entities
 -- RAWG rows reuse RAWG's own integer ids, so these keys are never generated.
 -- NB: in SQLite, "INTEGER PRIMARY KEY" is an alias for rowid and would autoincrement.

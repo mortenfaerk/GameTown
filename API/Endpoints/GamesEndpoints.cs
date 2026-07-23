@@ -150,24 +150,27 @@ public static class GamesEndpoints
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
     }
-    private static async Task<IResult> AddGameWithFile([FromForm] AddGameWithFileForm form, GTGamesService _gameService, FileService _fileService)
+    private static async Task<IResult> AddGameWithFile([FromForm] AddGameWithFileForm form, GTGamesService _gameService, FileService _fileService, SettingsService _settings)
     {
         if (form.File == null)
             return Results.BadRequest("No file uploaded.");
 
-        var allowedExtensions = new[] { ".zip", ".rar", ".7z" };
+        // The allowlist is configurable (admin settings) rather than hard-coded, and it is checked
+        // HERE rather than only in the browser: the file picker's accept filter is a convenience,
+        // not a control, since anything can POST to this endpoint directly.
         var fileExtension = Path.GetExtension(form.File.FileName).ToLowerInvariant();
-
-        if (!allowedExtensions.Contains(fileExtension))
-            return Results.BadRequest("Invalid file format. Only .zip, .rar, and .7z files are allowed.");
-
+        if (!await _fileService.IsAllowedFileTypeAsync(form.File.FileName))
+        {
+            var allowed = string.Join(", ", await _settings.GetAllowedFileTypesAsync());
+            return Results.BadRequest($"Invalid file format. Allowed types: {allowed}.");
+        }
 
 
         // Never build a path from the client-supplied name: identically named uploads would
         // overwrite each other, and "../" would escape GameFilesPath entirely. The friendly name
         // shown on download is derived from the game's Title instead.
         var storedFileName = $"{Guid.NewGuid()}{fileExtension}";
-        var filePath = _fileService.GetGameFilePath(storedFileName);
+        var filePath = await _fileService.GetGameFilePathAsync(storedFileName);
         using (var stream = new FileStream(filePath, FileMode.Create))
         {
             await form.File.CopyToAsync(stream);
@@ -204,7 +207,8 @@ public static class GamesEndpoints
             return Results.NotFound($"Game with ID {id} not found.");
 
         // Never open a stored path directly — it must be proven to live inside GameFilesPath.
-        if (!_fileService.TryResolveGameFile(gameFile.Url, out var resolvedPath) || !File.Exists(resolvedPath))
+        var (resolved, resolvedPath) = await _fileService.TryResolveGameFileAsync(gameFile.Url);
+        if (!resolved || !File.Exists(resolvedPath))
             return Results.NotFound("Game file not found.");
 
         var stream = new FileStream(resolvedPath, FileMode.Open, FileAccess.Read, FileShare.Read);

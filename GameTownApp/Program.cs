@@ -38,6 +38,7 @@ builder.Services.AddScoped(sp =>
 builder.Services.AddScoped<GamesService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<UploadService>();
+builder.Services.AddScoped<SettingsService>();
 
 var host = builder.Build();
 

@@ -36,15 +36,17 @@ There is **no test project** in this solution.
 
 ## Required configuration (user secrets)
 
-`API/appsettings.json` ships with `"SetInSecrets"` placeholders. The API **throws on startup** if these are missing. Set them via user secrets (`UserSecretsId` is already configured in `API.csproj`):
+`API/appsettings.json` ships with a `"SetInSecrets"` placeholder for the connection string. That is now the **only** required setting — everything else is stored in the database and edited from *Administer → Settings* at runtime, so an unconfigured install still boots (it has to, or it could not serve its own setup page).
 
-- `ConnectionStrings:DefaultConnection` — SQLite connection string, e.g. `Data Source=/var/lib/gametown/gametown.db`. **The directory holding that file is the data directory**: the database, the Data Protection keyring and (from Phase 3) uploads and re-hosted media all live there, because it is the only location a re-install does not overwrite.
-- `RAWGApiKey` — API key for RAWG
-- `GameFilesPath` — an **existing** directory for uploaded game archives (startup validates the path exists)
+- `ConnectionStrings:DefaultConnection` — SQLite connection string, e.g. `Data Source=/var/lib/gametown/gametown.db`. **The directory holding that file is the data directory**: the database, the Data Protection keyring, uploaded archives and re-hosted media all default to living there, because it is the only location an in-place upgrade does not overwrite.
 
 ```powershell
-dotnet user-secrets set "RAWGApiKey" "<key>" --project API
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=/path/to/gametown.db" --project API
 ```
+
+Runtime settings (`GameFilesPath`, `RAWGApiKey`, allowed upload types) live in the `Settings` table and are read **per request** by `SettingsService`. That is deliberate and fragile in one specific way: `RAWGService` and `FileService` must keep reading them per call. They used to take these as constructor arguments resolved once at startup, which is exactly what made the settings UI look like it saved and changed nothing.
+
+The RAWG key is optional — without one the app runs normally and metadata is entered by hand.
 
 ## HTTPS development certificate (needed on Linux)
 

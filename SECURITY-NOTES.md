@@ -48,6 +48,11 @@ Uploading requires the `Contributor` policy, so this is **not an anonymous vecto
 backstop against a contributor filling the disk. If GameTown ever grows untrusted contributors, put a
 ceiling back.
 
+There *is* now a file-type allowlist (`Administer -> Settings -> Uploads`), enforced in the upload
+endpoint via `FileService.IsAllowedFileTypeAsync`. It must stay enforced server-side: the SPA also
+filters the file picker, but that is a convenience, and anything can POST to `/GTGames/Add` directly.
+The size ceiling remains the open half of this risk.
+
 ### 3. CSRF, reintroduced by moving to cookie authentication
 
 Authentication used to be a JWT the client attached to each request by hand. A bearer token in a
@@ -107,6 +112,22 @@ Two consequences worth holding onto:
 > credential-less preflight was rejected by the fallback policy before any
 > `Access-Control-Allow-Origin` header was written — which once broke login entirely. Same-origin
 > hosting removed CORS and that whole hazard with it.
+
+### The settings endpoints are more sensitive than they look
+
+`POST /settings/check-path` takes an arbitrary server path from the client and reports whether it
+exists and is writable — a filesystem-probing primitive. `POST /settings/test-rawg-key` makes the
+server issue an outbound request. Both are `Admin`-only, and both must stay that way.
+
+Neither returns exception text. `check-path` answers with a fixed reason code
+(`ok`/`not-absolute`/`permission-denied`/`not-found`/`io-error`/`invalid`) precisely because raw
+exception messages would disclose directory structure from an endpoint whose whole job is reporting
+on server paths. The client translates those codes into prose.
+
+`GET /settings` returns the RAWG key **masked** (last four characters) plus an `IsSet` flag, never the
+value. A blank key on `PATCH` therefore means "unchanged", not "clear" — clearing is a separate
+explicit flag. This is what keeps a secret from being round-tripped through the browser just so an
+untouched form can post it back.
 
 ### File paths must never come from the client
 
