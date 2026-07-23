@@ -15,6 +15,11 @@ public static class DependenciesConfig
         builder.AddServiceDefaults();
         builder.Services.AddOpenApiServices();
 
+        // Razor Pages exists solely for the first-run wizard at /setup, which has to render on an
+        // install that has never been configured — before the SPA has anything to talk to. It is not
+        // a general shift away from minimal APIs.
+        builder.Services.AddRazorPages();
+
         // Game archives are the whole point of this app and routinely exceed the framework defaults,
         // which are Kestrel's ~28.6 MB request body and a 128 MB multipart limit. Both have to be
         // lifted: Kestrel rejects first, then the form reader would. Until now anything larger than

@@ -1,0 +1,93 @@
+@page "/setup"
+@model API.Pages.SetupModel
+@{
+    Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Set up GameTown</title>
+    @* Self-contained styling on purpose: this page must render correctly on an install that has
+       never been configured, so it does not depend on the SPA's bundle being built or served. *@
+    <style>
+        :root { color-scheme: dark; }
+        body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+               background: #14161a; color: #e6e8eb; display: flex; justify-content: center;
+               padding: 3rem 1rem; }
+        .card { width: 100%; max-width: 34rem; background: #1c1f24; border: 1px solid #2c3037;
+                border-radius: 12px; padding: 2rem; }
+        h1 { margin: 0 0 .25rem; font-size: 1.6rem; letter-spacing: .02em; }
+        .lede { color: #9aa2ad; margin: 0 0 1.75rem; line-height: 1.5; }
+        label { display: block; margin: 1rem 0 .35rem; font-size: .85rem; color: #c3c9d1; }
+        input { width: 100%; box-sizing: border-box; padding: .6rem .7rem; border-radius: 7px;
+                border: 1px solid #333941; background: #101216; color: #e6e8eb; font-size: .95rem; }
+        .hint { font-size: .78rem; color: #7d8590; margin-top: .3rem; line-height: 1.45; }
+        button { margin-top: 1.75rem; width: 100%; padding: .7rem; border-radius: 7px; border: 0;
+                 background: #3b6ef5; color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer; }
+        button:hover { background: #2f5ede; }
+        .errors { background: #3a1d20; border: 1px solid #5d2b30; color: #f2b8bc;
+                  border-radius: 7px; padding: .75rem 1rem; margin-bottom: 1rem; font-size: .9rem; }
+        .errors ul { margin: 0; padding-left: 1.1rem; }
+        fieldset { border: 0; border-top: 1px solid #2c3037; margin: 2rem 0 0; padding: 1.25rem 0 0; }
+        legend { padding: 0 .5rem 0 0; font-size: .8rem; color: #9aa2ad; text-transform: uppercase;
+                 letter-spacing: .08em; }
+        code { background: #101216; padding: .1rem .35rem; border-radius: 4px; font-size: .82rem; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Set up GameTown</h1>
+        <p class="lede">
+            This creates the administrator account. It is shown once — as soon as an administrator
+            exists this page stops responding.
+        </p>
+
+        @if (!ViewData.ModelState.IsValid)
+        {
+            <div class="errors">
+                <ul>
+                    @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
+                    {
+                        <li>@error.ErrorMessage</li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <form method="post">
+            <label for="Username">Administrator username</label>
+            <input id="Username" name="Username" value="@Model.Username" autocomplete="username" autofocus />
+
+            <label for="Password">Password</label>
+            <input id="Password" name="Password" type="password" autocomplete="new-password" />
+            <div class="hint">At least 8 characters.</div>
+
+            <label for="ConfirmPassword">Repeat password</label>
+            <input id="ConfirmPassword" name="ConfirmPassword" type="password" autocomplete="new-password" />
+
+            <fieldset>
+                <legend>Optional</legend>
+
+                <label for="GameFilesPath">Where to store game archives</label>
+                <input id="GameFilesPath" name="GameFilesPath" value="@Model.GameFilesPath" />
+                <div class="hint">
+                    Defaults to a folder in the data directory (<code>@Model.DataDirectory</code>).
+                    Point it at a larger disk if you have one. Changeable later under
+                    Administer&nbsp;→&nbsp;Settings.
+                </div>
+
+                <label for="RawgApiKey">RAWG API key</label>
+                <input id="RawgApiKey" name="RawgApiKey" value="" autocomplete="off" />
+                <div class="hint">
+                    Used to fetch cover art and descriptions automatically. Leave blank to skip —
+                    GameTown works without it, you just enter metadata by hand.
+                </div>
+            </fieldset>
+
+            <button type="submit">Create administrator</button>
+        </form>
+    </div>
+</body>
+</html>

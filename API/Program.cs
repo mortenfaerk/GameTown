@@ -25,7 +25,15 @@ app.UseStaticFiles();
 // anonymously, and the authorization fallback policy would otherwise put the artwork behind login.
 app.UseMediaFiles();
 
-app.UseHttpsRedirection();
+// Opt-in, not automatic. The appliance ships serving plain HTTP on a LAN — which is sound now that
+// authentication is a same-origin SameSite=Lax cookie rather than the SameSite=None; Secure cookie
+// that forced HTTPS. Unconditional redirection here would bounce every request to a port nothing is
+// listening on. Operators terminating TLS (Caddy + ACME DNS-01 is the documented route) set
+// GameTown__RequireHttps=true.
+if (app.Configuration.GetValue<bool>("RequireHttps"))
+{
+    app.UseHttpsRedirection();
+}
 
 // No CORS. The SPA and the API are the same origin now, so there is no preflight, no
 // Access-Control-Allow-Origin, and no allowed-origins list to keep in step with wherever the app is
@@ -40,6 +48,11 @@ app.AddMetaDataEndpoints();
 app.AddUserEndpoints();
 app.AddAuthEndpoints();
 app.AddSettingsEndpoints();
+
+// The first-run wizard. Page routes are matched before MapFallbackToFile, so /setup reaches the Razor
+// Page rather than being swallowed by the SPA shell. Access is gated inside the page on "does an
+// admin already exist", evaluated per request, so it closes itself once setup is done.
+app.MapRazorPages();
 if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development")
 {
     app.AddTestEndpoints();
