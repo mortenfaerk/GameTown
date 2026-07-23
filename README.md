@@ -3,6 +3,10 @@
 **Plex, but for games.** A private server for sharing freeware and abandonware game archives across a
 home LAN: someone uploads a game once, everyone else browses a shelf of cover art and downloads it.
 
+Installs from a single script onto an LXC container or VM, in the style of the Proxmox community
+helper scripts. There is no database server to set up and no credentials to generate — the first
+administrator is created in the browser on first visit.
+
 Browsing and downloading are open to anyone who can reach the host — no account needed, because the
 whole point is that a guest on the sofa can grab a game. Uploading and administering require an
 account. Game metadata (cover art, screenshots, genres, developers) is pulled from the
@@ -16,25 +20,33 @@ It is not built to face the public internet as it stands — see
 
 ## Architecture
 
-.NET 10 throughout, orchestrated in development by .NET Aspire. A Blazor WebAssembly SPA talks to a
-minimal-API backend over HTTP; PostgreSQL holds the catalogue; game archives live on the API host's
-filesystem.
+.NET 10 throughout. **One process, one origin**: the API hosts the Blazor WebAssembly SPA from its own
+`wwwroot` and serves the endpoints it calls. SQLite holds the catalogue; everything that must survive
+an upgrade lives in a single data directory.
 
 ```
      browser
         │
-        │  Blazor WASM SPA  ── https://localhost:7225
-        │        │
-        │        │  JSON over HTTP (CORS, JWT bearer)
-        ▼        ▼
-   ┌─────────────────────────┐        ┌──────────────┐
-   │  API  (minimal API)     │───────▶│  RAWG API    │
-   │  https://localhost:7188 │        └──────────────┘
-   │                         │
-   │  /media  game covers    │        ┌──────────────┐
-   │  GameFilesPath archives │───────▶│  PostgreSQL  │
-   └─────────────────────────┘        └──────────────┘
+        │  same origin — no CORS, no token, an HttpOnly SameSite=Lax cookie
+        ▼
+   ┌──────────────────────────────┐        ┌──────────────┐
+   │  GameTown (single process)   │───────▶│  RAWG API    │
+   │                              │        └──────────────┘
+   │   Blazor WASM SPA (wwwroot)  │
+   │   minimal-API endpoints      │
+   │   /setup  first-run wizard   │
+   └──────────────┬───────────────┘
+                  │
+                  ▼
+      /var/lib/gametown          ← the only thing to back up
+        gametown.db   catalogue, users, settings
+        games/        uploaded archives
+        media/        re-hosted cover art
+        keys/         Data Protection keyring
 ```
+
+Because the SPA resolves its API address at runtime rather than at compile time, one published
+artifact runs on any LAN, port or reverse proxy without a rebuild.
 
 ### Projects
 
@@ -44,7 +56,7 @@ filesystem.
 | `GameTownApp` | Blazor WebAssembly | The SPA. Library, game detail, upload, admin console. |
 | `Contracts` | classlib | Wire types shared by both ends. **No EF Core, no ASP.NET** — see below. |
 | `EFModel` | classlib | EF Core `DbContext` and entities, **scaffolded from the live database**. |
-| `Database` | SQL scripts | `postgres/01_schema.sql` + `02_seed.sql` are the schema's source of truth. |
+| `Database` | SQL scripts | `sqlite/01_schema.sql` is the frozen baseline; `sqlite/migrations/` carries installs forward. |
 | `Aspire.AppHost` | Aspire orchestrator | Runs the API and the SPA together for local development. |
 | `Aspire.ServiceDefaults` | classlib | Shared OpenTelemetry, health checks, service discovery. |
 
@@ -69,35 +81,42 @@ Endpoints (`API/Endpoints/*.cs`) are static classes that map a `MapGroup` and de
 handlers. Handlers stay thin — validate input, translate exceptions like `KeyNotFoundException` into
 `NotFound` — and push the work into scoped services (`API/Services/*.cs`).
 
-> **Middleware order is load-bearing.** `UseCors()` must precede the authentication/authorization
-> middleware, and `UseStaticFiles()` must precede `UseAuthorization()`. Both are explained in
-> [SECURITY-NOTES.md](SECURITY-NOTES.md); changing either has broken the app before.
+> **Two things here are load-bearing.** The static-file middleware must precede `UseAuthorization()`,
+> and `MapFallbackToFile` must stay `.AllowAnonymous()` — otherwise the authorization fallback policy
+> puts the SPA shell itself behind login. Also: never put `.Accepts<T>()` on a GET or DELETE; it
+> applies a content-type constraint that makes the route unmatchable, and under SPA-fallback hosting
+> that returns a web page instead of a 404. All in [SECURITY-NOTES.md](SECURITY-NOTES.md).
 
 ### Authentication and authorization
 
-Login returns a JWT in the response body and sets an **HttpOnly `refresh_token` cookie**.
-`/auth/refresh` rotates it; `/auth/logout` clears it. Two roles: `Admin`, and `Contributor` (which
-`Admin` also satisfies).
+Login signs in an **HttpOnly `gametown_auth` cookie** with sliding expiration; `/auth/logout` signs
+out and `GET /auth/me` reports who you are. There is no token: the client cannot read the cookie, so
+it asks the server rather than parsing claims it would otherwise have to trust. Two roles: `Admin`,
+and `Contributor` (which `Admin` also satisfies).
 
 Authorization is **secure by default** — a global fallback policy requires an authenticated user, so
 an endpoint is protected unless it explicitly says `.AllowAnonymous()`. The intentionally public
-surface is the library reads, downloads, and `/auth`.
+surface is the library reads, downloads, `/auth` and the SPA shell.
 
-On the client, `GameTownApp/Services/AuthService.cs` is an `AuthenticationStateProvider` that parses
-JWT claims in the browser. The DI `HttpClient` is wrapped in two delegating handlers:
-`TokenRefreshHandler` (refreshes before expiry, attaches the bearer header) → `CookieHandler` (sends
-the refresh cookie cross-origin). `AuthService` keeps its *own* `HttpClient` for the auth calls, so
-the refresh path cannot recurse through the refresh handler.
+The trade this makes: a cookie is attached by the browser, so **CSRF is a live threat class** where a
+bearer token was structurally immune. `SameSite=Lax` is the mitigation, and it holds only because no
+`GET` mutates state. That invariant, and the three cookie settings that fail silently if changed, are
+in [SECURITY-NOTES.md](SECURITY-NOTES.md).
 
 ### Data layer — EFModel is generated
 
-`EFModel/Models/` is scaffolded from the live PostgreSQL database and carries `<auto-generated>`
-headers. Changing the schema means editing `Database/postgres/*.sql`, applying it, and re-scaffolding
-— not hand-editing the entities. Table and column identifiers are double-quoted in the DDL to
-preserve their original mixed casing, which is what keeps the generated model stable across
-re-scaffolds. Full commands and the post-scaffold cleanup step are in [CLAUDE.md](CLAUDE.md).
+`EFModel/Models/` is scaffolded from a live SQLite database and carries `<auto-generated>` headers.
+Changing the schema means adding a numbered migration under `Database/sqlite/migrations/` and
+re-scaffolding — not hand-editing the entities, and not editing the frozen baseline. Full commands
+and the post-scaffold cleanup step are in [CLAUDE.md](CLAUDE.md).
 
-GameTown's own entities use `uuid` primary keys; RAWG entities reuse RAWG's integer ids, which is why
+Because SQLite is dynamically typed, the **declared column type names are load-bearing**: the
+scaffolder recovers `Guid`/`DateTime`/`bool` from names like `uniqueidentifier`, and a bare `TEXT`
+column would silently become a `string`. That and three sibling traps — foreign keys off by default,
+`ValueGeneratedNever` on Guid keys, GUID text casing — are documented in [CLAUDE.md](CLAUDE.md).
+All four produce a working build and wrong behaviour.
+
+GameTown's own entities use `Guid` primary keys; RAWG entities reuse RAWG's integer ids, which is why
 games, developers, genres and screenshots are shared rows rather than per-game copies. That sharing is
 the reason `RAWGService.EnsureRawgGamePersisted` resolves every related row against what is already
 stored before attaching it.
@@ -108,34 +127,51 @@ stored before attaching it.
 RAWG serves snake_case, so a `SnakeCaseNamingStrategy` contract resolver is applied — without it every
 underscored field (including `background_image`) silently binds to null.
 
-Cover art and screenshots are **downloaded and re-hosted** under `API/wwwroot/media/` with the stored
-URLs rewritten to `/media/{guid}.ext`. The client resolves those against the API's base address
-(`GamesService.ResolveMedia`), since the SPA is served from a different origin.
+Cover art and screenshots are **downloaded and re-hosted** into the data directory's `media/` folder,
+with the stored URLs rewritten to `/media/{guid}.ext` and served from there. They deliberately do not
+live in `wwwroot`: an in-place upgrade replaces the application folder, which would silently delete
+every cover in the library.
 
-Uploaded archives are written to the configured `GameFilesPath` under a generated GUID name; the
-original filename is never used to build a path. Uploads go through
+Uploaded archives are written to the configured archive directory under a generated GUID name; the
+original filename is never used to build a path, and the extension must be on the allowlist configured
+under *Administer → Settings*. Uploads go through
 `GameTownApp/wwwroot/js/upload.js` rather than `HttpClient` — the browser's `fetch` reports no upload
 progress, so an `XMLHttpRequest` is used to drive a real progress bar. It also keeps large archives
 out of the WASM heap.
 
 ---
 
-## Running it locally
+## Installing and running
 
 ```bash
-dotnet run --project Aspire/Aspire.AppHost   # API + SPA together
-dotnet build GameTown.slnx                   # build everything (.slnx, not .sln)
+sudo ./install.sh                            # install or upgrade as a systemd service
 ```
 
-SPA on `https://localhost:7225`, API on `https://localhost:7188` (Scalar API docs at `/scalar/v1`),
-Aspire dashboard on `https://localhost:17070`.
+Then open `http://<host>:5187/setup` to create the administrator. That page stops responding once one
+exists. Re-running the installer upgrades in place: it backs up the database, replaces the
+application, and leaves the data directory alone.
 
-Requires an external PostgreSQL instance and four user-secrets — connection string, `JwtSettings:*`,
-`RAWGApiKey` and `GameFilesPath`. The API throws on startup if any are missing.
+For development:
+
+```bash
+dotnet build GameTown.slnx                   # build everything (.slnx, not .sln)
+dotnet run --project API                     # the whole app — SPA included
+```
+
+The **only** required configuration is the SQLite connection string; everything else is edited in the
+app under *Administer → Settings*. The RAWG key is optional.
+
+```bash
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=$HOME/gametown/gametown.db" --project API
+```
 [CLAUDE.md](CLAUDE.md) has the full setup, including the HTTPS dev-certificate trust step that Linux
 needs before the browser will talk to the API.
 
-There is currently **no test project**.
+There is currently **no test project** — the largest remaining gap. Each migration phase was verified
+by hand against a running instance, and almost every bug found in the process produced a *working
+build*: routes that returned a web page instead of JSON, a cookie the browser silently discarded, a
+keyring that reset on restart, services still serving configuration captured at startup. None of it
+would have been caught by compiling.
 
 ## Further reading
 
