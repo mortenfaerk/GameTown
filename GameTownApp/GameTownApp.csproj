@@ -10,6 +10,11 @@
     <PackageReference Include="Blazor.Bootstrap" Version="3.5.0" />
     <PackageReference Include="Microsoft.AspNetCore.Components.Authorization" Version="10.0.10" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.10" />
+    <!-- The standalone WASM dev server. Kept only because the tooling expects it on a
+         BlazorWebAssembly project; do NOT launch this project on its own. The API hosts this bundle
+         and the SPA resolves its API address from wherever it was served, so running it standalone
+         points the app at a server with no endpoints and every call returns index.html. Its launch
+         profiles were deleted to stop the IDE offering it as a run target. -->
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.10" PrivateAssets="all" />
   </ItemGroup>
 
