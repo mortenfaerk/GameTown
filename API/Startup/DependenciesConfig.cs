@@ -46,6 +46,7 @@ public static class DependenciesConfig
         // WAL is a property of the database file and persists, so setting it once at startup is
         // enough; "Foreign Keys" is per-connection and has to live in the connection string.
         connectionString = SqliteConnectionString.WithRequiredPragmas(connectionString);
+        SqliteConnectionString.EnableWriteAheadLogging(connectionString);
 
         builder.Services.AddDbContext<DatabaseContext>(options =>
             options.UseSqlite(connectionString)
