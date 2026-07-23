@@ -148,8 +148,8 @@ public class RAWGService(SettingsService _settings, DatabaseContext _context)
 
         // Refreshing re-downloads the cover under a new name, so bin the copy it replaces —
         // otherwise every refresh would leave another orphan in wwwroot/media.
-        await DeleteSupersededMedia(supersededCover, fetched.BackgroundImage);
-        await DeleteSupersededMedia(supersededCoverAdditional, fetched.BackgroundImageAdditional);
+        DeleteSupersededMedia(supersededCover, fetched.BackgroundImage);
+        DeleteSupersededMedia(supersededCoverAdditional, fetched.BackgroundImageAdditional);
 
         // Copy scalars only: the navigations on `fetched` are untracked duplicates, and letting
         // SetValues near them would re-introduce the duplicate-key problem.
@@ -165,7 +165,7 @@ public class RAWGService(SettingsService _settings, DatabaseContext _context)
     }
 
     /// <summary>Removes a locally re-hosted file that a refresh has just replaced.</summary>
-    private async Task DeleteSupersededMedia(string? previousPath, string? currentPath)
+    private void DeleteSupersededMedia(string? previousPath, string? currentPath)
     {
         if (string.IsNullOrWhiteSpace(previousPath)
             || !previousPath.StartsWith("/media/")
