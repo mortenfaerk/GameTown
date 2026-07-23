@@ -27,7 +27,5 @@ public partial class GameTownUser
 
     public string? LastModifiedBy { get; set; }
 
-    public virtual ICollection<RefreshToken> RefreshTokens { get; set; } = new List<RefreshToken>();
-
     public virtual ICollection<GameTownRole> Apiroles { get; set; } = new List<GameTownRole>();
 }

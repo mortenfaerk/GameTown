@@ -48,10 +48,32 @@ Uploading requires the `Contributor` policy, so this is **not an anonymous vecto
 backstop against a contributor filling the disk. If GameTown ever grows untrusted contributors, put a
 ceiling back.
 
-### 3. The seeded development account
+### 3. CSRF, reintroduced by moving to cookie authentication
 
-`Database/postgres/02_seed.sql` creates `test` / `123456` with the `Admin` role, and the password
-hash is in the repo. Fine for a dev box; change or remove it before anyone else can reach the host.
+Authentication used to be a JWT the client attached to each request by hand. A bearer token in a
+header is structurally **immune** to CSRF: a cross-site request cannot make the browser add it. The
+auth cookie that replaced it is attached by the *browser*, on every request to this origin, including
+ones initiated by another site. That is a real regression and it was taken knowingly.
+
+**The mitigation is `SameSite=Lax`** (`DependenciesConfig.cs`). Lax withholds the cookie from
+cross-site subresource requests — including cross-site `POST` and `fetch` — which defeats the classic
+attack.
+
+**The invariant that makes it hold: a `GET` must never change state.** Lax *does* still send the
+cookie on top-level cross-site GET navigation, so a state-changing GET would be directly forgeable by
+a link. Every mutating route today is `POST`/`PATCH`/`DELETE`. Keep it that way; this is the single
+easiest thing here to break by accident, and nothing in the build will complain.
+
+Residual risk is a same-site attacker or a browser that does not honour SameSite. For a private LAN
+appliance that is acceptable. **The upgrade path is antiforgery tokens** (`AddAntiforgery` plus a
+header echoed by the SPA) and it becomes necessary if this is ever exposed beyond a LAN.
+
+### 4. The seeded development account
+
+`Database/sqlite/02_seed.sql` creates `test` / `123456` with the `Admin` role, and the password hash
+is in the repo. Fine for a dev box; **shipping it in an installable build would put a known default
+credential on every install**, which is a different risk entirely. Phase 4 of
+SQLITE-APPLIANCE-PLAN.md replaces it with first-run admin creation.
 
 ---
 
@@ -74,15 +96,17 @@ Two consequences worth holding onto:
 
 ### Middleware order in `API/Program.cs`
 
-Two orderings are load-bearing. Both have already caused outages once:
+1. **`UseBlazorFrameworkFiles()` and `UseStaticFiles()` must come before `UseAuthorization()`.** This
+   is what keeps `/media` (cover art and screenshots) and the WASM bundle publicly readable, so the
+   anonymous library page renders at all.
+2. **`MapFallbackToFile("index.html")` must stay `.AllowAnonymous()`.** The fallback is an endpoint
+   like any other, so the `FallbackPolicy` otherwise puts the SPA shell itself behind authentication
+   — and a signed-out visitor cannot reach the page that would let them sign in.
 
-1. **`UseCors()` must come before `UseAuthentication()`/`UseAuthorization()`.** Browsers send no
-   credentials on a CORS preflight, so with the fallback policy in place an `OPTIONS` request is
-   denied by the authorization middleware and short-circuits *before* any
-   `Access-Control-Allow-Origin` header is written. The browser then reports it as a CORS failure and
-   never sends the real request. This broke login entirely.
-2. **`UseStaticFiles()` must come before `UseAuthorization()`.** It is what keeps `/media` (cover art
-   and screenshots) publicly readable so the anonymous library page renders.
+> The old first entry here was that `UseCors()` had to precede the auth middleware, because a
+> credential-less preflight was rejected by the fallback policy before any
+> `Access-Control-Allow-Origin` header was written — which once broke login entirely. Same-origin
+> hosting removed CORS and that whole hazard with it.
 
 ### File paths must never come from the client
 
@@ -113,9 +137,18 @@ feed straight past the sanitiser.
 
 ### Auth mechanics
 
-- JWT in the response body; refresh token in an **HttpOnly, Secure, SameSite=None** cookie.
-- `JwtSettings:Key`, the RAWG key and the connection string live in user-secrets, never in
-  `appsettings.json` (which ships `SetInSecrets` placeholders and throws on startup if unset).
+- No token anywhere. Identity is an **HttpOnly, SameSite=Lax `gametown_auth` cookie** with sliding
+  expiration; `GET /auth/me` is how the SPA learns who it is. The JWT, the rotating refresh token and
+  the `RefreshTokens` table are all gone.
+- `SecurePolicy` is `SameAsRequest`, not `Always`, because the appliance default is plain HTTP on a
+  LAN and `Always` would make the browser silently discard the cookie.
+- The cookie handler's `OnRedirectToLogin`/`OnRedirectToAccessDenied` events are overridden to return
+  **401/403 instead of a 302**. Left at the default, `fetch` follows the redirect and receives
+  `200 text/html`, so a client sees success and parses a login page as JSON.
+- **Data Protection keys are persisted to the data directory.** The default in-memory keyring would
+  invalidate every auth cookie on restart, which presents as "saving a setting logged everyone out".
+- The RAWG key and the connection string live in user-secrets, never in `appsettings.json` (which
+  ships `SetInSecrets` placeholders and throws on startup if unset).
 - After re-scaffolding EFModel, delete the generated `OnConfiguring` override — it hardcodes the
   connection string, password included, into source.
 

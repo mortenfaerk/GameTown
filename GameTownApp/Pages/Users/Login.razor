@@ -28,8 +28,9 @@
     private string LoginMsg = string.Empty;
     protected override async Task OnInitializedAsync()
     {
-        //try to login without user interaction /credentials via the perhaos set cookies
-        var refreshed = await AuthService.RefreshTokenAsync();
+        // Someone arriving at /login with a valid auth cookie is already signed in; send them on
+        // rather than making them re-enter credentials they did not need.
+        var refreshed = await AuthService.RefreshUserAsync();
         if (refreshed)
         {
             NavigationManager.NavigateTo("/");

@@ -1,11 +1,10 @@
 ﻿using API.Services;
 using EFModel.Models;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using System.Text;
 
 namespace API.Startup;
 
@@ -15,7 +14,6 @@ public static class DependenciesConfig
     {
         builder.AddServiceDefaults();
         builder.Services.AddOpenApiServices();
-        builder.Services.AddCorsServices();
 
         // Game archives are the whole point of this app and routinely exceed the framework defaults,
         // which are Kestrel's ~28.6 MB request body and a 128 MB multipart limit. Both have to be
@@ -70,32 +68,64 @@ public static class DependenciesConfig
         builder.Services.AddScoped<GTGamesService>();
         builder.Services.AddScoped<UserService>();
         #region Authentication
-        var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-        if (string.IsNullOrEmpty(jwtSettings["Key"]))
-        {
-            throw new Exception("JWT Key is not configured in appsettings.json");
-        }
+        // Cookie authentication, not JWT bearer. Same-origin hosting (Phase 2a) means the browser
+        // can hold an HttpOnly cookie the page cannot read, which is both simpler and better than
+        // handing the SPA a token it had to store, parse and refresh itself.
+        //
+        // Four of the settings below each produce a build that runs and an app that is broken.
         builder.Services
-            .AddAuthentication(x =>
+            .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+            .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
             {
-                x.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
-                x.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-            }).AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
-            {
-                options.SaveToken = true;
-                options.RequireHttpsMetadata = false;
-                options.TokenValidationParameters = new TokenValidationParameters
-                {
-                    ValidateIssuer = true,
-                    ValidateAudience = true,
-                    ValidateIssuerSigningKey = true,
-                    ValidIssuer = jwtSettings["Issuer"],
-                    ValidAudience = jwtSettings["Audience"],
-                    IssuerSigningKey = new SymmetricSecurityKey(
-                                                    Encoding.UTF8.GetBytes(jwtSettings["Key"]!))
-                };
+                options.Cookie.Name = "gametown_auth";
+                options.Cookie.HttpOnly = true;
 
+                // SameSite=Lax is what mitigates CSRF here. Moving from a bearer token (attached by
+                // our code, so never sent cross-site) to a cookie (attached by the browser)
+                // reintroduces CSRF as a threat class; Lax withholds the cookie on cross-site POST
+                // and fetch, which kills the classic attack. It DOES still send it on top-level
+                // cross-site GET navigation, so the mitigation holds only while no GET mutates
+                // state. See SECURITY-NOTES.md — that is a standing invariant, not an accident.
+                options.Cookie.SameSite = SameSiteMode.Lax;
+
+                // SameAsRequest, deliberately not the Always default. The appliance ships serving
+                // plain HTTP on a LAN, and Always marks the cookie Secure — which a browser then
+                // silently refuses to send over HTTP. Login appears to succeed and every following
+                // request arrives anonymous.
+                options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+
+                options.ExpireTimeSpan = TimeSpan.FromDays(14);
+
+                // Renews the cookie when it is more than half expired. This is the whole replacement
+                // for the rotating refresh-token scheme: no /auth/refresh, no stored tokens, no
+                // client-side expiry tracking.
+                options.SlidingExpiration = true;
+
+                // By default the cookie handler answers an unauthenticated request with a 302 to a
+                // login page. For an API that is actively harmful: fetch follows the redirect and
+                // receives 200 text/html, so the caller sees success and tries to parse HTML as
+                // JSON. Return the status codes an API client can actually act on.
+                options.Events.OnRedirectToLogin = context =>
+                {
+                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                    return Task.CompletedTask;
+                };
+                options.Events.OnRedirectToAccessDenied = context =>
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    return Task.CompletedTask;
+                };
             });
+
+        // The auth cookie is encrypted with Data Protection keys. Left at the default the keyring
+        // lives in memory, so every restart invalidates every cookie and signs everyone out. That
+        // surfaces later as "saving a setting logged me out", which reads as a settings bug rather
+        // than a crypto one. Keys go next to the database, which is the data directory by definition.
+        var keyRingPath = Path.Combine(SqliteConnectionString.GetDataDirectory(connectionString), "keys");
+        Directory.CreateDirectory(keyRingPath);
+        builder.Services.AddDataProtection()
+            .PersistKeysToFileSystem(new DirectoryInfo(keyRingPath))
+            .SetApplicationName("GameTown");
 
         builder.Services.AddAuthorization(options =>
         {

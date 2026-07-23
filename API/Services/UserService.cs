@@ -1,21 +1,14 @@
 ﻿using API.Helpers;
-using API.Models.Auth;
 using API.Models.Users;
 using EFModel.Models;
-using Microsoft.AspNetCore.Identity.Data;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text;
 namespace API.Services;
 
-public class UserService(DatabaseContext dbContext, IConfiguration jwtConfiguration)
+public class UserService(DatabaseContext dbContext)
 {
     readonly DatabaseContext _dbContext = dbContext;
-    readonly IConfiguration _JwtConfiguration = jwtConfiguration.GetSection("JwtSettings");
-    readonly int RefreshExpiresInDays = int.Parse(jwtConfiguration["RefreshExpiresInDays"] ?? "7");
 
     public async Task<bool> CreateUser(UserCreationRequest userDTO, string creatingUser)
     {
@@ -234,67 +227,28 @@ public class UserService(DatabaseContext dbContext, IConfiguration jwtConfigurat
 
         return matchedUser;
     }
-    public async Task<TokenResponse?> GetToken(GameTownUser user)
+    /// <summary>
+    /// Builds the ClaimsPrincipal that gets signed into the auth cookie.
+    ///
+    /// These are the same claims the JWT used to carry; only the envelope changed. The cookie
+    /// middleware serialises them into the encrypted cookie, so no token is ever handed to the
+    /// browser and nothing client-side needs to parse one.
+    /// </summary>
+    public static ClaimsPrincipal BuildPrincipal(GameTownUser user)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_JwtConfiguration["Key"]!));
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
-        var claims = new List<Claim>()
-                {
-                    new(ClaimTypes.Name, user.Username),
-                    new(ClaimTypes.NameIdentifier, user.Id.ToString()),
-
-                };
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.Name, user.Username),
+            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+        };
         foreach (var role in user.Apiroles)
         {
             claims.Add(new Claim(ClaimTypes.Role, role.Role));
         }
 
-        var expires = DateTime.UtcNow.AddMinutes(int.Parse(_JwtConfiguration["ExpiresInMinutes"]!));
-        var token = new JwtSecurityToken(
-            issuer: _JwtConfiguration["Issuer"],
-            audience: _JwtConfiguration["Audience"],
-            claims: claims,
-            expires: expires,
-            signingCredentials: creds);
-
-        var tokenStr = new JwtSecurityTokenHandler().WriteToken(token);
-        return new TokenResponse { Token = tokenStr, ExpiresUTC = expires};
+        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+        return new ClaimsPrincipal(identity);
     }
-    public async Task<RefreshToken> GenerateAndStoreRefreshToken(GameTownUser user)
-    {
-        var refreshToken = new RefreshToken
-        {
-            Id = Guid.NewGuid(),
-            Token = Convert.ToHexString(RandomNumberGenerator.GetBytes(64)),
-            ExpiresAt = DateTime.UtcNow.AddDays(RefreshExpiresInDays), // Set your desired expiry
-            IsRevoked = false,
-            CreatedAt = DateTime.UtcNow,
-            UserId = user.Id
-        };
 
-        _dbContext.RefreshTokens.Add(refreshToken);
-        await _dbContext.SaveChangesAsync();
-
-        return refreshToken;
-    }
-    public async Task<RefreshTokenValidationResult> ValidateRefreshToken(string token)
-    {
-        var refreshToken = await _dbContext.RefreshTokens
-            .Include(rt => rt.User)
-            .FirstOrDefaultAsync(rt => rt.Token == token && !rt.IsRevoked && rt.ExpiresAt > DateTime.UtcNow);
-
-        if (refreshToken == null)
-            return RefreshTokenValidationResult.InvalidRefreshToken();
-        _dbContext.RefreshTokens.Remove(refreshToken);
-        RefreshToken newRefreshToken = await GenerateAndStoreRefreshToken(refreshToken.User);
-
-        var jwtToken = await GetToken(refreshToken.User);
-        if (jwtToken == null)
-            return RefreshTokenValidationResult.ServerError();
-
-        await _dbContext.SaveChangesAsync();
-        return RefreshTokenValidationResult.Success(jwtToken, newRefreshToken);
-    }
     #endregion
 }

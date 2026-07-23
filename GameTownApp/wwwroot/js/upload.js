@@ -14,12 +14,11 @@ let currentRequest = null;
 /**
  * @param {HTMLInputElement} inputElement the <input type="file"> rendered by InputFile
  * @param {string} url                    absolute URL of the upload endpoint
- * @param {string|null} token             bearer token, or null when unauthenticated
  * @param {object} fields                 text form fields; keys must match the API's [FromForm(Name)]
  * @param {object} dotNetRef              receives OnUploadProgress(loaded, total)
  * @returns {Promise<{status: number, body: string, aborted: boolean}>}
  */
-export function uploadGame(inputElement, url, token, fields, dotNetRef) {
+export function uploadGame(inputElement, url, fields, dotNetRef) {
     return new Promise((resolve, reject) => {
         const file = inputElement?.files?.[0];
         if (!file) {
@@ -39,9 +38,9 @@ export function uploadGame(inputElement, url, token, fields, dotNetRef) {
         currentRequest = xhr;
 
         xhr.open("POST", url, true);
-        if (token) {
-            xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-        }
+        // No Authorization header: authentication is a same-origin cookie, which the browser
+        // attaches to this XHR by itself. withCredentials is not needed for same-origin either,
+        // and setting it would be a no-op that implies a cross-origin design we no longer have.
 
         xhr.upload.onprogress = (e) => {
             // Not computable for chunked encoding; the UI falls back to indeterminate.

@@ -17,12 +17,10 @@ app.UseStaticFiles();
 
 app.UseHttpsRedirection();
 
-// CORS must run BEFORE authentication/authorization. A browser sends no credentials on a preflight
-// OPTIONS request, so with the authorization fallback policy in place the preflight gets denied and
-// short-circuits before any Access-Control-Allow-Origin header is written — the browser then reports
-// it as a CORS failure and never sends the real request. Login broke exactly this way.
-app.ApplyCorsConfig();
-
+// No CORS. The SPA and the API are the same origin now, so there is no preflight, no
+// Access-Control-Allow-Origin, and no allowed-origins list to keep in step with wherever the app is
+// deployed. The ordering hazard that came with it — UseCors had to precede the auth middleware or
+// preflights were rejected by the fallback policy, which once broke login entirely — is gone too.
 app.UseAuthentication();
 app.UseAuthorization();
 

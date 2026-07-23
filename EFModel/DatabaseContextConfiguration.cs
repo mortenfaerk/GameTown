@@ -33,6 +33,5 @@ public partial class DatabaseContext
         modelBuilder.Entity<GameTownGame>().Property(e => e.Id).ValueGeneratedOnAdd();
         modelBuilder.Entity<GameTownRole>().Property(e => e.Id).ValueGeneratedOnAdd();
         modelBuilder.Entity<GameTownUser>().Property(e => e.Id).ValueGeneratedOnAdd();
-        modelBuilder.Entity<RefreshToken>().Property(e => e.Id).ValueGeneratedOnAdd();
     }
 }

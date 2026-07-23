@@ -29,8 +29,6 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<Rawgscreenshot> Rawgscreenshots { get; set; }
 
-    public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
-
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<GameTownGame>(entity =>
@@ -237,21 +235,6 @@ public partial class DatabaseContext : DbContext
                 .HasColumnType("boolean")
                 .HasColumnName("is_deleted");
             entity.Property(e => e.Width).HasColumnName("width");
-        });
-
-        modelBuilder.Entity<RefreshToken>(entity =>
-        {
-            entity.Property(e => e.Id)
-                .ValueGeneratedNever()
-                .HasColumnType("uniqueidentifier");
-            entity.Property(e => e.CreatedAt)
-                .HasDefaultValueSql("CURRENT_TIMESTAMP")
-                .HasColumnType("datetime");
-            entity.Property(e => e.ExpiresAt).HasColumnType("datetime");
-            entity.Property(e => e.IsRevoked).HasColumnType("boolean");
-            entity.Property(e => e.UserId).HasColumnType("uniqueidentifier");
-
-            entity.HasOne(d => d.User).WithMany(p => p.RefreshTokens).HasForeignKey(d => d.UserId);
         });
 
         OnModelCreatingPartial(modelBuilder);

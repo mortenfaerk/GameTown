@@ -20,17 +20,17 @@ var apiBaseUrl = builder.HostEnvironment.BaseAddress;
 builder.Services.AddScoped<AuthService>(provider => new AuthService(apiBaseUrl));
 builder.Services.AddScoped<AuthenticationStateProvider>(provider => provider.GetRequiredService<AuthService>());
 builder.Services.AddAuthorizationCore();
-builder.Services.AddScoped<TokenRefreshHandler>();
 builder.Services.AddBlazorBootstrap();
 builder.Services.AddScoped(sp =>
 {
-    var authService = sp.GetRequiredService<AuthService>();
-    var navigationManager = sp.GetRequiredService<NavigationManager>();
-    var handler = new TokenRefreshHandler(authService, navigationManager)
-    {
-        InnerHandler = new CookieHandler()
-    };
-    return new HttpClient(handler)
+    // Only CookieHandler remains. TokenRefreshHandler is gone: it existed to notice a JWT nearing
+    // expiry and renew it before each call, and the auth cookie's sliding expiration now does that
+    // server-side with nothing to schedule.
+    //
+    // CookieHandler stays even though same-origin fetch would send the cookie by default. It is one
+    // line, and being explicit costs nothing next to the failure it prevents — requests that quietly
+    // arrive anonymous, which looks like a permissions bug rather than a missing credential.
+    return new HttpClient(new CookieHandler())
     {
         BaseAddress = new Uri(apiBaseUrl)
     };
@@ -41,18 +41,18 @@ builder.Services.AddScoped<UploadService>();
 
 var host = builder.Build();
 
-// Restore the session before the first paint. The refresh_token cookie is HttpOnly, so the only way
+// Restore the session before the first paint. The auth cookie is HttpOnly, so the only way
 // to know whether a returning visitor is signed in is to ask the API. Without this they render as
 // anonymous — the Contribute and Administer nav sections stay hidden — until they happen to visit
 // /login, which reads as the app having forgotten them.
 //
-// The catch is load-bearing: RefreshTokenAsync calls SendAsync unguarded and throws when the API is
+// The catch is load-bearing: RefreshUserAsync calls SendAsync unguarded and throws when the API is
 // unreachable. That would happen here, before anything has rendered, and white-screen the whole app.
 // Better to start anonymous than not to start. (No cookie is not an error — that returns 401 and the
 // method simply reports false.)
 try
 {
-    await host.Services.GetRequiredService<AuthService>().RefreshTokenAsync();
+    await host.Services.GetRequiredService<AuthService>().RefreshUserAsync();
 }
 catch
 {

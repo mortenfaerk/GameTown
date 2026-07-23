@@ -29,6 +29,25 @@ public static class SqliteConnectionString
     }
 
     /// <summary>
+    /// The directory holding the database file — the application's data directory by definition.
+    ///
+    /// Everything that must outlive an upgrade belongs here rather than in the application folder,
+    /// which a fresh install overwrites: the database, the Data Protection keyring, uploaded
+    /// archives and re-hosted media.
+    /// </summary>
+    public static string GetDataDirectory(string connectionString)
+    {
+        var dataSource = new SqliteConnectionStringBuilder(connectionString).DataSource;
+        var directory = Path.GetDirectoryName(Path.GetFullPath(dataSource));
+
+        if (string.IsNullOrEmpty(directory))
+            throw new InvalidOperationException(
+                $"Could not determine a data directory from data source \"{dataSource}\".");
+
+        return directory;
+    }
+
+    /// <summary>
     /// Switches the database file into WAL journalling.
     ///
     /// Unlike foreign keys this is stored in the database file itself, so it survives restarts and

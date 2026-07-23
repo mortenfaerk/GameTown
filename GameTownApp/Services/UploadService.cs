@@ -9,7 +9,7 @@ namespace GameTownApp.Services;
 /// This is the one place the app reaches for JavaScript, and only because it has to: Blazor WASM
 /// sends through fetch(), which reports no upload progress. See the module for the details.
 /// </summary>
-public class UploadService(IJSRuntime js, AuthService auth) : IAsyncDisposable
+public class UploadService(IJSRuntime js) : IAsyncDisposable
 {
     private IJSObjectReference? _module;
 
@@ -27,15 +27,10 @@ public class UploadService(IJSRuntime js, AuthService auth) : IAsyncDisposable
         DotNetObjectReference<TProgress> progressTarget)
         where TProgress : class
     {
-        // XHR bypasses TokenRefreshHandler, so the token has to be checked here. Only the start of
-        // the request is authorized, so a long transfer will not expire mid-upload.
-        var expires = auth.GetTokenExpiration();
-        if (expires is not null && expires <= DateTime.UtcNow.AddMinutes(2))
-        {
-            try { await auth.RefreshTokenAsync(); }
-            catch { /* fall through — the upload will report the 401 */ }
-        }
-
+        // No pre-flight token refresh any more. This used to check a JWT's expiry and renew it
+        // before starting, because a long upload could outlive the token; the auth cookie carries no
+        // client-visible expiry and renews server-side, so there is nothing to check.
+        //
         // Keys must match the [FromForm(Name = ...)] attributes on the API's AddGameWithFileForm.
         var fields = new Dictionary<string, string?>
         {
@@ -48,7 +43,7 @@ public class UploadService(IJSRuntime js, AuthService auth) : IAsyncDisposable
         {
             var module = await GetModuleAsync();
             var response = await module.InvokeAsync<UploadResponse>(
-                "uploadGame", fileInput, uploadUrl, auth.GetToken(), fields, progressTarget);
+                "uploadGame", fileInput, uploadUrl, fields, progressTarget);
 
             if (response.Aborted)
                 return ApiResult.Failed("Upload cancelled.");

@@ -33,8 +33,8 @@
 --
 --   1. Foreign keys are OFF by default in SQLite. Every FOREIGN KEY below is
 --      inert unless the connection sets `PRAGMA foreign_keys = ON`
---      ("Foreign Keys=True" in the connection string). Without it the
---      ON DELETE CASCADE on "RefreshTokens" silently stops cascading.
+--      ("Foreign Keys=True" in the connection string). Without it orphan rows
+--      insert happily and no ON DELETE rule ever fires.
 --
 --   2. varchar(n) lengths are not enforced. The lengths are kept in comments
 --      as documentation, but rejecting an over-long Username is now the
@@ -90,15 +90,10 @@ CREATE TABLE "GameTownUsers_Roles" (
     CONSTRAINT "FK_APIUsers_APIRoles_APIRoleId" FOREIGN KEY ("APIRoleId") REFERENCES "GameTownRoles" ("Id")
 );
 
-CREATE TABLE "RefreshTokens" (
-    "Id"        uniqueidentifier    NOT NULL PRIMARY KEY,               -- uuid
-    "Token"     TEXT    NOT NULL,                           -- varchar(512)
-    "ExpiresAt" datetime    NOT NULL,
-    "IsRevoked" boolean  NOT NULL DEFAULT 0,
-    "CreatedAt" datetime    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "UserId"    uniqueidentifier    NOT NULL,
-    CONSTRAINT "FK_RefreshTokens_Users" FOREIGN KEY ("UserId") REFERENCES "GameTownUsers" ("Id") ON DELETE CASCADE
-);
+-- There is deliberately no "RefreshTokens" table. Authentication is an ASP.NET Core
+-- auth cookie with sliding expiration, which renews itself — the hand-rolled
+-- JWT-plus-rotating-refresh-token scheme it replaced needed server-side storage,
+-- and this does not.
 
 -- ---------------------------------------------------------------- RAWG entities
 -- RAWG rows reuse RAWG's own integer ids, so these keys are never generated.
