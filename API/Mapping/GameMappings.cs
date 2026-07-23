@@ -67,7 +67,9 @@ public static class GameMappings
         Metacritic = g.Metacritic,
         // Npgsql maps the `date` column to DateOnly; the contract keeps DateTime? so the
         // JSON shape is unchanged for existing clients.
-        Released = g.Released?.ToDateTime(TimeOnly.MinValue),
+        // SQLite scaffolds `date` to DateTime?, where Npgsql gave DateOnly?. The contract
+        // has always been DateTime?, so this is now a straight copy.
+        Released = g.Released,
         Tba = g.Tba,
         Updated = g.Updated,
         BackgroundImage = g.BackgroundImage,

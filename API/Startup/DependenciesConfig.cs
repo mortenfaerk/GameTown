@@ -35,8 +35,20 @@ public static class DependenciesConfig
         var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
         var RAWGKey = builder.Configuration.GetValue<string>("RAWGApiKey") ?? throw new Exception("The app requires an API key for RAWG to be set!");
 
+        // SQLite needs two things Postgres gave us for free, and both are silent when missing:
+        //
+        //  - Foreign keys are OFF by default. Every FOREIGN KEY in the schema is inert without
+        //    this, including the ON DELETE CASCADE from RefreshTokens to GameTownUsers — deleting
+        //    a user would leave its tokens behind instead of failing loudly.
+        //  - WAL lets readers proceed during a write. Game downloads hold long read transactions,
+        //    so without it a large download can block metadata writes for its whole duration.
+        //
+        // WAL is a property of the database file and persists, so setting it once at startup is
+        // enough; "Foreign Keys" is per-connection and has to live in the connection string.
+        connectionString = SqliteConnectionString.WithRequiredPragmas(connectionString);
+
         builder.Services.AddDbContext<DatabaseContext>(options =>
-            options.UseNpgsql(connectionString)
+            options.UseSqlite(connectionString)
             );
         builder.Services.AddScoped<RAWGService>(provider =>
         {
