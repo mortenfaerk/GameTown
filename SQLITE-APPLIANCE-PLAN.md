@@ -23,24 +23,24 @@ Work is on branch `sqlite-appliance`. The build is green at every commit.
 |---|---|
 | 1 — SQLite | **Done**, verified (`5550f2c`, `a5bfa84`) |
 | 2a — single origin | **Done**, verified (`4e9250c`) |
-| 2b — cookie auth | Not started |
-| 3 — config + settings GUI | Not started |
-| 4 — first run + install | Not started |
-| 5 — schema upgrades | Not started |
+| 2b — cookie auth | **Done**, verified (`fd2c230`) |
+| 3 — config + settings GUI | **Done**, verified (`95a1730`) |
+| 4 — first run + install | **Done**, verified (`a76a463`) |
+| 5 — schema upgrades | **Done**, verified |
 
-**Resume at 2b.** Everything below Phase 2's "Swap JWT for ASP.NET Core cookie auth" heading is
-still outstanding; CORS, both delegating handlers, the `RefreshTokens` table and the JWT bearer
-setup are all still in place and still working, so the tree is coherent rather than half-migrated.
+All phases are complete. The plan below is kept as the record of what was decided and why.
 
-Two things learned in Phase 1 that the later phases should reuse:
+The lesson that held across all five phases: **the failure mode here is silence.** Almost every trap
+found — foreign keys off, `ValueGeneratedNever` on Guid keys, scaffolder type inference, GUID text
+casing, a cookie handler answering 401 with a 302, `SecurePolicy=Always` dropping the cookie over
+HTTP, an unpersisted keyring, services reading config captured at startup, a form emitting no
+antiforgery token — produced a **working build**. None of them would have been caught by compiling,
+and several would have looked like a different bug entirely. Every one was found by running the thing
+and asserting on the result.
 
-- **SQLite's failure mode is silence.** Every trap found so far (foreign keys off, `ValueGeneratedNever`
-  on Guid keys, scaffolder type inference, GUID text casing) produced a *working* build that would
-  have corrupted data later. Assume the same of anything new and prove it with a probe.
-- **A throwaway verification harness paid for itself repeatedly.** It caught the FK/cascade behaviour
-  and would have caught the un-wired WAL call had it asserted on `journal_mode`. There is still no
-  test project; the harness lives only in scratch. Wiring an equivalent into the repo is worth doing
-  before Phase 3 adds settings that can be edited at runtime.
+**Still outstanding: there is no test project.** The verification for each phase was a throwaway
+harness or a shell script, and none of it is in the repo. That is the single biggest gap left; the
+per-phase "how you will know it works" sections below are effectively a specification for it.
 
 ---
 

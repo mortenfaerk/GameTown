@@ -105,6 +105,16 @@ GUI-launched IDEs do not read your shell profile — set it in the run configura
 - Primary keys are `Guid` for GameTown entities, generated **client-side**; RAWG entities reuse RAWG's own `int` ids (`ValueGeneratedNever`).
 - Table and column identifiers are **double-quoted in the DDL** to preserve the original mixed casing (`"GameTownGame"`, `"PasswordHash"`). Keep new DDL quoted the same way, or the scaffolded model will drift.
 
+#### Changing the schema
+
+`Database/sqlite/01_schema.sql` is the **frozen baseline (version 1)**. Do not edit it to change the schema. Add a numbered migration in `Database/sqlite/migrations/` instead (`003_what_it_does.sql`), then re-scaffold.
+
+Fresh installs run the baseline and then every migration, exactly as an existing install does, so the two cannot drift apart. Keeping the baseline "current" *and* writing migrations is the alternative, and its failure mode — the two disagreeing — only ever appears on upgraded installs, never in development.
+
+Migrations are embedded resources (`API.csproj`), applied by `SchemaMigrator` at startup before anything serves a request. Each script commits together with its `SchemaVersion` row, so a failure leaves the database at the previous version rather than half-applied. Write them to be safe to re-run (`IF NOT EXISTS`).
+
+`ALTER TABLE ... DROP COLUMN` and modern upsert syntax are safe to use: the SQLite version floor is the bundled `SQLitePCLRaw` native library, not whatever the host machine happens to have.
+
 #### SQLite specifics that are easy to get wrong
 
 SQLite is dynamically typed, so several things Postgres enforced are now conventions the code has to uphold. All four of these fail *silently*:

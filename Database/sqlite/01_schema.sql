@@ -95,6 +95,23 @@ CREATE TABLE "GameTownUsers_Roles" (
 -- JWT-plus-rotating-refresh-token scheme it replaced needed server-side storage,
 -- and this does not.
 
+-- ---------------------------------------------------------------- schema version
+-- Tracks which numbered migrations from Database/sqlite/migrations/ have been applied.
+--
+-- THIS FILE IS THE BASELINE AND IS FROZEN AT VERSION 1. Do not edit the tables below
+-- to change the schema — add a numbered migration instead. Fresh installs run this
+-- file and then every migration, exactly as an existing install does, so the two
+-- cannot drift apart. That drift is the classic failure of the alternative scheme
+-- (keep this file current AND write migrations), and it only ever shows up on
+-- upgraded installs, never in development.
+
+CREATE TABLE "SchemaVersion" (
+    "Version"   INTEGER  NOT NULL PRIMARY KEY,
+    "AppliedAt" datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT INTO "SchemaVersion" ("Version") VALUES (1);
+
 -- ---------------------------------------------------------------- settings
 -- Runtime-editable configuration, so an operator can change things from the admin
 -- UI instead of editing files and restarting.

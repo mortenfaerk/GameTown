@@ -29,6 +29,8 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<Rawgscreenshot> Rawgscreenshots { get; set; }
 
+    public virtual DbSet<SchemaVersion> SchemaVersions { get; set; }
+
     public virtual DbSet<Setting> Settings { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -36,6 +38,8 @@ public partial class DatabaseContext : DbContext
         modelBuilder.Entity<GameTownGame>(entity =>
         {
             entity.ToTable("GameTownGame");
+
+            entity.HasIndex(e => e.Title, "IX_GameTownGame_Title");
 
             entity.Property(e => e.Id)
                 .ValueGeneratedNever()
@@ -237,6 +241,18 @@ public partial class DatabaseContext : DbContext
                 .HasColumnType("boolean")
                 .HasColumnName("is_deleted");
             entity.Property(e => e.Width).HasColumnName("width");
+        });
+
+        modelBuilder.Entity<SchemaVersion>(entity =>
+        {
+            entity.HasKey(e => e.Version);
+
+            entity.ToTable("SchemaVersion");
+
+            entity.Property(e => e.Version).ValueGeneratedNever();
+            entity.Property(e => e.AppliedAt)
+                .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                .HasColumnType("datetime");
         });
 
         modelBuilder.Entity<Setting>(entity =>

@@ -7,6 +7,13 @@ builder.AddDependencies();
 
 var app = builder.Build();
 
+// Before anything serves a request. An install from an older build must be brought forward, and
+// serving against a schema the code does not expect is worse than failing to start.
+SchemaMigrator.ApplyMigrations(
+    API.Startup.SqliteConnectionString.WithRequiredPragmas(
+        builder.Configuration.GetConnectionString("DefaultConnection")),
+    app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SchemaMigrator"));
+
 app.UseOpenApi();
 
 // Serves the Blazor WASM bundle from this project. Must precede UseStaticFiles so the

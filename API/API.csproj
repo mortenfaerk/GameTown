@@ -8,6 +8,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Schema migrations ship inside the assembly rather than as loose files, so they cannot go
+         missing from a self-contained publish or be edited on a running install. SchemaMigrator
+         reads them as embedded resources and keys off the NNN_ prefix. -->
+    <EmbeddedResource Include="..\Database\sqlite\migrations\*.sql" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.10" />
     <!-- Serves the Blazor WASM client from this project so both are one origin: it maps the
          _framework/ assets and the Brotli-compressed bundle that UseBlazorFrameworkFiles needs. -->
