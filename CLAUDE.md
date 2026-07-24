@@ -24,13 +24,15 @@ The intended entry point for local development is the Aspire AppHost, which laun
 ```powershell
 dotnet run --project Aspire/Aspire.AppHost      # runs API + app together (https launch profiles)
 dotnet build GameTown.slnx                       # build everything (slnx, not sln)
-dotnet run --project API --launch-profile https  # run just the API
-dotnet run --project GameTownApp                  # run just the frontend
+dotnet run --project API --launch-profile https  # run just the API (it serves the app too)
 ```
 
-- API listens on `https://localhost:7188` (also `http://localhost:5187`).
+`GameTownApp` has no standalone run step on purpose — the API serves its compiled bundle from its own wwwroot, so "the app" and "the API" are one process on one origin. Launching the WASM dev server on its own *appears* to work but the SPA then resolves its API address to that dev server, and every call comes back as `index.html` (`ExpectedStartOfValueNotFound, <`). See the comment in `Aspire/Aspire.AppHost/Program.cs`.
+
+- API listens on `https://localhost:7188` (also plain-HTTP `http://localhost:5187`, the same port the installed appliance binds — see `install.sh`).
 - API docs (Scalar UI) are at `/scalar/v1`; the `https` profile opens it on launch.
-- The frontend resolves its API base URL by environment: `https://localhost:7188` in Development, `https://api.gametowndev.com` otherwise (`GameTownApp/Program.cs`).
+- **First run goes to `/setup`** — the server-rendered wizard that creates the first administrator (`API/Pages/Setup.cshtml`). It 404s once an admin exists, so it is only reachable on a fresh database. The Aspire dashboard's `gametown` row links all three: **GameTown**, **Setup (first run)** and **API docs (Scalar)** (`Aspire/Aspire.AppHost/Program.cs` sets them via `WithUrls`; the row shows the first two inline and collapses the rest behind a `+N` chip).
+- The frontend has **no configured API URL and nothing hardcoded**: the API serves the SPA, so it resolves its API base from wherever it was loaded — `builder.HostEnvironment.BaseAddress` in `GameTownApp/Program.cs`. One published artifact therefore runs at any address (a LAN IP, a custom port, a reverse-proxied hostname) with no rebuild. There is no `api.gametowndev.com` or any other deployment host in the source.
 
 ### Tests
 

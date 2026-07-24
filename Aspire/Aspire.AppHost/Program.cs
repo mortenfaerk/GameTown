@@ -1,23 +1,52 @@
 using Aspire.Hosting;
 
 var builder = DistributedApplication.CreateBuilder(args);
-
-// ONE project, deliberately.
-//
-// GameTownApp is not launched here and must not be. It is no longer independently runnable: the API
-// project references it and serves its compiled bundle from its own wwwroot, so "the app" and "the
-// API" are one process on one origin. That is what removed CORS, the cross-origin cookie and the
-// compile-time API URL.
-//
-// Starting GameTownApp on its own still *appears* to work — the WASM dev server happily serves the
-// SPA — but the SPA resolves its API address from wherever it was loaded from, which is then the dev
-// server rather than the API. Every API call falls through that server's SPA fallback and comes back
-// as index.html, so the first thing the library page does is try to parse "<!DOCTYPE html>" as JSON:
-//
-//     Could not load the library: ExpectedStartOfValueNotFound, <
-//
-// GameTownApp's launch profiles were deleted for the same reason.
 builder.AddProject<Projects.API>("gametown", launchProfileName: "https")
-    .WithEndpoint("https", ep => ep.IsProxied = false);
+    .WithEndpoint("https", ep => ep.IsProxied = false)
+    .WithUrls(context =>
+    {
+        // The https endpoint is the one the AppHost launches (launchProfileName above). If it is
+        // somehow unallocated, leave Aspire's own URLs alone rather than emitting broken links.
+        var https = context.Urls.FirstOrDefault(u => u.Endpoint?.EndpointName == "https")?.Endpoint;
+        if (https is null)
+        {
+            return;
+        }
+
+        var root = https.Url.TrimEnd('/');
+
+        context.Urls.Clear();
+
+        // All three stay SummaryAndDetails (the default). DetailsOnly does not mean "one click
+        // further in under the row's URL popup" — it drops the URL from the resource row's URLs
+        // column altogether, leaving only the bare "GameTown" link and no hint the others exist.
+        // DisplayOrder sorts highest-first, so the app stays the link you land on.
+        context.Urls.Add(new ResourceUrlAnnotation
+        {
+            Url = root,
+            DisplayText = "GameTown",
+            Endpoint = https,
+            DisplayOrder = 300
+        });
+
+        // The first-run wizard, which creates the first administrator. A Razor Page rather than an
+        // SPA route (API/Pages/Setup.cshtml), and it 404s once an admin exists — so on a configured
+        // install this link is a dead end by design rather than a way back into the wizard.
+        context.Urls.Add(new ResourceUrlAnnotation
+        {
+            Url = $"{root}/setup",
+            DisplayText = "Setup (first run)",
+            DisplayOrder = 200
+        });
+
+        // Scalar is mapped only in Development (API/Startup/OpenApiConfig.cs), which is the only
+        // environment the AppHost launches, so this link is always live here.
+        context.Urls.Add(new ResourceUrlAnnotation
+        {
+            Url = $"{root}/scalar/v1",
+            DisplayText = "API docs (Scalar)",
+            DisplayOrder = 100
+        });
+    });
 
 builder.Build().Run();

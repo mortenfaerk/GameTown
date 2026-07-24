@@ -365,3 +365,11 @@ API/wwwroot/media/*
 # Claude Code local settings
 .claude/settings.local.json
 .claude/*.tmp.*
+
+# Developer-local settings — never ship (may hold secrets like connection strings)
+appsettings.Development.json
+
+# GameTownApp is not independently runnable (the API serves its bundle — one origin), so its
+# launch profiles were deleted. IDEs regenerate this file and reintroduce a standalone dev-server
+# profile that silently breaks every API call; keep it untracked so the regenerated copy is ignored.
+GameTownApp/Properties/launchSettings.json
