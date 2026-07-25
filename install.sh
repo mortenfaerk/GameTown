@@ -68,6 +68,17 @@ mkdir -p "$DATA_DIR/games"    # uploaded archives
 mkdir -p "$DATA_DIR/media"    # re-hosted cover art and screenshots
 mkdir -p "$DATA_DIR/keys"     # Data Protection keyring — losing it signs everyone out
 
+# ---------------------------------------------------------------- stop the service
+# Ahead of the backup, not after it. Nothing may hold the database open while it is being copied:
+# `.backup` tolerates a live database but can lose the race under write load (SQLITE_BUSY), and a
+# plain file copy of a live WAL database — which is what this becomes once sqlite3 is no longer a
+# prerequisite — silently produces a backup that cannot be recovered. Stopping first makes the
+# backup correct under either mechanism.
+#
+# Harmless on a fresh install: there is no unit to stop yet.
+info "Stopping $APP_NAME…"
+systemctl stop "$APP_NAME" 2>/dev/null || true
+
 # ---------------------------------------------------------------- database
 if [[ $UPGRADE -eq 0 ]]; then
     command -v sqlite3 >/dev/null 2>&1 || die "sqlite3 is required to create the database (apt install sqlite3)."
@@ -85,7 +96,6 @@ fi
 
 # ---------------------------------------------------------------- install application
 info "Installing to $APP_DIR…"
-systemctl stop "$APP_NAME" 2>/dev/null || true
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR"
 cp -r "$PUBLISH_DIR/." "$APP_DIR/"

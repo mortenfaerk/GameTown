@@ -3,6 +3,13 @@ using API.Startup;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Pairs with Type=notify in the systemd unit the installer writes. systemd waits for a readiness
+// notification before considering the unit started; with no integration that notification never
+// arrives, so `systemctl start` blocks for the full 90s default timeout and then marks the unit
+// failed — while the application is up and serving the whole time. Detects systemd at runtime and
+// does nothing under `dotnet run`, Aspire or the test host.
+builder.Host.UseSystemd();
+
 builder.AddDependencies();
 
 var app = builder.Build();
