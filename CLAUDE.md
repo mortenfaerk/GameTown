@@ -40,7 +40,9 @@ dotnet run --project API --launch-profile https  # run just the API (it serves t
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-55 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the installer uses, so DDL/model drift fails here.
+62 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
+
+Requires the `sqlite3` CLI on the machine running the tests: the harness shells out to it so its view of the database stays independent of the EF model under test. The shipped application does not need it.
 
 They are written against the bug classes this codebase has actually produced, all of which compiled and ran:
 
@@ -62,13 +64,9 @@ Prefer adding to these over writing a new harness.
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=/path/to/gametown.db" --project API
 ```
 
-Then **initialize the database once** before the first run:
+There is **no database initialization step**. Point the connection string at a path that does not exist and the application builds its own schema on first start: `SchemaMigrator` applies the baseline (embedded from `Database/sqlite/01_schema.sql` + `02_seed.sql`) when it finds a database with no tables, then replays the numbered migrations over it. A fresh install and an upgraded one therefore run the same sequence, which is what stops them drifting.
 
-```powershell
-./init-dev-db.ps1        # -Force to wipe and rebuild from the baseline
-```
-
-This is the dev-only counterpart to `install.sh`'s fresh-install branch. It reads the db path from user secrets, creates the data directory (`games/`, `media/`, `keys/`) and applies `Database/sqlite/01_schema.sql` + `02_seed.sql`. It is needed because the `dotnet run`/Aspire path has **no baseline-creation step** — `Program.cs` only runs the numbered migrations (`SchemaMigrator`); the baseline is otherwise created only by `install.sh` (production) or the test harness. Point the app at an empty or missing `.db` and it wedges: SQLite auto-creates an empty file, `SchemaMigrator` assumes a pre-versioning install and stamps it version 1, and the first migration then fails on the missing baseline tables. (Keep new `.ps1` scripts ASCII-only — PowerShell 5.1 reads UTF-8-without-BOM as ANSI, turning em-dashes into smart quotes that break parsing.)
+This also removed the dev-only `init-dev-db.ps1` bootstrap, and with it the wedge it existed to work around — an empty or missing `.db` used to be adopted as a pre-versioning install, stamped version 1, and then fail on the first migration because the baseline tables were never created.
 
 Runtime settings (`GameFilesPath`, `RAWGApiKey`, allowed upload types) live in the `Settings` table and are read **per request** by `SettingsService`. That is deliberate and fragile in one specific way: `RAWGService` and `FileService` must keep reading them per call. They used to take these as constructor arguments resolved once at startup, which is exactly what made the settings UI look like it saved and changed nothing.
 

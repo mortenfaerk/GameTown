@@ -143,13 +143,26 @@ out of the WASM heap.
 
 ## Installing and running
 
+On a Debian/Ubuntu-ish LXC container or VM, as root:
+
 ```bash
-sudo ./install.sh                            # install or upgrade as a systemd service
+curl -fsSL https://raw.githubusercontent.com/mortenfaerk/GameTown/master/install.sh | bash
 ```
 
+That downloads the latest release, verifies its checksum, and installs it as a systemd service. The
+target needs neither a .NET runtime nor `sqlite3`: the release is a self-contained build, and the
+application creates its own database from a schema embedded in the binary.
+
 Then open `http://<host>:5187/setup` to create the administrator. That page stops responding once one
-exists. Re-running the installer upgrades in place: it backs up the database, replaces the
-application, and leaves the data directory alone.
+exists. Re-running the same command upgrades in place: it backs up the database, replaces the
+application, and leaves the data directory alone — and does nothing at all if the latest version is
+already installed.
+
+```bash
+GAMETOWN_PORT=8080   …| bash    # listen elsewhere
+GAMETOWN_VERSION=v0.1.0 …| bash # pin a version instead of taking the latest
+GAMETOWN_SRC=$PWD    ./install.sh  # build from this checkout instead (needs the .NET SDK)
+```
 
 For development:
 
