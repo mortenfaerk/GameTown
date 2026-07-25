@@ -369,6 +369,11 @@ API/wwwroot/media/*
 # Developer-local settings — never ship (may hold secrets like connection strings)
 appsettings.Development.json
 
+# Internal working notes. Kept in the tree because that is where they are useful, but they are
+# planning scratch — not documentation — and this repo is going public. A generic pattern rather
+# than named files, so the .gitignore itself does not advertise what the notes are about.
+*.local.md
+
 # GameTownApp is not independently runnable (the API serves its bundle — one origin), so its
 # launch profiles were deleted. IDEs regenerate this file and reintroduce a standalone dev-server
 # profile that silently breaks every API call; keep it untracked so the regenerated copy is ignored.
