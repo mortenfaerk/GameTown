@@ -12,6 +12,17 @@
          missing from a self-contained publish or be edited on a running install. SchemaMigrator
          reads them as embedded resources and keys off the NNN_ prefix. -->
     <EmbeddedResource Include="..\Database\sqlite\migrations\*.sql" />
+
+    <!-- The baseline, for the same reason: the application creates its own database when pointed at
+         an empty path, so the installer needs neither a source checkout nor the sqlite3 CLI.
+
+         LogicalName is set deliberately. The default names would be "API.01_schema.sql" and
+         "API.02_seed.sql", and SchemaMigrator's discovery regex matches any resource ending in
+         ".NN_name.sql" — so the baseline would be picked up as "migration 1" and the seed as
+         "migration 2", the latter colliding with the real 002 migration. These names carry no NN_
+         segment and therefore cannot be mistaken for migrations. -->
+    <EmbeddedResource Include="..\Database\sqlite\01_schema.sql" LogicalName="API.Baseline.schema.sql" />
+    <EmbeddedResource Include="..\Database\sqlite\02_seed.sql" LogicalName="API.Baseline.seed.sql" />
   </ItemGroup>
 
   <ItemGroup>

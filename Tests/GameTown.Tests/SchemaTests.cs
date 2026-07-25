@@ -75,6 +75,68 @@ public class SchemaTests
     }
 
     /// <summary>
+    /// The fresh-install path: an empty data directory, with the application building its own schema.
+    ///
+    /// Compared against a database created by running the SQL files directly and then migrating —
+    /// deliberately not against a second app boot, which would agree with the first even if the
+    /// embedded baseline had drifted from <c>Database/sqlite/01_schema.sql</c>. The files on disk are
+    /// the reference precisely because they are what the embedded copy is supposed to be.
+    /// </summary>
+    [Fact]
+    public async Task An_empty_data_directory_gets_the_same_schema_as_the_baseline_scripts()
+    {
+        using var appCreated = GameTownApp.WithEmptyDataDirectory();
+        using (var client = appCreated.CreateBrowser()) await client.GetAsync("/");
+
+        using var fromScripts = new GameTownApp();
+        using (var client = fromScripts.CreateBrowser()) await client.GetAsync("/");
+
+        const string dump = @"SELECT type||' '||name||' '||COALESCE(sql,'') FROM sqlite_master
+                              WHERE name NOT LIKE 'sqlite_%' ORDER BY name";
+
+        Assert.Equal(fromScripts.QueryScalar(dump), appCreated.QueryScalar(dump));
+    }
+
+    /// <summary>
+    /// The seed is a separate script from the schema, so it is separately forgettable. Without roles
+    /// the first-run wizard cannot assign Admin and the install is unusable — while the schema
+    /// comparison above would still pass, since roles are rows and not schema.
+    /// </summary>
+    [Fact]
+    public async Task A_fresh_install_seeds_the_roles()
+    {
+        using var app = GameTownApp.WithEmptyDataDirectory();
+        using (var client = app.CreateBrowser()) await client.GetAsync("/");
+
+        Assert.Equal("Admin\nContributor",
+            app.QueryScalar(@"SELECT ""Role"" FROM ""GameTownRoles"" ORDER BY ""Role"""));
+    }
+
+    /// <summary>
+    /// Restarting a freshly installed appliance must not rebuild anything. The baseline uses bare
+    /// CREATE TABLE, so a re-run would throw rather than corrupt — but it would still take the
+    /// service down on every restart.
+    /// </summary>
+    [Fact]
+    public async Task A_restart_after_a_fresh_install_changes_nothing()
+    {
+        using var app = GameTownApp.WithEmptyDataDirectory();
+        using (var client = app.CreateBrowser()) await client.GetAsync("/");
+
+        const string state = @"SELECT (SELECT COUNT(*) FROM ""SchemaVersion"")
+                               || '/' || (SELECT MAX(""Version"") FROM ""SchemaVersion"")
+                               || '/' || (SELECT COUNT(*) FROM ""GameTownRoles"")";
+        var before = app.QueryScalar(state);
+
+        // A restart is exactly this: the migrator running again over the same file.
+        API.Startup.SchemaMigrator.ApplyMigrations(
+            API.Startup.SqliteConnectionString.WithRequiredPragmas($"Data Source={app.DatabasePath}"),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+        Assert.Equal(before, app.QueryScalar(state));
+    }
+
+    /// <summary>
     /// Foreign keys are OFF per connection by default in SQLite, which would make every FOREIGN KEY
     /// in the schema decorative and let orphan rows insert happily.
     ///

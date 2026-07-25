@@ -22,10 +22,24 @@ public sealed class GameTownApp : WebApplicationFactory<Program>
     public string DataDirectory { get; }
     public string DatabasePath => Path.Combine(DataDirectory, "gametown.db");
 
-    public GameTownApp(bool seedRoles = true)
+    public GameTownApp(bool seedRoles = true) : this(createDatabase: true, seedRoles: seedRoles) { }
+
+    /// <summary>
+    /// Boots against a data directory with no database in it at all — the state an appliance is in
+    /// the moment it is installed. The application builds the schema itself at startup.
+    ///
+    /// This exists because every other test hands the app a database that the harness already
+    /// created from <c>01_schema.sql</c>, so none of them execute the fresh-install path — the only
+    /// path a real first run ever takes.
+    /// </summary>
+    public static GameTownApp WithEmptyDataDirectory() => new(createDatabase: false, seedRoles: false);
+
+    private GameTownApp(bool createDatabase, bool seedRoles)
     {
         DataDirectory = Path.Combine(Path.GetTempPath(), "gametown-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(DataDirectory);
+
+        if (!createDatabase) return;
 
         RunSql(SchemaFile("01_schema.sql"));
         if (seedRoles) RunSql(SchemaFile("02_seed.sql"));
