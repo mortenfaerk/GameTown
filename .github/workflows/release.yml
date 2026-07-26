@@ -47,7 +47,9 @@ jobs:
         run: |
           set -euo pipefail
           if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::$TAG has already been released. Bump <Version> in Directory.Build.props."
+            echo "::error::$TAG already exists. If it shipped, bump <Version> in Directory.Build.props. \
+          If a previous run created the tag and then failed before publishing, delete it and re-push: \
+          git push --delete origin $TAG"
             exit 1
           fi
           echo "$TAG is new."
