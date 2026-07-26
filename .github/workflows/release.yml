@@ -1,0 +1,106 @@
+name: Release
+
+# Pushing to `prod` is the release action. Merge master -> prod when you want to ship, having bumped
+# <Version> in Directory.Build.props first.
+on:
+  push:
+    branches: [prod]
+
+permissions:
+  contents: write   # required to create the release and its tag
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # tags are needed to tell whether this version was already released
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(dotnet msbuild API/API.csproj -getProperty:Version -nologo | tr -d '[:space:]')"
+
+          # Validated rather than trusted. It ends up in a tag, a filename and a shell command, and it
+          # comes from a file in the repository — so anything that is not a plain version number is a
+          # mistake at best.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$version' is not a valid version. Check <Version> in Directory.Build.props."
+            exit 1
+          fi
+
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      # A branch trigger fires on every push, so without this a second merge to `prod` would try to
+      # re-release a version that already shipped. Failing here names the fix; letting it reach
+      # `gh release create` would fail too, but with a much less obvious message.
+      - name: Refuse to re-release a version that already exists
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG has already been released. Bump <Version> in Directory.Build.props."
+            exit 1
+          fi
+          echo "$TAG is new."
+
+      # Tested here rather than relying on ci.yml. Both workflows fire on a push to `prod`, but they
+      # run in parallel and nothing makes this one wait — so without its own test step a release
+      # could publish while CI was still failing on the very same commit.
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          dotnet build GameTown.slnx --configuration Release
+          dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj --configuration Release --no-build
+
+      # The API project only, never the solution. Tests and Aspire.AppHost both reference API rather
+      # than the other way round, so publishing this one project is what keeps them out of the
+      # artifact. Not trimmed: Blazor WASM plus EF Core plus reflection makes trimming a debugging tax
+      # for a saving that does not matter against a 2 GB asset limit.
+      - name: Publish
+        run: >
+          dotnet publish API
+          --configuration Release
+          --runtime linux-x64
+          --self-contained true
+          -p:PublishSingleFile=false
+          --output publish
+
+      - name: Package
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          tarball="gametown-$TAG-linux-x64.tar.gz"
+
+          # -C publish . so the archive holds the application at its root; install.sh unpacks it
+          # straight into /opt/gametown and expects no wrapping directory.
+          tar czf "$tarball" -C publish .
+
+          # Bare filenames, because install.sh verifies with `sha256sum --check` from the directory it
+          # downloaded into.
+          sha256sum "$tarball" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create the release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            "gametown-$TAG-linux-x64.tar.gz" \
+            SHA256SUMS

@@ -1,0 +1,15 @@
+<Project>
+
+  <!--
+    The single source of the release version.
+
+    Imported automatically by every project in the tree, so it stamps the published assemblies, and
+    read by .github/workflows/release.yml to decide what to tag. Bumping this value is what makes a
+    push to `prod` produce a new release: the workflow refuses to run if a tag for this version
+    already exists, so forgetting to bump it fails loudly rather than silently re-releasing.
+  -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+</Project>

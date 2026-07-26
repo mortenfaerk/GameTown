@@ -1,0 +1,35 @@
+name: CI
+
+# Every branch, so `prod` is never the first place a break is discovered. This is the fast feedback
+# loop; the release workflow runs the same tests again for itself, because the two fire in parallel on
+# a push to `prod` and neither waits for the other.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      # The test harness shells out to the sqlite3 CLI so its view of the database stays independent
+      # of the EF model under test. The shipped application does not need it — only the tests do.
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      # The whole solution, not just what the tests reference: Aspire.AppHost is not on the test
+      # project's reference path, so a compile error in it would otherwise reach `prod` unnoticed.
+      - name: Build
+        run: dotnet build GameTown.slnx --configuration Release
+
+      - name: Test
+        run: >
+          dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
+          --configuration Release --no-build
