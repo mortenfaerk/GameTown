@@ -1,0 +1,148 @@
+name: Install test
+
+# Proves the installer actually installs, which "the workflow produced a tarball" does not.
+#
+# Runs directly on the runner VM rather than in a debian:12 container. The runner has real systemd at
+# PID 1, so the unit is exercised exactly as written -- Type=notify, PrivateTmp, ProtectHome and all.
+# Getting that inside a container needs --privileged plus a cgroup mount and systemd as the
+# entrypoint, and even then PrivateTmp and the notify socket are the parts most likely to behave
+# differently. The runner is ephemeral, so installing to /opt and /var/lib on it costs nothing.
+#
+# It must be a SYSTEM unit. A --user unit would fail here for a reason that does not exist in
+# production: ProtectHome=true makes /run/user inaccessible, and a user unit's notify socket lives at
+# /run/user/$UID/systemd/notify. System units use /run/systemd/notify and are unaffected.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  install-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(dotnet msbuild API/API.csproj -getProperty:Version -nologo | tr -d '[:space:]')"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      # Built and packaged exactly as release.yml does it, so this tests the artifact that would
+      # actually ship rather than an approximation of it.
+      - name: Build the release artifact
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          dotnet publish API \
+            --configuration Release \
+            --runtime linux-x64 \
+            --self-contained true \
+            -p:PublishSingleFile=false \
+            --output publish
+
+          mkdir -p dist
+          tar czf "dist/gametown-$TAG-linux-x64.tar.gz" -C publish .
+          ( cd dist && sha256sum "gametown-$TAG-linux-x64.tar.gz" > SHA256SUMS )
+
+      # install.sh normally fetches from GitHub Releases, which do not exist for an unmerged commit.
+      # GAMETOWN_BASE_URL points it at the artifact just built instead -- otherwise the installer
+      # could only ever be tested after it had already shipped.
+      - name: Serve the artifact locally
+        run: |
+          set -euo pipefail
+          nohup python3 -m http.server 8000 --directory dist >/dev/null 2>&1 &
+          for _ in $(seq 1 20); do
+            curl -fsS -o /dev/null http://127.0.0.1:8000/SHA256SUMS && exit 0
+            sleep 0.5
+          done
+          echo "::error::the local artifact server never came up"; exit 1
+
+      - name: Install (fresh)
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          sudo GAMETOWN_BASE_URL=http://127.0.0.1:8000 GAMETOWN_VERSION="$TAG" bash install.sh
+
+      # `systemctl start` inside install.sh only returns once systemd has the readiness notification,
+      # so reaching this step at all is already proof the Type=notify handshake works. A broken one
+      # blocks for the 90s timeout and fails the step above.
+      - name: Verify the service came up
+        run: |
+          set -euo pipefail
+          systemctl is-active --quiet gametown || { sudo journalctl -u gametown -n 50 --no-pager; exit 1; }
+          systemctl is-enabled --quiet gametown
+
+          for _ in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://127.0.0.1:5187/setup; then
+              echo "the first-run wizard is serving"; break
+            fi
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:5187/setup \
+            || { sudo journalctl -u gametown -n 50 --no-pager; exit 1; }
+
+      # The application creates its own schema on first start; nothing in install.sh does it any more.
+      # If that regressed, the database would be missing or empty here.
+      - name: Verify the app created its own database
+        run: |
+          set -euo pipefail
+          sudo test -f /var/lib/gametown/gametown.db
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends sqlite3 >/dev/null
+          version="$(sudo sqlite3 /var/lib/gametown/gametown.db 'SELECT MAX("Version") FROM "SchemaVersion"')"
+          roles="$(sudo sqlite3 /var/lib/gametown/gametown.db 'SELECT COUNT(*) FROM "GameTownRoles"')"
+          echo "schema version=$version roles=$roles"
+          [[ "$version" -ge 2 ]] || { echo "::error::schema did not migrate past the baseline"; exit 1; }
+          [[ "$roles" -eq 2 ]]   || { echo "::error::roles were not seeded"; exit 1; }
+
+      # A marker in the data directory, to prove the upgrade below preserves a real library rather
+      # than merely completing without error.
+      - name: Leave data behind, then upgrade over it
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "precious" | sudo tee /var/lib/gametown/games/library-marker.zip >/dev/null
+
+          # GAMETOWN_FORCE, because the version has not changed -- this is exercising the upgrade
+          # path, not the version check (which the next step covers).
+          sudo GAMETOWN_FORCE=1 GAMETOWN_BASE_URL=http://127.0.0.1:8000 GAMETOWN_VERSION="$TAG" \
+            bash install.sh
+
+      - name: Verify the upgrade preserved everything
+        run: |
+          set -euo pipefail
+          systemctl is-active --quiet gametown || { sudo journalctl -u gametown -n 50 --no-pager; exit 1; }
+          curl -fsS -o /dev/null http://127.0.0.1:5187/setup
+
+          sudo test -f /var/lib/gametown/games/library-marker.zip \
+            || { echo "::error::the upgrade destroyed the library"; exit 1; }
+
+          sudo ls /var/lib/gametown/ | grep -q 'gametown.db.backup-' \
+            || { echo "::error::the upgrade took no database backup"; exit 1; }
+
+      # The third run is the one people actually make: re-running the install command when nothing has
+      # changed. It must cost nothing rather than re-downloading the artifact.
+      - name: Verify re-running with no change does nothing
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          output="$(sudo GAMETOWN_BASE_URL=http://127.0.0.1:8000 GAMETOWN_VERSION="$TAG" bash install.sh)"
+          echo "$output"
+          grep -q 'already installed' <<<"$output" \
+            || { echo "::error::a no-change re-run did not short-circuit"; exit 1; }
+          systemctl is-active --quiet gametown
+
+      - name: Service logs
+        if: always()
+        run: sudo journalctl -u gametown -n 100 --no-pager || true
