@@ -232,7 +232,19 @@ systemctl daemon-reload
 systemctl enable "$APP_NAME" >/dev/null 2>&1 || true
 systemctl start "$APP_NAME"
 
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+# Only ever used to decorate the closing message, so it must never be able to fail the install.
+#
+# `hostname -I` is a Debian/net-tools extension. GNU inetutils hostname — Arch and others — has no -I
+# and exits 64, and under `set -e` with pipefail that aborted the installer *after* a completely
+# successful install: the service was up and serving, but the script exited non-zero and never printed
+# the address to visit. Every branch here is therefore explicitly non-fatal.
+IP=""
+if command -v hostname >/dev/null 2>&1; then
+    IP="$(hostname -I 2>/dev/null | awk '{print $1}')" || IP=""
+fi
+if [[ -z "$IP" ]] && command -v ip >/dev/null 2>&1; then
+    IP="$(ip -4 route get 1 2>/dev/null | awk '{print $7; exit}')" || IP=""
+fi
 IP="${IP:-localhost}"
 
 echo
