@@ -204,7 +204,12 @@ RestartSec=5
 
 # The data directory is the only thing that must be known before the app starts; everything else is
 # read from the database it points at and edited in the admin UI.
-Environment=ConnectionStrings__DefaultConnection=Data Source=$DATA_DIR/gametown.db
+#
+# The quotes are load-bearing. systemd splits Environment= on whitespace, so the unquoted form set
+# ConnectionStrings__DefaultConnection to "Data" and then a junk second variable "Source=…" — and the
+# application aborted at startup with "the configured connection string is not a valid SQLite one".
+# Every other Environment= line here is single-token and does not need them.
+Environment="ConnectionStrings__DefaultConnection=Data Source=$DATA_DIR/gametown.db"
 Environment=ASPNETCORE_URLS=http://0.0.0.0:$PORT
 Environment=ASPNETCORE_ENVIRONMENT=Production
 

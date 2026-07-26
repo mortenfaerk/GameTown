@@ -38,15 +38,27 @@ public static class SqliteConnectionString
             // real cause instead.
             var looksLikePostgres = connectionString.Contains("Host=", StringComparison.OrdinalIgnoreCase)
                                  || connectionString.Contains("Username=", StringComparison.OrdinalIgnoreCase);
+
+            // A value with no '=' at all is almost always a whole connection string that something
+            // truncated at its first space. systemd does exactly that: `Environment=KEY=Data
+            // Source=/path` splits on whitespace and delivers "Data". It cost a full debugging session
+            // once, because the resulting message said nothing about the value it had received.
+            var looksTruncated = !connectionString.Contains('=');
+
             var hint = looksLikePostgres
                 ? " This looks like a PostgreSQL connection string. GameTown uses SQLite now — set " +
                   "ConnectionStrings:DefaultConnection to \"Data Source=/path/to/gametown.db\" (in " +
                   "development: dotnet user-secrets set \"ConnectionStrings:DefaultConnection\" " +
                   "\"Data Source=$HOME/gametown/gametown.db\" --project API)."
+                : looksTruncated
+                ? " It has no '=' in it, so it looks truncated at a space rather than mistyped. If this " +
+                  "is a systemd unit, quote the whole assignment: " +
+                  "Environment=\"ConnectionStrings__DefaultConnection=Data Source=/path/to/gametown.db\"."
                 : string.Empty;
 
             throw new InvalidOperationException(
-                $"The configured connection string is not a valid SQLite one.{hint}", ex);
+                $"The configured connection string is not a valid SQLite one. Got: \"{connectionString}\".{hint}",
+                ex);
         }
     }
 
