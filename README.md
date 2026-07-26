@@ -184,11 +184,18 @@ needs before the browser will talk to the API.
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-55 tests, mostly HTTP-level against the real app on a throwaway database. They are aimed squarely at
+62 tests, mostly HTTP-level against the real app on a throwaway database. They are aimed squarely at
 the failure mode this codebase produces: almost every bug found while building it compiled and ran —
 routes returning a web page instead of JSON, a cookie the browser silently discarded, a keyring that
 reset on restart, services still serving configuration captured at startup. So the tests assert on
 things like `Content-Type` and cookie flags, not just status codes.
+
+They need the `sqlite3` CLI installed; the shipped application does not.
+
+Some failures are out of reach of any unit test, because they live in the generated systemd unit
+rather than in code — a connection string split at a space by `Environment=`, a readiness
+notification never sent. `.github/workflows/install-test.yml` covers those by actually installing the
+built artifact, twice, and checking the service comes up and an upgrade preserves the library.
 
 Not covered: the SPA in a real browser.
 
