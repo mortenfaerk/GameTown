@@ -292,10 +292,18 @@ else if (Tab == "uploads")
     // an error string. Translating them is the client's job.
     private static string DescribePathCheck(PathCheckResult check) => check.Reason switch
     {
+        // The filesystem name is worth showing even on success: it is how an operator sees that the
+        // network share they meant to use is not actually mounted. An unmounted mountpoint is
+        // writable, has free space, and is the local disk.
+        "ok" when check.FreeBytes is not null && check.FileSystem is not null
+            => $"Usable. {check.FreeBytes / 1024 / 1024 / 1024} GB free on {check.FileSystem}.",
         "ok" when check.FreeBytes is not null
             => $"Usable. {check.FreeBytes / 1024 / 1024 / 1024} GB free.",
         "ok" => "Usable.",
         "not-absolute" => "Enter an absolute path.",
+        "unc-not-supported"
+            => "GameTown cannot open a network share directly — it runs unprivileged and cannot mount one. "
+             + "Mount the share on the server (smb-mount.sh does this) and enter the mountpoint instead.",
         "permission-denied" => "GameTown does not have permission to write there.",
         "not-found" => "That directory does not exist and could not be created.",
         "io-error" => "That directory could not be written to.",

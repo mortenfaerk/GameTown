@@ -72,7 +72,7 @@ public static class SettingsEndpoints
 
             // Validated here, not just in the browser. A path that cannot be created is worth
             // rejecting at save time rather than discovering at the first upload.
-            var check = ProbeDirectory(path);
+            var check = DirectoryProbe.Probe(path);
             if (!check.Writable)
                 return Results.BadRequest($"That directory is not usable: {check.Reason}.");
 
@@ -103,13 +103,7 @@ public static class SettingsEndpoints
     }
 
     private static IResult CheckPath(PathCheckRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.Path) || !Path.IsPathRooted(request.Path))
-        {
-            return Results.Ok(new PathCheckResult { Reason = "not-absolute" });
-        }
-        return Results.Ok(ProbeDirectory(request.Path));
-    }
+        => Results.Ok(DirectoryProbe.Probe(request.Path));
 
     private static async Task<IResult> TestRawgKey(SettingsService settings)
     {
@@ -137,63 +131,5 @@ public static class SettingsEndpoints
             // and the message can carry proxy names, DNS state and internal addresses.
             return Results.Ok(new RawgKeyCheckResult { Reason = "unreachable" });
         }
-    }
-
-    /// <summary>
-    /// Existence is not enough — the service account may lack write permission, and finding that out
-    /// at the first upload is a bad first-run experience. So this actually writes and deletes a probe
-    /// file.
-    ///
-    /// Every <c>Reason</c> is a fixed code. Raw exception text here would leak directory structure to
-    /// an endpoint whose entire job is reporting on arbitrary server paths.
-    /// </summary>
-    private static PathCheckResult ProbeDirectory(string path)
-    {
-        var result = new PathCheckResult();
-        try
-        {
-            var info = new DirectoryInfo(path);
-            result.Exists = info.Exists;
-
-            if (!info.Exists)
-            {
-                // Try to create it: pointing at a not-yet-existing directory is a normal thing to do
-                // when setting this up, and refusing would force the operator out to a shell.
-                info.Create();
-                result.Exists = true;
-            }
-
-            var probe = Path.Combine(path, $".gametown-write-test-{Guid.NewGuid():N}");
-            File.WriteAllText(probe, string.Empty);
-            File.Delete(probe);
-            result.Writable = true;
-            result.Reason = "ok";
-
-            try
-            {
-                result.FreeBytes = new DriveInfo(info.Root.FullName).AvailableFreeSpace;
-            }
-            catch (Exception)
-            {
-                // Free space is a nicety; failing to read it must not fail the check.
-            }
-        }
-        catch (UnauthorizedAccessException)
-        {
-            result.Reason = "permission-denied";
-        }
-        catch (DirectoryNotFoundException)
-        {
-            result.Reason = "not-found";
-        }
-        catch (IOException)
-        {
-            result.Reason = "io-error";
-        }
-        catch (Exception)
-        {
-            result.Reason = "invalid";
-        }
-        return result;
     }
 }

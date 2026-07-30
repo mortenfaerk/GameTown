@@ -10,7 +10,7 @@ to face the public internet as it stands.
 
 Since these notes were first written GameTown became something other people install: a self-contained
 release, a `curl … | bash` installer, a systemd unit and a first-run wizard. That moved several risks
-from "my box" to "every box"; accepted risks 5–7 are the ones that only exist because of it.
+from "my box" to "every box"; accepted risks 5–8 are the ones that only exist because of it.
 
 ---
 
@@ -119,6 +119,11 @@ README says so at the point where it matters.
 The form is a Razor Page `POST`, so antiforgery applies — and `API/Pages/_ViewImports.cshtml` is what
 makes the tag helpers emit the token. Delete that file and every submission fails with a bare 400.
 
+**Order matters inside the POST handler.** The archive path is probed *before* the administrator is
+created, because this page 404s the moment one exists: a path rejected after the account was made
+would leave the operator signed in, unable to store uploads, and with no wizard left to correct it.
+`SetupPathTests` pins that ordering.
+
 ### 6. Installing means piping a script from GitHub into root's shell
 
 `curl -fsSL …/install.sh | bash`, as root, is how this ships. It is the Proxmox-helper-script
@@ -141,7 +146,30 @@ Note that the per-upgrade `gametown.db.backup-<timestamp>` copies inherit root's
 `0600`; they are protected by the `0700` directory around them, so do not move them somewhere more
 permissive.
 
-### 7. Plain HTTP is the default
+### 7. SMB credentials live outside the application, deliberately
+
+Storing the share's username and password in the `Settings` table would have been the obvious feature,
+and it was rejected. A GameTown-shaped appliance protects that table with a `0700` data directory and
+nothing else — no encryption at rest that is not decryptable by the same process — while a NAS
+credential usually reaches far beyond the one share it was issued for.
+
+`smb-mount.sh` (run as root, separately from the app) instead writes the password to a root-owned
+`0600` file under `/etc/gametown` that only the kernel's CIFS client reads, and mounts the share with
+`uid`/`gid` set to the service account. GameTown itself never sees the credential and never mounts
+anything — it runs with `NoNewPrivileges=true` and could not mount if it wanted to.
+
+Two details in that script are load-bearing:
+
+- The credentials file is written **under `umask 077`**, not `chmod`-ed afterwards. A chmod after the
+  fact leaves a window in which the whole point of the file is world-readable.
+- `--password` on the command line is **refused**, because argv is readable through `/proc` for the
+  lifetime of the process. It prompts, or takes `--password-file`.
+
+It also writes a `RequiresMountsFor=` drop-in so the service will not start with the share missing.
+That is not hardening for its own sake: without it an absent NAS turns the mountpoint back into an
+ordinary local directory that GameTown will happily fill with uploads nobody can see afterwards.
+
+### 8. Plain HTTP is the default
 
 The unit sets `ASPNETCORE_URLS=http://0.0.0.0:<port>` and `UseHttpsRedirection` is opt-in behind
 `RequireHttps` (`API/Program.cs`). This is sound in the sense that the auth cookie is same-origin and
@@ -217,9 +245,22 @@ exists and is writable — a filesystem-probing primitive. `POST /settings/test-
 server issue an outbound request. Both are `Admin`-only, and both must stay that way.
 
 Neither returns exception text. `check-path` answers with a fixed reason code
-(`ok`/`not-absolute`/`permission-denied`/`not-found`/`io-error`/`invalid`) precisely because raw
-exception messages would disclose directory structure from an endpoint whose whole job is reporting
-on server paths. The client translates those codes into prose.
+(`ok`/`not-absolute`/`unc-not-supported`/`permission-denied`/`not-found`/`io-error`/`invalid`)
+precisely because raw exception messages would disclose directory structure from an endpoint whose
+whole job is reporting on server paths. The client translates those codes into prose, and
+`DirectoryProbe.Reasons` is the published set that `DirectoryProbeTests` holds it to.
+
+The probe **writes and deletes a file**, and it **creates the directory** if it is missing — so it is
+a filesystem-mutating primitive reachable by an Admin, and by the anonymous setup wizard before the
+first admin exists (risk 5). It is bounded by running as the service account, which cannot write
+anywhere interesting, and the probe file is removed in the same call. One implementation serves both
+callers on purpose: a second one would drift, and the wizard would start accepting paths the settings
+page rejects.
+
+`DirectoryProbe` also reports the **filesystem name** of the mount the directory sits on. That is
+operational rather than sensitive — it is the only way an operator can see that the network share
+they configured is not actually mounted, which otherwise presents as uploads silently filling the
+container's root disk under a directory the share hides when it returns.
 
 `GET /settings` returns the RAWG key **masked** (last four characters) plus an `IsSet` flag, never the
 value. A blank key on `PATCH` therefore means "unchanged", not "clear" — clearing is a separate

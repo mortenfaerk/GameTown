@@ -91,6 +91,46 @@ is a same-origin `SameSite=Lax` cookie, not one that requires `Secure`. It does 
 the network in the clear — to terminate TLS, put a reverse proxy in front and add
 `Environment=RequireHttps=true` to `/etc/systemd/system/gametown.service`.
 
+### Storing the archives on a network share
+
+The archive directory is the one thing people want on a NAS rather than in the container. Setting it
+to `\\server\share` does not work and GameTown will tell you so: it runs as an unprivileged service
+with `NoNewPrivileges=true`, so it cannot mount anything, whatever path you type. The share has to be
+mounted first and GameTown pointed at the mountpoint.
+
+`smb-mount.sh` does that, as root, on the machine GameTown is installed on. It is not part of the
+release tarball — fetch it the same way as the installer:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/mortenfaerk/GameTown/master/smb-mount.sh
+chmod +x smb-mount.sh
+
+./smb-mount.sh //nas/games                     # prompts for the username and password
+./smb-mount.sh '\\nas\games' --user morten     # Windows-style address works too
+```
+
+It is deliberately not piped into `bash` like the installer: it prompts for a password, which a
+piped-in script cannot do — its stdin is the script itself.
+
+It writes three things: a root-owned `0600` credentials file under `/etc/gametown`, a systemd
+`.mount` unit for the share, and a drop-in that makes `gametown.service` **require** that mount. The
+password never reaches GameTown's database — the kernel's CIFS client is the only thing that reads
+it. Needs `cifs-utils` (`apt install cifs-utils`).
+
+That last drop-in is the part worth keeping. Without it, a NAS that goes away turns the mountpoint
+back into an ordinary empty directory on the root filesystem, and GameTown keeps accepting uploads
+into it — they disappear behind the share when it returns, and the container's disk fills up. With
+it, the service simply does not start until the share is there.
+
+Before it reports success the script mounts the share, confirms the filesystem really is `cifs`, and
+writes and deletes a file **as the `gametown` user** — because a mount can succeed with credentials
+that leave the service account unable to write, and finding that out at the first upload is too late.
+
+GameTown checks the same thing from its side. Both `/setup` and *Administer → Settings* create the
+directory if they can, then write and delete a probe file before saving, and report which filesystem
+the directory actually sits on — so an unmounted mountpoint shows up as `ext4` where you expected
+`cifs`, instead of quietly being the wrong disk.
+
 ---
 
 ## Architecture
@@ -243,7 +283,7 @@ needs before the browser will talk to the API.
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-71 tests, mostly HTTP-level against the real app on a throwaway database. They are aimed squarely at
+88 tests, mostly HTTP-level against the real app on a throwaway database. They are aimed squarely at
 the failure mode this codebase produces: almost every bug found while building it compiled and ran —
 routes returning a web page instead of JSON, a cookie the browser silently discarded, a keyring that
 reset on restart, services still serving configuration captured at startup. So the tests assert on

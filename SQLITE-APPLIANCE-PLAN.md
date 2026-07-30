@@ -39,7 +39,7 @@ and several would have looked like a different bug entirely. Every one was found
 and asserting on the result.
 
 The gap this section used to record — no test project, every phase verified by a throwaway harness
-that never entered the repo — is closed. `Tests/GameTown.Tests` holds 71 passing tests built largely
+that never entered the repo — is closed. `Tests/GameTown.Tests` holds 88 passing tests built largely
 from the "how you will know it works" sections below, and `.github/workflows/install-test.yml`
 installs the built artifact on real systemd, twice, to cover what those tests cannot reach. What
 remains untested is the SPA in a browser; see SECURITY-NOTES.md.

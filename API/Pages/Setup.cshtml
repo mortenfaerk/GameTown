@@ -76,6 +76,15 @@
                     Defaults to a folder in the data directory (<code>@Model.DataDirectory</code>).
                     Point it at a larger disk if you have one. Changeable later under
                     Administer&nbsp;→&nbsp;Settings.
+                    <br />
+                    This is checked before setup completes: GameTown creates the directory if it can,
+                    then writes and deletes a file in it to prove it can store uploads there.
+                    <br />
+                    Using a network share? Mount it on the server first and enter the mountpoint —
+                    <code>\\server\share</code> will not work, because GameTown runs unprivileged and
+                    cannot mount anything itself. <code>smb-mount.sh</code> in the GameTown
+                    repository sets an SMB share up for you; see the README under
+                    <em>Storing the archives on a network share</em>.
                 </div>
 
                 <label for="RawgApiKey">RAWG API key</label>

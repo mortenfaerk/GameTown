@@ -69,6 +69,16 @@ public class PathCheckResult
     public bool Writable { get; set; }
     public string Reason { get; set; } = string.Empty;
     public long? FreeBytes { get; set; }
+
+    /// <summary>
+    /// The filesystem the directory sits on ("cifs", "ext4", "btrfs"), when it could be read.
+    ///
+    /// Reported so an operator pointing GameTown at a network share can tell whether the share is
+    /// actually mounted. An unmounted mountpoint passes every other check in this result: it exists,
+    /// it is writable, it has free space — and it is the local disk, quietly filling up under a
+    /// directory the share will hide the moment it mounts.
+    /// </summary>
+    public string? FileSystem { get; set; }
 }
 
 public class RawgKeyCheckResult

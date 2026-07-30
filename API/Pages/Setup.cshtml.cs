@@ -66,6 +66,24 @@ public class SetupModel(DatabaseContext dbContext, SettingsService settings) : P
         if (!ModelState.IsValid)
             return Page();
 
+        // Before the account is created, not after. Once an admin exists this page 404s, so a path
+        // rejected on the way out would leave the operator with a working login, an unusable archive
+        // directory, and no wizard to correct it in — they would have to find the settings page and
+        // already know what went wrong. Validating first means a bad path just re-renders the form.
+        //
+        // The check writes a file and deletes it again rather than reading permission bits: the
+        // service runs as its own user, and on a CIFS mount the rights are the mount's, not the
+        // caller's. See DirectoryProbe.
+        if (!string.IsNullOrWhiteSpace(GameFilesPath))
+        {
+            var probe = DirectoryProbe.Probe(GameFilesPath);
+            if (!probe.Writable)
+            {
+                ModelState.AddModelError(nameof(GameFilesPath), DescribeProbe(probe.Reason));
+                return Page();
+            }
+        }
+
         var adminRole = await dbContext.GameTownRoles.FirstOrDefaultAsync(r => r.Role == "Admin");
         if (adminRole is null)
         {
@@ -128,4 +146,21 @@ public class SetupModel(DatabaseContext dbContext, SettingsService settings) : P
 
     private Task<bool> AdminExistsAsync()
         => dbContext.GameTownUsers.AnyAsync(u => u.Apiroles.Any(r => r.Role == "Admin"));
+
+    /// <summary>
+    /// Reason code to prose. The codes exist so the probe never echoes exception text — which would
+    /// disclose server directory layout on a page reachable without authentication.
+    /// </summary>
+    private static string DescribeProbe(string reason) => reason switch
+    {
+        "unc-not-supported" =>
+            "GameTown cannot open a network share directly — it runs as an unprivileged service and " +
+            "cannot mount one. Mount the share on the server first (smb-mount.sh in the GameTown " +
+            "repository does this), then enter the mountpoint here.",
+        "not-absolute" => "Enter an absolute path, starting with /.",
+        "permission-denied" => "GameTown does not have permission to write in that directory.",
+        "not-found" => "That directory does not exist and could not be created.",
+        "io-error" => "That directory exists but could not be written to.",
+        _ => "That path cannot be used for game archives.",
+    };
 }
