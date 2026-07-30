@@ -3,7 +3,9 @@
 # GameTown SMB share helper.
 #
 # Mounts an SMB/CIFS share where GameTown keeps its game archives, and makes the mount permanent and
-# boot-safe. Run it as root on the machine GameTown is installed on:
+# boot-safe. Run it as root on the machine GameTown is installed on — and that must be a machine that
+# owns its kernel. An unprivileged LXC/LXD container cannot mount cifs at any privilege level; there
+# the share is mounted on the host and bind-mounted in. The script detects this and says so.
 #
 #   ./smb-mount.sh //nas/games
 #   ./smb-mount.sh '\\nas\games' --user morten --mountpoint /var/lib/gametown/games
@@ -127,6 +129,47 @@ echo "    Credentials: $CRED_FILE"
 echo "    Service:     $SERVICE will be made to require the mount"
 echo
 
+# ---------------------------------------------------------------- can this machine mount cifs at all
+# cifs is not user-namespace mountable (no FS_USERNS_MOUNT), so inside an unprivileged container the
+# kernel refuses the mount however much like root you look. It reports that as a bare
+# `mount error(1): Operation not permitted`, which reads exactly like a password problem and sends
+# people off to re-check credentials that were never consulted.
+#
+# This warns rather than refuses. A *privileged* container can mount cifs given an apparmor profile
+# that allows it, so the mount attempt further down stays the authoritative test — and it is now safe
+# to let it fail, because nothing is tied to the service until after it succeeds.
+CONTAINER="$(systemd-detect-virt --container 2>/dev/null || true)"
+UIDMAP_OFFSET=0
+if [[ -r /proc/self/uid_map ]]; then
+    read -r map_inside map_outside _ < /proc/self/uid_map || true
+    # An identity map (0 → 0) is the host or a privileged container; anything else is a shifted
+    # user namespace, i.e. unprivileged.
+    [[ "${map_inside:-}" == "0" ]] && UIDMAP_OFFSET="${map_outside:-0}"
+fi
+
+CONTAINER_NOTE="mounting cifs from inside it may not be permitted."
+if [[ -n "$CONTAINER" && "$CONTAINER" != "none" ]]; then
+    if [[ "$UIDMAP_OFFSET" != "0" ]]; then
+        CONTAINER_NOTE="an unprivileged $CONTAINER container cannot mount cifs at all — cifs is not user-namespace mountable, so being root in here is not being root to the kernel."
+        warn "This is an unprivileged $CONTAINER container. cifs cannot be mounted from inside one,"
+        warn "no matter what rights you hold in here. Mount it on the host and bind-mount it in:"
+        echo
+        echo "    On the host, mount $SHARE somewhere, with"
+        echo "        uid=$((APP_UID + UIDMAP_OFFSET)),gid=$((APP_GID + UIDMAP_OFFSET))"
+        echo "    — this container's $APP_UID/$APP_GID shifted by its uid_map offset of $UIDMAP_OFFSET."
+        echo "    Without the shift the files arrive owned by 'nobody' and $APP_USER cannot write."
+        echo "    Then bind-mount that host path to $MOUNTPOINT in the container's config."
+        echo
+        warn "Continuing anyway — the mount attempt below is the real test."
+        echo
+    else
+        CONTAINER_NOTE="this is a $CONTAINER container, and mounting cifs needs it to be privileged with an apparmor profile that permits mount."
+        warn "Running inside a $CONTAINER container. cifs needs a privileged container whose apparmor"
+        warn "profile permits mount — if this fails, check that before the credentials."
+        echo
+    fi
+fi
+
 # ---------------------------------------------------------------- credentials
 # The overwrite question comes before the password prompt: answering "no" afterwards would mean
 # having typed a password for nothing.
@@ -210,19 +253,27 @@ if ! systemctl start "$UNIT_NAME"; then
     warn "The mount unit failed to start. What it logged:"
     journalctl -u "$UNIT_NAME" --no-pager --lines 15 2>/dev/null | sed 's/^/    /' || true
     echo
-    warn "Kernel CIFS messages (the actual reason is usually here, not above):"
-    dmesg 2>/dev/null | grep -i -e cifs -e smb | tail -20 | sed 's/^/    /' || true
-    echo
-    warn "Common causes, by what dmesg says:"
-    echo "    STATUS_LOGON_FAILURE / SessSetup error   wrong username or password, or the server"
-    echo "                                             wants a workgroup — re-run with --domain NAME"
-    echo "    STATUS_ACCESS_DENIED                     the account is valid but has no rights here"
-    echo "    No such file / return code = -2          '$SHARE' does not resolve on the server."
-    echo "                                             If it is share+subdirectory, check the share"
-    echo "                                             alone mounts first."
-    echo "    return code = -1, no session-setup line  the kernel refused the mount itself. Check"
-    echo "                                             'systemd-detect-virt' — an unprivileged"
-    echo "                                             container cannot mount cifs at all."
+    # Capture before printing. An unreadable kernel log is not an empty one, and printing a heading
+    # that promises "the reason is here" above nothing at all is worse than saying why it is missing:
+    # dmesg returning EPERM *to root* is itself the answer, so report that rather than a blank.
+    kmsg="$(dmesg 2>/dev/null | grep -i -e cifs -e smb | tail -20 || true)"
+    if [[ -n "$kmsg" ]]; then
+        warn "Kernel CIFS messages (the actual reason is usually here, not above):"
+        printf '%s\n' "$kmsg" | sed 's/^/    /'
+        echo
+        warn "Common causes, by what the kernel says:"
+        echo "    STATUS_LOGON_FAILURE / SessSetup error   wrong username or password, or the server"
+        echo "                                             wants a workgroup — re-run with --domain NAME"
+        echo "    STATUS_ACCESS_DENIED                     the account is valid but has no rights here"
+        echo "    No such file / return code = -2          '$SHARE' does not resolve on the server."
+        echo "                                             If it is share+subdirectory, check that the"
+        echo "                                             share alone mounts first."
+    elif ! dmesg >/dev/null 2>&1; then
+        warn "The kernel log is unreadable even as root. That is the diagnosis, not a missing detail:"
+        echo "    this is a restricted container, and $CONTAINER_NOTE"
+    else
+        warn "The kernel logged nothing about cifs. Check the share address and the server's own logs."
+    fi
     echo
     die "Mount failed. This run changed nothing about $SERVICE — fix the cause and re-run with --force."
 fi
