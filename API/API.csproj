@@ -40,8 +40,13 @@
          advisory (GHSA-v5pm-xwqc-g5wc). Pin the latest 2.x; 3.x is a breaking API change. -->
     <PackageReference Include="Microsoft.OpenApi" Version="2.11.0" />
     <!-- Sanitises RAWG-supplied HTML descriptions before they reach the Blazor client, which
-         renders them with MarkupString (Blazor's dangerouslySetInnerHTML equivalent). -->
-    <PackageReference Include="HtmlSanitizer" Version="9.0.967" />
+         renders them with MarkupString (Blazor's dangerouslySetInnerHTML equivalent).
+
+         Do not go back below 9.1.x. The 9.0.x line hard-pinned AngleSharp [0.17.1] — an exact
+         version bracket that could not be overridden — and that AngleSharp carries CVE-2026-54570,
+         an mXSS flaw in the parser this sanitiser trusts. 9.1.x depends on AngleSharp 1.6.0, where
+         it is fixed. See SECURITY-NOTES.md. -->
+    <PackageReference Include="HtmlSanitizer" Version="9.1.974" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="RestSharp" Version="114.0.0" />
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.16" />

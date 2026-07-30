@@ -32,12 +32,15 @@ public static class GameMappings
         foreach (var tag in new[] { "p", "br", "b", "i", "em", "strong", "ul", "ol", "li" })
             sanitizer.AllowedTags.Add(tag);
 
-        // ACCEPTED RISK: HtmlSanitizer 9.0.967 hard-pins AngleSharp [0.17.1], which carries
-        // CVE-2026-54570 — an mXSS flaw that can let crafted markup survive sanitisation. Fixed in
-        // AngleSharp 1.5.0, currently only reachable via the HtmlSanitizer 9.1.x prerelease line,
-        // which was declined. Half of that bug is unescaped '<'/'>' in serialised *attribute
-        // values*, so no attribute is allowed through at all — with an empty allowlist there is no
-        // attribute for it to bite on. Revisit when HtmlSanitizer 9.1.x goes stable.
+        // Nothing is allowed through here — no attribute, no scheme, no CSS property.
+        //
+        // That started as compensation for an accepted risk: HtmlSanitizer 9.0.x hard-pinned
+        // AngleSharp [0.17.1], which carries CVE-2026-54570, an mXSS flaw in the parser this
+        // sanitiser trusts. Half of it is unescaped '<'/'>' in serialised *attribute values*, so an
+        // empty attribute allowlist left it nothing to bite on. The pin is gone (9.1.x depends on
+        // AngleSharp 1.6.0, where it is fixed) but the allowlist stays: a description needs no
+        // attributes, and this is defence in depth against the next parser bug rather than a
+        // workaround for the last one. SanitizerTests pins the behaviour.
         sanitizer.AllowedAttributes.Clear();
         sanitizer.AllowedSchemes.Clear();
         sanitizer.AllowedCssProperties.Clear();

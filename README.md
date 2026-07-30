@@ -18,6 +18,81 @@ It is not built to face the public internet as it stands — see
 
 ---
 
+## Install
+
+On a Debian/Ubuntu-ish LXC container or VM, as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mortenfaerk/GameTown/master/install.sh | bash
+```
+
+That resolves the latest release, verifies its checksum, unpacks it to `/opt/gametown` and starts it
+as a systemd service listening on port 5187. The target needs neither a .NET runtime nor `sqlite3`:
+the release is a self-contained build, and the application creates its own database from a schema
+embedded in the binary.
+
+Then open **`http://<host>:5187/setup`** and create the administrator. That page stops responding
+once an admin exists, so do it before anyone else on the network can — until then it is an open
+admin-creation form.
+
+### What the container needs
+
+- **x86_64.** The release is a self-contained `linux-x64` build; the installer refuses anything else
+  rather than letting systemd report "Exec format error" three steps later.
+- **`curl` and `tar`**, checked before anything is downloaded.
+- **ICU.** A self-contained .NET build does *not* bundle it — it loads the system
+  `libicuuc`/`libicui18n` at startup. Minimal container templates often leave it out, and the failure
+  lands **after** a green install: the service dies immediately with *"Couldn't find a valid ICU
+  package installed on the system"*, visible in `journalctl -u gametown`. The installer does not
+  check for it. Install whatever runtime package your release ships — `apt install libicu-dev` pulls
+  it in regardless of version, or find the exact name with `apt-cache search '^libicu[0-9]'`.
+- **1 vCPU and 512 MB RAM is enough** — the running service sits around 180 MB resident, most of it
+  reclaimable mapped assemblies. Give it 2 GB if you also intend to *build* in there
+  (`GAMETOWN_SRC=`), since that needs the .NET SDK rather than just the app. First boot applies the
+  schema and JITs on one core, so `systemctl start` can sit for tens of seconds before it reports
+  ready.
+- **Disk sized for the library.** The application is ~200 MB; everything else is the archives you
+  upload. Note that an upload exists in two places at once: it buffers into the service's private
+  `/tmp` — backed by the container's `/tmp`, normally the **root filesystem** — before landing in the
+  archive directory. So pointing
+  `GameFilesPath` at a big second disk does not spare the rootfs — size it for the largest archive
+  you expect anyone to upload.
+
+### Afterwards
+
+```bash
+journalctl -u gametown -f                  # logs
+systemctl restart gametown                 # restart
+```
+
+Everything that matters lives in **`/var/lib/gametown`** — the database, uploaded archives, re-hosted
+cover art, and the Data Protection keyring that keeps sign-ins valid across restarts. Back up that
+directory and nothing else. Note that each upgrade leaves a `gametown.db.backup-<timestamp>` there
+and never prunes them; delete old ones yourself.
+
+Re-running the install command upgrades in place: it stops the service, backs up the database,
+replaces the application directory and leaves the data directory untouched — and does nothing at all
+if the latest version is already installed. Schema changes are applied by the application at startup.
+
+Options go to `bash`, on the right-hand side of the pipe — putting them in front of `curl` sets them
+for `curl` and not for the script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mortenfaerk/GameTown/master/install.sh \
+    | GAMETOWN_PORT=8080 bash     # listen elsewhere
+
+… | GAMETOWN_VERSION=v0.1.0 bash  # pin a version instead of taking the latest
+… | GAMETOWN_FORCE=1 bash         # reinstall the version already installed
+GAMETOWN_SRC=$PWD ./install.sh    # build from a checkout instead (needs the .NET SDK)
+```
+
+The service serves **plain HTTP** by default, which is the intended posture on a LAN: authentication
+is a same-origin `SameSite=Lax` cookie, not one that requires `Secure`. It does mean passwords cross
+the network in the clear — to terminate TLS, put a reverse proxy in front and add
+`Environment=RequireHttps=true` to `/etc/systemd/system/gametown.service`.
+
+---
+
 ## Architecture
 
 .NET 10 throughout. **One process, one origin**: the API hosts the Blazor WebAssembly SPA from its own
@@ -141,35 +216,19 @@ out of the WASM heap.
 
 ---
 
-## Installing and running
+## Development
 
-On a Debian/Ubuntu-ish LXC container or VM, as root:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mortenfaerk/GameTown/master/install.sh | bash
-```
-
-That downloads the latest release, verifies its checksum, and installs it as a systemd service. The
-target needs neither a .NET runtime nor `sqlite3`: the release is a self-contained build, and the
-application creates its own database from a schema embedded in the binary.
-
-Then open `http://<host>:5187/setup` to create the administrator. That page stops responding once one
-exists. Re-running the same command upgrades in place: it backs up the database, replaces the
-application, and leaves the data directory alone — and does nothing at all if the latest version is
-already installed.
-
-```bash
-GAMETOWN_PORT=8080   …| bash    # listen elsewhere
-GAMETOWN_VERSION=v0.1.0 …| bash # pin a version instead of taking the latest
-GAMETOWN_SRC=$PWD    ./install.sh  # build from this checkout instead (needs the .NET SDK)
-```
-
-For development:
+Building and running from a checkout — the installed appliance needs none of this:
 
 ```bash
 dotnet build GameTown.slnx                   # build everything (.slnx, not .sln)
 dotnet run --project API                     # the whole app — SPA included
+dotnet run --project Aspire/Aspire.AppHost   # the same, under the Aspire dashboard
 ```
+
+Do not launch `GameTownApp` on its own. The API serves the SPA's compiled bundle, so the WASM dev
+server *looks* like it works and then resolves its API address to itself — every call comes back as
+`index.html`.
 
 The **only** required configuration is the SQLite connection string; everything else is edited in the
 app under *Administer → Settings*. The RAWG key is optional.
@@ -184,7 +243,7 @@ needs before the browser will talk to the API.
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-62 tests, mostly HTTP-level against the real app on a throwaway database. They are aimed squarely at
+71 tests, mostly HTTP-level against the real app on a throwaway database. They are aimed squarely at
 the failure mode this codebase produces: almost every bug found while building it compiled and ran —
 routes returning a web page instead of JSON, a cookie the browser silently discarded, a keyring that
 reset on restart, services still serving configuration captured at startup. So the tests assert on
@@ -198,6 +257,14 @@ notification never sent. `.github/workflows/install-test.yml` covers those by ac
 built artifact, twice, and checking the service comes up and an upgrade preserves the library.
 
 Not covered: the SPA in a real browser.
+
+### Releasing
+
+`.github/workflows/release.yml` builds the self-contained tarball, publishes it with a `SHA256SUMS`
+file and tags the repository on a push to `prod`. The version comes from `<Version>` in
+`Directory.Build.props`, and the workflow refuses to run if that tag already exists — so forgetting to
+bump it fails loudly instead of silently re-releasing. That release is what the install command above
+downloads.
 
 ## Further reading
 
