@@ -196,27 +196,36 @@ WantedBy=multi-user.target
 EOF
 chmod 644 "$UNIT_FILE"
 
-# ---------------------------------------------------------------- tie the service to the mount
-# Without this the failure mode is silent and expensive: the share goes away, the mountpoint reverts
-# to an ordinary empty directory on the root filesystem, and GameTown cheerfully accepts uploads into
-# it. They vanish from view the moment the share comes back, and the root filesystem fills up.
-DROPIN_DIR="/etc/systemd/system/${SERVICE}.service.d"
-info "Making $SERVICE require the mount…"
-mkdir -p "$DROPIN_DIR"
-cat > "${DROPIN_DIR}/smb.conf" <<EOF
-# Written by smb-mount.sh. GameTown will not start unless $MOUNTPOINT is mounted.
-[Unit]
-RequiresMountsFor=$MOUNTPOINT
-
-[Service]
-ReadWritePaths=$MOUNTPOINT
-EOF
-
 systemctl daemon-reload
 
 info "Mounting $SHARE at $MOUNTPOINT…"
 systemctl enable "$UNIT_NAME" >/dev/null 2>&1 || true
-systemctl start "$UNIT_NAME" || die "Mount failed. Check: journalctl -u $UNIT_NAME"
+if ! systemctl start "$UNIT_NAME"; then
+    # Show the operator what the kernel said rather than a command to go and run. mount.cifs reports
+    # a bare errno; the reason it stands for is only ever in dmesg.
+    #
+    # Every line here needs `|| true`: these are pipelines under pipefail and grep exits 1 when it
+    # matches nothing, which would otherwise trip the ERR trap in the middle of the report.
+    echo
+    warn "The mount unit failed to start. What it logged:"
+    journalctl -u "$UNIT_NAME" --no-pager --lines 15 2>/dev/null | sed 's/^/    /' || true
+    echo
+    warn "Kernel CIFS messages (the actual reason is usually here, not above):"
+    dmesg 2>/dev/null | grep -i -e cifs -e smb | tail -20 | sed 's/^/    /' || true
+    echo
+    warn "Common causes, by what dmesg says:"
+    echo "    STATUS_LOGON_FAILURE / SessSetup error   wrong username or password, or the server"
+    echo "                                             wants a workgroup — re-run with --domain NAME"
+    echo "    STATUS_ACCESS_DENIED                     the account is valid but has no rights here"
+    echo "    No such file / return code = -2          '$SHARE' does not resolve on the server."
+    echo "                                             If it is share+subdirectory, check the share"
+    echo "                                             alone mounts first."
+    echo "    return code = -1, no session-setup line  the kernel refused the mount itself. Check"
+    echo "                                             'systemd-detect-virt' — an unprivileged"
+    echo "                                             container cannot mount cifs at all."
+    echo
+    die "Mount failed. This run changed nothing about $SERVICE — fix the cause and re-run with --force."
+fi
 
 # ---------------------------------------------------------------- prove it
 # systemctl start returning 0 is not proof that GameTown can use the share: the mount can succeed
@@ -235,6 +244,28 @@ if runuser -u "$APP_USER" -- touch "$PROBE" 2>/dev/null; then
 else
     die "Mounted, but $APP_USER cannot write to $MOUNTPOINT. Check the share's own permissions for $USERNAME."
 fi
+
+# ---------------------------------------------------------------- tie the service to the mount
+# Without this the failure mode is silent and expensive: the share goes away, the mountpoint reverts
+# to an ordinary empty directory on the root filesystem, and GameTown cheerfully accepts uploads into
+# it. They vanish from view the moment the share comes back, and the root filesystem fills up.
+#
+# This comes *after* the mount is proved, and that ordering is load-bearing. RequiresMountsFor
+# expands to Requires= on the mount unit, so writing it before a mount that then fails leaves
+# GameTown unable to start at the next boot — a working service broken by a failed share setup.
+# (`nofail` does not save it: that only stops the mount from holding up boot.)
+DROPIN_DIR="/etc/systemd/system/${SERVICE}.service.d"
+info "Making $SERVICE require the mount…"
+mkdir -p "$DROPIN_DIR"
+cat > "${DROPIN_DIR}/smb.conf" <<EOF
+# Written by smb-mount.sh. GameTown will not start unless $MOUNTPOINT is mounted.
+[Unit]
+RequiresMountsFor=$MOUNTPOINT
+
+[Service]
+ReadWritePaths=$MOUNTPOINT
+EOF
+systemctl daemon-reload
 
 if systemctl is-active --quiet "$SERVICE"; then
     info "Restarting $SERVICE so it picks up the mount…"
