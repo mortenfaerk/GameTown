@@ -511,12 +511,6 @@ code {
     color: var(--gt-mist);
 }
 
-.gt-tag__count {
-    font-family: var(--gt-mono);
-    font-size: 0.6875rem;
-    color: var(--gt-dim);
-}
-
 /* The remove button inside an applied chip. Unstyled button semantics, chip
    appearance — it has to stay a real <button> for keyboard and screen readers. */
 .gt-tag__x {

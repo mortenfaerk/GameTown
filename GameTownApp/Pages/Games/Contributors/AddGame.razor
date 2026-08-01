@@ -29,7 +29,13 @@
     </div>
 }
 
-<EditForm Model="Request" OnValidSubmit="Submit">
+@*
+    id + the submit button's form="add-game" further down. The button belongs at the end of what it
+    submits, but the tag editor and the guide toggle between here and there have to stay OUTSIDE the
+    form (see below and in TagEditor) — so the form is closed early and the button is associated with
+    it by id instead of by nesting. HTML has had that attribute for exactly this case.
+*@
+<EditForm id="add-game" Model="Request" OnValidSubmit="Submit">
     <DataAnnotationsValidator />
     <ValidationSummary />
 
@@ -75,49 +81,6 @@
     </div>
 
     <RawgGameCard Game="SelectedRawgGame" />
-
-    @if (Busy)
-    {
-        <div class="upload mb-3">
-            <div class="d-flex justify-content-between align-items-baseline mb-1">
-                <span class="gt-data">@StatusText</span>
-                @* Hidden once the body is sent. Aborting the XHR at that point does not stop the
-                   server — it only throws away the answer, leaving the contributor unsure whether
-                   the game was added and likely to upload it a second time. *@
-                @if (!Processing)
-                {
-                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="Cancel">Cancel</button>
-                }
-            </div>
-
-            <div class="progress" role="progressbar" aria-label="@(Processing ? "Server processing" : "Upload progress")"
-                 aria-valuenow="@Percent" aria-valuemin="0" aria-valuemax="100">
-                <div class="progress-bar @(Indeterminate ? "progress-bar-striped progress-bar-animated" : "")"
-                     style="width: @(Indeterminate ? 100 : Percent)%"></div>
-            </div>
-
-            @if (Processing)
-            {
-                @* There is no real percentage to show here. The server writes the archive as it
-                   arrives, so by this point the remaining work is the database row plus any RAWG
-                   artwork download — neither of which reports progress. An honest indeterminate bar
-                   with an elapsed clock beats a fake percentage. *@
-                <p class="gt-data mt-1 mb-0">
-                    Transfer complete — the server is saving
-                    @(SelectedRawgGame is null ? "the game" : "the game and fetching artwork from RAWG").
-                    @FormatElapsed(ProcessingSeconds) elapsed.
-                </p>
-                @if (ProcessingSeconds >= 20)
-                {
-                    <p class="gt-muted mb-0">Leave this page open — closing it will not cancel it, but you will not see the result.</p>
-                }
-            }
-        </div>
-    }
-
-    <button type="submit" class="btn btn-primary" disabled="@Busy">
-        @(Busy ? "Uploading…" : "Add game")
-    </button>
 </EditForm>
 
 @*
@@ -162,6 +125,60 @@
             </span>
         }
     </p>
+</div>
+
+@* Progress sits with the button that started it, not back up beside the fields. *@
+@if (Busy)
+{
+    <div class="upload mt-4">
+        <div class="d-flex justify-content-between align-items-baseline mb-1">
+            <span class="gt-data">@StatusText</span>
+            @* Hidden once the body is sent. Aborting the XHR at that point does not stop the
+               server — it only throws away the answer, leaving the contributor unsure whether
+               the game was added and likely to upload it a second time. *@
+            @if (!Processing)
+            {
+                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="Cancel">Cancel</button>
+            }
+        </div>
+
+        <div class="progress" role="progressbar" aria-label="@(Processing ? "Server processing" : "Upload progress")"
+             aria-valuenow="@Percent" aria-valuemin="0" aria-valuemax="100">
+            <div class="progress-bar @(Indeterminate ? "progress-bar-striped progress-bar-animated" : "")"
+                 style="width: @(Indeterminate ? 100 : Percent)%"></div>
+        </div>
+
+        @if (Processing)
+        {
+            @* There is no real percentage to show here. The server writes the archive as it
+               arrives, so by this point the remaining work is the database row plus any RAWG
+               artwork download — neither of which reports progress. An honest indeterminate bar
+               with an elapsed clock beats a fake percentage. *@
+            <p class="gt-data mt-1 mb-0">
+                Transfer complete — the server is saving
+                @(SelectedRawgGame is null ? "the game" : "the game and fetching artwork from RAWG").
+                @FormatElapsed(ProcessingSeconds) elapsed.
+            </p>
+            @if (ProcessingSeconds >= 20)
+            {
+                <p class="gt-muted mb-0">Leave this page open — closing it will not cancel it, but you will not see the result.</p>
+            }
+        }
+    </div>
+}
+
+@*
+    The last thing on the page and hard right, where a form's commit belongs: everything above it is
+    something to fill in, and nothing below it is. It used to sit mid-page, above the tags and the
+    guide toggle, which made those two look like a separate screen that had arrived too late to be
+    part of the upload — they are not, they go up with it.
+
+    form="add-game" rather than nesting; see the comment on the EditForm.
+*@
+<div class="d-flex justify-content-end mt-4">
+    <button type="submit" form="add-game" class="btn btn-primary" disabled="@Busy">
+        @(Busy ? "Uploading…" : "Add game")
+    </button>
 </div>
 
 @code {

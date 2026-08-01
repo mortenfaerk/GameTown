@@ -9,6 +9,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Set up GameTown</title>
+    @* Served out of the SPA's wwwroot, which the host project picks up through static web assets —
+       so this is the same file the app's own tab shows, not a second copy to keep in step. *@
+    <link rel="icon" href="~/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="~/favicon.png" sizes="256x256" />
     @* Self-contained styling on purpose: this page must render correctly on an install that has
        never been configured, so it does not depend on the SPA's bundle being built or served. *@
     <style>

@@ -22,7 +22,16 @@
     <link rel="stylesheet" href="css/app.css" />
     <link rel="stylesheet" href="GameTownApp.styles.css" />
 
-    <link rel="icon" type="image/png" href="favicon.png" />
+    <!--
+        The GameTown mark, not Blazor's default. favicon.ico is listed as well as the PNG because a
+        bare /favicon.ico is what a browser asks for unprompted — for a bookmark, or for the tab of a
+        page that is not this shell (the /setup wizard, the Scalar docs) — and that request never
+        reads these tags.
+    -->
+
+    <link rel="icon" href="favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="favicon.png" sizes="256x256" />
+    <link rel="apple-touch-icon" href="icon-192.png" />
 </head>
 
 <body>

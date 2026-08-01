@@ -6,20 +6,21 @@
 
 <PageTitle>GameTown</PageTitle>
 
-<div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-3">
-    <h1 class="mb-0">@(IsFiltered ? "Results" : "Library")</h1>
+@*
+    One heading, always "Library".
 
-    @if (IsFiltered)
+    Selecting a tag used to retitle the page "Results" and print "tagged lan + co-op" beside it, which
+    made narrowing the shelf feel like leaving it — a separate screen you then had to find your way
+    back from. The chips below already say what is on, so the heading has nothing left to add and the
+    page stays the place you were.
+*@
+<div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-3">
+    <h1 class="mb-0">Library</h1>
+
+    @if (IsSearching)
     {
         <span class="gt-muted">
-            @if (IsSearching)
-            {
-                <span>matching &ldquo;<span class="gt-mist-strong">@Q</span>&rdquo;</span>
-            }
-            @if (SelectedTags.Count > 0)
-            {
-                <span>@(IsSearching ? " and " : "")tagged <span class="gt-mist-strong">@string.Join(" + ", SelectedTags)</span></span>
-            }
+            matching &ldquo;<span class="gt-mist-strong">@Q</span>&rdquo;
             <a class="ms-2" href="/">Clear</a>
         </span>
     }
@@ -33,26 +34,39 @@
     The tag filter. Quick-add tags always show; anything else only once it is in use, so a library
     with three tags does not get a bar built for thirty.
 
-    Selecting one navigates rather than filtering in place, so the filtered shelf keeps a URL — the
-    same reasoning that puts search in ?q=. It is the difference between "look at this" being a link
-    and being a set of instructions.
+    A chip is a toggle and reads as one: on chips take the accent, the shelf below narrows, and
+    nothing else on the page changes. It carries no game count — the number sat hard against the name
+    ("LAN5") and read as an index rather than as a quantity, and a count that rises every time anyone
+    uploads anything is noise on a control whose only job is on or off.
+
+    Toggling navigates rather than filtering in component state, so the narrowed shelf keeps a URL —
+    the same reasoning that puts search in ?q=. Same page, same heading; only the address and the
+    shelf change. It is the difference between "look at this" being a link and being a set of
+    instructions.
 *@
 @if (FilterTags.Count > 0)
 {
+    // Once, not once per chip: SelectedTags parses the query string and allocates on every read.
+    var selected = SelectedTags;
+
     <div class="gt-tags__chips mb-4">
         @foreach (var tag in FilterTags)
         {
             var captured = tag;
-            var on = SelectedTags.Contains(captured.Slug);
+            var on = selected.Contains(captured.Slug);
             <button type="button" class="@(on ? "gt-tag gt-tag--on" : "gt-tag")"
                     aria-pressed="@on.ToString().ToLowerInvariant()"
                     @onclick="() => ToggleTag(captured.Slug)">
                 @captured.Name
-                @if (!on && captured.GameCount > 0)
-                {
-                    <span class="gt-tag__count">@captured.GameCount</span>
-                }
             </button>
+        }
+
+        @if (selected.Count > 0)
+        {
+            @* Deliberately not a chip: it is not a tag, and dressing it as one would put a fifth
+               thing in a row of four that behaves differently when clicked. Keeps any ?q= —
+               clearing the tags is not the same request as abandoning the search. *@
+            <button type="button" class="btn btn-link btn-sm p-0 ms-2" @onclick="ClearTags">Clear tags</button>
         }
     </div>
 }
@@ -210,13 +224,19 @@ else
     private void ToggleTag(string slug)
     {
         var selected = SelectedTags;
-        var next = selected.Contains(slug)
+        GoTo(selected.Contains(slug)
             ? selected.Where(s => s != slug).ToList()
-            : [.. selected, slug];
+            : [.. selected, slug]);
+    }
 
+    private void ClearTags() => GoTo([]);
+
+    /// <summary>Navigates to the library with exactly these tags selected, keeping any search term.</summary>
+    private void GoTo(List<string> tags)
+    {
         var parameters = new List<string>();
         if (IsSearching) parameters.Add($"q={Uri.EscapeDataString(Q!)}");
-        if (next.Count > 0) parameters.Add($"tags={Uri.EscapeDataString(string.Join(',', next))}");
+        if (tags.Count > 0) parameters.Add($"tags={Uri.EscapeDataString(string.Join(',', tags))}");
 
         Navigation.NavigateTo(parameters.Count == 0 ? "/" : "/?" + string.Join('&', parameters));
     }
