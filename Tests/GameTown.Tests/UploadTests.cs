@@ -1,3 +1,4 @@
+using GameTown.Contracts.Games;
 using Microsoft.Extensions.Configuration;
 using System.Net;
 using System.Net.Http.Json;
@@ -50,13 +51,39 @@ public class UploadTests
 
         var response = await client.PostAsync("/GTGames/Add", Archive("game.zip"));
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var stored = Directory.GetFiles(Path.Combine(app.DataDirectory, "games"));
         Assert.Single(stored);
         // The client-supplied name is never used to build the path: identical uploads would collide
         // and "../" would escape the directory entirely.
         Assert.DoesNotContain("game.zip", Path.GetFileName(stored[0]));
         Assert.EndsWith(".zip", stored[0]);
+    }
+
+    /// <summary>
+    /// The response has to carry the new game's id, and that id has to be the one a caller can
+    /// immediately address.
+    ///
+    /// This is what turns "the archive is uploaded" into "the game can now be described": tags and
+    /// box art are set through their own endpoints, and with the 204 this used to answer there was
+    /// nothing to point them at. An id that came back but did not resolve would be worse than none,
+    /// because the failure would land on the follow-up call instead of here.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_upload_answers_with_the_new_games_id()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+
+        var response = await client.PostAsync("/GTGames/Add", Archive("game.zip", title: "Findable"));
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var created = await response.Content.ReadFromJsonAsync<AddGameResponse>();
+        Assert.NotNull(created);
+        Assert.NotEqual(Guid.Empty, created!.Id);
+
+        var fetched = await client.GetFromJsonAsync<GameContract>($"/GTGames/{created.Id}");
+        Assert.Equal("Findable", fetched!.Title);
     }
 
     /// <summary>Changing the allowlist must take effect immediately, like every other setting.</summary>
@@ -67,7 +94,7 @@ public class UploadTests
         using var client = await app.SignInAsAdminAsync();
 
         var allowed = await client.PostAsync("/GTGames/Add", Archive("first.zip"));
-        Assert.Equal(HttpStatusCode.NoContent, allowed.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, allowed.StatusCode);
 
         await client.PatchAsJsonAsync("/settings", new { allowedFileTypes = new[] { ".7z" } });
 
@@ -160,7 +187,7 @@ public class UploadTests
 
         var response = await client.PostAsync("/GTGames/Add", content);
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Equal("Backwards", app.QueryScalar(@"SELECT ""Title"" FROM ""GameTownGame""").Trim());
     }
 
@@ -173,7 +200,7 @@ public class UploadTests
         var payload = new byte[3 * 1024 * 1024];
         var response = await client.PostAsync("/GTGames/Add", Archive("game.zip", payload, "Three megabytes"));
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
         var stored = Assert.Single(ArchiveDirectory(app));
         Assert.Equal(payload.Length, new FileInfo(stored).Length);
@@ -213,7 +240,7 @@ public class UploadTests
         var response = await client.PostAsync("/GTGames/Add",
             Archive("fine.zip", new byte[2 * 1024 * 1024]));
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         Assert.Single(ArchiveDirectory(app));
     }
 
@@ -228,7 +255,7 @@ public class UploadTests
 
         var response = await client.PostAsync("/GTGames/Add", Archive("game.zip"));
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
     /// <summary>
@@ -315,7 +342,7 @@ public class UploadDeduplicationTests
         var first = await client.PostAsync("/GTGames/Add", Archive(payload, "Doom"));
         var second = await client.PostAsync("/GTGames/Add", Archive(payload, "Doom"));
 
-        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
 
         // The message names the existing entry, because the whole point is telling the contributor
@@ -365,8 +392,8 @@ public class UploadDeduplicationTests
         var first = await client.PostAsync("/GTGames/Add", Archive("one"u8.ToArray(), "Doom"));
         var second = await client.PostAsync("/GTGames/Add", Archive("two"u8.ToArray(), "Doom"));
 
-        Assert.Equal(HttpStatusCode.NoContent, first.StatusCode);
-        Assert.Equal(HttpStatusCode.NoContent, second.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
         Assert.Equal("2", app.QueryScalar(@"SELECT COUNT(*) FROM ""GameTownGame""").Trim());
     }
 
@@ -400,7 +427,7 @@ public class UploadDeduplicationTests
 
         var response = await client.PostAsync("/GTGames/Add", Archive("something else"u8.ToArray(), "Modern"));
 
-        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 }
 

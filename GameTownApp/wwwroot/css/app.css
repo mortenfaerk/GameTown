@@ -276,8 +276,15 @@ code {
 
 /* ============================================================================
    The shelf — the one place this design spends its boldness.
-   3:4 is box-art proportion; the phosphor edge only appears on hover so a still
-   page stays calm.
+   The phosphor edge only appears on hover so a still page stays calm.
+
+   2:3 rather than the 3:4 this used to be. That was an approximation of box-art
+   proportion made when there was no box art to hold: every cover came from RAWG's
+   background_image, which is a wide promotional still. Now that a game can carry a
+   real cover — SteamGridDB's grids are 600x900, exactly 2:3 — the tile matches it
+   and the art someone deliberately chose is shown uncropped. RAWG stills are
+   cropped harder in exchange, which is the right way round: an automatic
+   approximation should give way to a decision.
    ========================================================================= */
 .shelf {
     display: grid;
@@ -292,7 +299,7 @@ code {
 
 .tile__art {
     position: relative;
-    aspect-ratio: 3 / 4;
+    aspect-ratio: 2 / 3;
     border-radius: 6px;
     overflow: hidden;
     background-color: var(--gt-shelf);
@@ -435,6 +442,164 @@ code {
 
     .tile:hover .tile__art,
     .tile:focus-visible .tile__art {
+        transform: none;
+    }
+}
+
+/* ============================================================================
+   Tags — chips, used in three places with one set of rules.
+
+   The filter bar on the library, the read-only list on a game, and the editor.
+   Deliberately one class rather than three: they are the same object, and a tag
+   that looked different depending on where it was seen would stop reading as the
+   same thing you clicked a moment ago.
+   ========================================================================= */
+.gt-tags__chips,
+.gt-tags__quick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.gt-tags__quick {
+    margin-top: 0.6rem;
+}
+
+.gt-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid var(--gt-edge);
+    background: var(--gt-shelf);
+    color: var(--gt-dim);
+    font-family: var(--gt-sans);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    text-decoration: none;
+    transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+}
+
+    .gt-tag:hover,
+    .gt-tag:focus-visible {
+        color: var(--gt-mist);
+        border-color: var(--gt-phosphor);
+    }
+
+/* Applied, or selected as a filter. The distinction the eye needs here is
+   "is this on", so it gets the accent rather than a heavier weight. */
+.gt-tag--on {
+    color: var(--gt-void);
+    background: var(--gt-phosphor);
+    border-color: var(--gt-phosphor);
+}
+
+    .gt-tag--on:hover,
+    .gt-tag--on:focus-visible {
+        color: var(--gt-void);
+        background: var(--gt-mist);
+        border-color: var(--gt-mist);
+    }
+
+.gt-tag--add {
+    border-style: dashed;
+}
+
+.gt-tag--link {
+    color: var(--gt-mist);
+}
+
+.gt-tag__count {
+    font-family: var(--gt-mono);
+    font-size: 0.6875rem;
+    color: var(--gt-dim);
+}
+
+/* The remove button inside an applied chip. Unstyled button semantics, chip
+   appearance — it has to stay a real <button> for keyboard and screen readers. */
+.gt-tag__x {
+    border: 0;
+    background: none;
+    padding: 0;
+    line-height: 1;
+    font-size: 1rem;
+    color: inherit;
+    opacity: 0.7;
+    cursor: pointer;
+}
+
+    .gt-tag__x:hover {
+        opacity: 1;
+    }
+
+.gt-tags__input {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 0.75rem;
+    max-width: 32rem;
+}
+
+/* ============================================================================
+   The box-art picker.
+   ========================================================================= */
+.gt-art__search {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    max-width: 32rem;
+}
+
+.gt-art__grid {
+    display: grid;
+    /* Small enough that a couple of dozen candidates are scannable at a glance,
+       which is the whole point of showing options rather than one guess. */
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 0.75rem;
+}
+
+.gt-art__option {
+    padding: 0;
+    border: 1px solid var(--gt-edge);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--gt-shelf);
+    cursor: pointer;
+    /* Matches the shelf tile, so what you are choosing is shown in the shape it
+       will actually appear in. */
+    aspect-ratio: 2 / 3;
+    transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+    .gt-art__option img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    .gt-art__option:hover,
+    .gt-art__option:focus-visible {
+        border-color: var(--gt-phosphor);
+        transform: translateY(-2px);
+    }
+
+    .gt-art__option:disabled {
+        opacity: 0.5;
+        cursor: default;
+        transform: none;
+    }
+
+@media (prefers-reduced-motion: reduce) {
+    .gt-art__option,
+    .gt-tag {
+        transition: none;
+    }
+
+    .gt-art__option:hover,
+    .gt-art__option:focus-visible {
         transform: none;
     }
 }

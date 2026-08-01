@@ -49,4 +49,16 @@ public class SettingsService(HttpClient http)
             return null;
         return await response.Content.ReadFromJsonAsync<RawgKeyCheckResult>();
     }
+
+    /// <summary>
+    /// One live artwork-provider call with the stored key. Shares RawgKeyCheckResult: the shape is
+    /// "did the key work, and if not why", which is the same question for both providers.
+    /// </summary>
+    public async Task<RawgKeyCheckResult?> TestBoxArtKey()
+    {
+        var response = await _http.PostAsync("/settings/test-boxart-key", null);
+        if (!response.IsSuccessStatusCode)
+            return null;
+        return await response.Content.ReadFromJsonAsync<RawgKeyCheckResult>();
+    }
 }

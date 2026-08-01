@@ -57,7 +57,26 @@ public static class GameMappings
         Title = game.Title,
         HowTo = game.HowTo,
         Size = game.Size,
+        BoxArtUrl = game.BoxArtUrl,
+        // Ordered here rather than relying on the join's natural order, which is the primary key's
+        // and therefore effectively random to a reader. Quick-add tags first so the ones people scan
+        // for — split screen, LAN, co-op — sit in a stable place on every card.
+        Tags = [.. game.Tags
+            .OrderByDescending(t => t.IsQuickAdd)
+            .ThenBy(t => t.SortOrder)
+            .ThenBy(t => t.Name)
+            .Select(t => t.ToContract())],
         RawgGame = game.Rawggame?.ToContract()
+    };
+
+    public static TagContract ToContract(this Tag tag) => new()
+    {
+        Id = tag.Id,
+        Name = tag.Name,
+        Slug = tag.Slug,
+        IsQuickAdd = tag.IsQuickAdd,
+        // GameCount is deliberately left at zero. Populating it here would mean a count query per tag
+        // per game per page; the tag list endpoint is where a caller that needs counts gets them.
     };
 
     public static RawgGameContract ToContract(this Rawggame g) => new()

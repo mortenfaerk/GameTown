@@ -19,5 +19,9 @@ public partial class GameTownGame
 
     public string? ArchiveSha256 { get; set; }
 
+    public string? BoxArtUrl { get; set; }
+
     public virtual Rawggame? Rawggame { get; set; }
+
+    public virtual ICollection<Tag> Tags { get; set; } = new List<Tag>();
 }

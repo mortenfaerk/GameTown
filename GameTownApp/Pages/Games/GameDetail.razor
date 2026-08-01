@@ -50,7 +50,7 @@ else
                 }
                 else
                 {
-                    <div class="tile__fallback">@Initials(Game.Title)</div>
+                    <div class="tile__fallback">@GamesService.InitialsFor(Game.Title)</div>
                 }
             </div>
         </div>
@@ -77,6 +77,18 @@ else
                 <p class="mb-3"><span class="gt-muted">Developers:</span>
                     @(Game.RawgGame.Developers.Count == 0 ? "—" : string.Join(", ", Game.RawgGame.Developers.Select(d => d.Name)))
                 </p>
+            }
+
+            @* Linked, not just listed: a tag is a way into the library, and its whole value is being
+               able to ask "what else can we play split screen" from the game that reminded you. *@
+            @if (Game.Tags.Count > 0)
+            {
+                <div class="gt-tags__chips mb-3">
+                    @foreach (var tag in Game.Tags)
+                    {
+                        <a class="gt-tag gt-tag--link" href="@($"/?tags={tag.Slug}")">@tag.Name</a>
+                    }
+                </div>
             }
 
             <div class="d-flex flex-wrap gap-2">
@@ -148,8 +160,35 @@ else
                     <button type="submit" class="btn btn-primary" disabled="@Busy">
                         @(Busy ? "Saving…" : "Save changes")
                     </button>
-                    <button type="button" class="btn btn-outline-secondary" disabled="@Busy" @onclick="() => Edit = null">Cancel</button>
+                    <button type="button" class="btn btn-outline-secondary" disabled="@Busy" @onclick="CancelEdit">Cancel</button>
                 </EditForm>
+
+                @* Outside the EditForm above, deliberately — see the comment in TagEditor: its name
+                   box handles Enter, and a text input nested in a form submits that form on Enter. *@
+                <hr class="my-4" />
+
+                <label class="form-label">Tags</label>
+                <p class="gt-data mb-2">Saved with the rest of the changes.</p>
+                <TagEditor Names="EditTags" NamesChanged="names => EditTags = names" Disabled="@Busy" />
+
+                <hr class="my-4" />
+
+                <label class="form-label">Cover art</label>
+                <p class="gt-data mb-2">
+                    @if (Game.BoxArtUrl is not null)
+                    {
+                        <span>This game has its own cover. </span>
+                        <button type="button" class="btn btn-sm btn-link p-0 align-baseline"
+                                disabled="@Busy" @onclick="ClearBoxArt">Remove it</button>
+                        <span> to fall back to the RAWG image.</span>
+                    }
+                    else
+                    {
+                        <span>Using the RAWG image. Pick a cover to replace it — this saves immediately.</span>
+                    }
+                </p>
+                <BoxArtPicker GameId="Game.Id" Title="@Game.Title"
+                              Changed="OnBoxArtChanged" Failed="message => Error = message" />
             </div>
         </div>
     }
@@ -208,6 +247,7 @@ else
 
     private GameTownGamePatchRequest? Edit;
     private string? EditRawgName;
+    private List<string> EditTags = [];
 
     /// <summary>
     /// Pre-populated from the loaded game on purpose: the patch request treats null as "leave
@@ -225,8 +265,52 @@ else
             RawgGameId = Game.RawgGame?.Id?.ToString()
         };
         EditRawgName = Game.RawgGame?.Name;
+        EditTags = [.. Game.Tags.Select(t => t.Name)];
         Error = null;
         Notice = null;
+    }
+
+    private void CancelEdit()
+    {
+        Edit = null;
+        EditTags = [];
+    }
+
+    /// <summary>
+    /// Box art saves on its own, not with the rest of the form.
+    ///
+    /// Picking a cover is a click on a picture, and a click on a picture that then needs a separate
+    /// Save reads as broken. The endpoint answers with the updated game, so the page refreshes from
+    /// the response rather than re-fetching.
+    /// </summary>
+    private async Task OnBoxArtChanged(GameContract updated)
+    {
+        Game = updated;
+        Error = null;
+        Notice = "Cover art updated.";
+        await Task.CompletedTask;
+    }
+
+    private async Task ClearBoxArt()
+    {
+        if (Game is null) return;
+
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        var result = await GamesService.ClearBoxArt(Game.Id);
+        if (result.Success)
+        {
+            await LoadGame();
+            Notice = "Cover art removed.";
+        }
+        else
+        {
+            Error = result.Error;
+        }
+
+        Busy = false;
     }
 
     private void OnEditRawgSelected(RawgGameContract? game)
@@ -248,7 +332,23 @@ else
 
         if (result.Success)
         {
-            Edit = null;
+            // Tags go through their own endpoint, so this is a second call rather than part of the
+            // patch. Sent unconditionally rather than only when they changed: the request replaces
+            // the whole set and is idempotent, so a no-op costs one round trip and removes the need
+            // to track a dirty flag that could be wrong.
+            var (tagResult, _) = await GamesService.SetGameTags(Guid.Parse(Edit.Id), EditTags);
+
+            if (!tagResult.Success)
+            {
+                // The game itself did save, so say what did and did not rather than reporting the
+                // whole edit as failed — reloading here would otherwise look like nothing happened.
+                Error = $"The game was saved, but its tags were not: {tagResult.Error}";
+                await LoadGame();
+                Busy = false;
+                return;
+            }
+
+            CancelEdit();
             await LoadGame();
             Notice = "Changes saved.";
         }
@@ -270,19 +370,11 @@ else
                    .Select(u => u!)
                    .ToList();
 
-    /// <summary>Resolved against the API — /media is served there, not by the app.</summary>
-    private string? Cover
-    {
-        get
-        {
-            var rawg = Game?.RawgGame;
-            if (rawg is null) return null;
-            var path = !string.IsNullOrWhiteSpace(rawg.BackgroundImage)
-                ? rawg.BackgroundImage
-                : Screenshots.FirstOrDefault()?.Image;
-            return GamesService.ResolveMedia(path);
-        }
-    }
+    /// <summary>
+    /// Box art, then RAWG's image, then a screenshot. The precedence lives in GamesService so the
+    /// shelf and this page cannot disagree about what a game looks like.
+    /// </summary>
+    private string? Cover => Game is null ? null : GamesService.CoverFor(Game);
 
     private string? loadedId;
 
@@ -361,15 +453,6 @@ else
             Navigation.NavigateTo("/");
         else
             Error = result.Error;
-    }
-
-    private static string Initials(string title)
-    {
-        var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length == 0) return "?";
-        var letters = words.Where(w => char.IsLetterOrDigit(w[0])).Take(2).Select(w => char.ToUpperInvariant(w[0]));
-        var result = string.Concat(letters);
-        return string.IsNullOrEmpty(result) ? "?" : result;
     }
 
     private static string FormatSize(double megabytes)

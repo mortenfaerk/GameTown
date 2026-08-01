@@ -1,0 +1,189 @@
+@using GameTownApp.Services
+@inject GamesService GamesService
+
+@*
+    Choosing the cover a game is shelved under.
+
+    Searches on open, pre-filled with the game's title — the thing worth copying from Plex is that you
+    do not have to ask for the obvious search. Three ways in, in the order they are worth trying:
+    the artwork provider, an image URL, and a file from disk. The last two need no API key, which is
+    why they are not hidden behind the first failing.
+*@
+
+<div class="gt-art">
+    <div class="gt-art__search">
+        <input class="form-control form-control-sm"
+               placeholder="Search for cover art…"
+               value="@Query"
+               disabled="@Busy"
+               @oninput="e => Query = e.Value?.ToString() ?? string.Empty"
+               @onkeyup="OnSearchKey" />
+        <button type="button" class="btn btn-sm btn-outline-secondary" disabled="@Busy" @onclick="Search">
+            @(Searching ? "Searching…" : "Search")
+        </button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(Message))
+    {
+        <p class="gt-muted mt-2 mb-0">@Message</p>
+    }
+
+    @if (Candidates.Count > 0)
+    {
+        <div class="gt-art__grid mt-3">
+            @foreach (var candidate in Candidates)
+            {
+                var captured = candidate;
+                <button type="button" class="gt-art__option" disabled="@Busy"
+                        title="@($"{captured.Width}x{captured.Height} from {captured.Source}")"
+                        aria-label="@($"Use this cover, {captured.Width} by {captured.Height}, from {captured.Source}")"
+                        @onclick="() => Adopt(captured.FullUrl)">
+                    <img src="@captured.ThumbUrl" alt="" loading="lazy" />
+                </button>
+            }
+        </div>
+        <p class="gt-data mt-2 mb-0">Artwork from @(Candidates[0].Source).</p>
+    }
+
+    <div class="gt-art__manual mt-3">
+        <label class="form-label" for="boxart-url">…or paste an image link</label>
+        <div class="gt-art__search">
+            <input id="boxart-url" class="form-control form-control-sm" placeholder="https://…"
+                   value="@ManualUrl" disabled="@Busy"
+                   @oninput="e => ManualUrl = e.Value?.ToString() ?? string.Empty" />
+            <button type="button" class="btn btn-sm btn-outline-secondary"
+                    disabled="@(Busy || string.IsNullOrWhiteSpace(ManualUrl))"
+                    @onclick="() => Adopt(ManualUrl)">Use</button>
+        </div>
+
+        <label class="form-label mt-3" for="boxart-file">…or upload a file</label>
+        <InputFile id="boxart-file" class="form-control form-control-sm" accept="image/jpeg,image/png,image/webp"
+                   OnChange="OnFileSelected" disabled="@Busy" />
+        <div class="form-text">JPEG, PNG or WebP, up to 10 MB. Portrait art around 600&times;900 looks best.</div>
+    </div>
+</div>
+
+@code {
+    /// <summary>The game being given a cover.</summary>
+    [Parameter, EditorRequired] public Guid GameId { get; set; }
+
+    /// <summary>Seeds the first search. This is the whole "it just knows what to look for" step.</summary>
+    [Parameter] public string Title { get; set; } = string.Empty;
+
+    /// <summary>Fires with the updated game after the server has stored the art.</summary>
+    [Parameter] public EventCallback<GameContract> Changed { get; set; }
+
+    /// <summary>Fires with a message the parent should show in its own error banner.</summary>
+    [Parameter] public EventCallback<string> Failed { get; set; }
+
+    private string Query = string.Empty;
+    private string ManualUrl = string.Empty;
+    private List<BoxArtCandidateContract> Candidates = [];
+    private string? Message;
+
+    private bool Searching;
+    private bool Adopting;
+    private bool Busy => Searching || Adopting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Query = Title;
+        await Search();
+    }
+
+    private async Task OnSearchKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Search();
+    }
+
+    private async Task Search()
+    {
+        if (string.IsNullOrWhiteSpace(Query))
+        {
+            Message = "Type something to search for.";
+            return;
+        }
+
+        Searching = true;
+        Message = null;
+        Candidates = [];
+
+        var result = await GamesService.SearchBoxArt(Query);
+        Candidates = result.Candidates;
+
+        // Every branch here is a state to explain rather than an error to report, which is why the
+        // endpoint answers 200 for all of them. "No key configured" in particular must not read as a
+        // failure — the two manual routes below still work.
+        Message = result.Reason switch
+        {
+            "ok" => null,
+            "not-configured" => "No artwork provider is configured, so there is nothing to search. "
+                                + "An administrator can add a SteamGridDB key under Settings. "
+                                + "You can still paste a link or upload a file below.",
+            "no-match" => "No cover art found for that title. Try a different spelling, or use one of "
+                          + "the options below.",
+            "rejected" => "The artwork provider refused the configured key. An administrator can check "
+                          + "it under Settings.",
+            _ => "The artwork provider could not be reached.",
+        };
+
+        Searching = false;
+    }
+
+    private async Task Adopt(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+
+        Adopting = true;
+        Message = null;
+
+        var (result, game) = await GamesService.SetBoxArtFromUrl(GameId, url);
+
+        if (result.Success && game is not null)
+        {
+            ManualUrl = string.Empty;
+            await Changed.InvokeAsync(game);
+        }
+        else
+        {
+            await Failed.InvokeAsync(result.Error ?? "That cover could not be saved.");
+        }
+
+        Adopting = false;
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        Adopting = true;
+        Message = null;
+
+        try
+        {
+            // The ceiling is the server's, restated here so an oversized file is refused before it is
+            // read rather than after — and because OpenReadStream throws its own, less explicable
+            // error above its default 500 KB limit.
+            const long maxBytes = 10 * 1024 * 1024;
+            if (e.File.Size > maxBytes)
+            {
+                await Failed.InvokeAsync("That image is larger than 10 MB.");
+                return;
+            }
+
+            using var stream = e.File.OpenReadStream(maxBytes);
+            var (result, game) = await GamesService.UploadBoxArt(GameId, stream, e.File.Name);
+
+            if (result.Success && game is not null)
+                await Changed.InvokeAsync(game);
+            else
+                await Failed.InvokeAsync(result.Error ?? "That image could not be uploaded.");
+        }
+        catch (Exception ex)
+        {
+            await Failed.InvokeAsync($"That image could not be read: {ex.Message}");
+        }
+        finally
+        {
+            Adopting = false;
+        }
+    }
+}

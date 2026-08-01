@@ -1,4 +1,5 @@
 using API.Services;
+using API.Services.BoxArt;
 using RestSharp;
 
 namespace API.Endpoints;
@@ -36,6 +37,11 @@ public static class SettingsEndpoints
              .Produces<RawgKeyCheckResult>(StatusCodes.Status200OK)
              .WithName("TestRawgKey")
              .WithDescription("Makes one live RAWG call with the stored key");
+
+        group.MapPost("/test-boxart-key", TestBoxArtKey)
+             .Produces<RawgKeyCheckResult>(StatusCodes.Status200OK)
+             .WithName("TestBoxArtKey")
+             .WithDescription("Makes one live artwork-provider call with the stored key");
     }
 
     private static async Task<IResult> GetSettings(SettingsService settings)
@@ -44,6 +50,7 @@ public static class SettingsEndpoints
     private static async Task<SettingsContract> BuildContract(SettingsService settings)
     {
         var key = await settings.GetRawgApiKeyAsync();
+        var boxArtKey = await settings.GetBoxArtApiKeyAsync();
         return new SettingsContract
         {
             GameFilesPath = await settings.GetGameFilesPathAsync(),
@@ -51,6 +58,8 @@ public static class SettingsEndpoints
             DataDirectory = settings.DataDirectory,
             RawgApiKeyIsSet = key is not null,
             RawgApiKeyMasked = Mask(key),
+            BoxArtApiKeyIsSet = boxArtKey is not null,
+            BoxArtApiKeyMasked = Mask(boxArtKey),
             AllowedFileTypes = [.. await settings.GetAllowedFileTypesAsync()],
             MaxUploadSizeMb = await settings.GetMaxUploadSizeMbAsync(),
         };
@@ -90,6 +99,15 @@ public static class SettingsEndpoints
             await settings.SetAsync(SettingsService.RawgApiKeyKey, request.RawgApiKey.Trim());
         }
 
+        if (request.ClearBoxArtApiKey)
+        {
+            await settings.SetAsync(SettingsService.BoxArtApiKeyKey, null);
+        }
+        else if (!string.IsNullOrWhiteSpace(request.BoxArtApiKey))
+        {
+            await settings.SetAsync(SettingsService.BoxArtApiKeyKey, request.BoxArtApiKey.Trim());
+        }
+
         if (request.AllowedFileTypes is not null)
         {
             var normalised = SettingsService.ParseFileTypes(string.Join(',', request.AllowedFileTypes));
@@ -116,6 +134,26 @@ public static class SettingsEndpoints
 
     private static IResult CheckPath(PathCheckRequest request)
         => Results.Ok(DirectoryProbe.Probe(request.Path));
+
+    /// <summary>
+    /// Proves the stored artwork key works, by searching for a title certain to exist.
+    ///
+    /// Goes through the provider rather than issuing its own request, so this tests the code path the
+    /// picker actually uses — a bespoke request here could pass while the real one failed on a header
+    /// or a parameter this one did not send. The provider already reduces every failure to a reason
+    /// code with no exception detail, which is the same discipline TestRawgKey applies by hand.
+    /// </summary>
+    private static async Task<IResult> TestBoxArtKey(IBoxArtProvider provider)
+    {
+        var result = await provider.SearchAsync("Portal");
+        return Results.Ok(new RawgKeyCheckResult
+        {
+            // "no-match" counts as working: the key was accepted and the provider answered. Only the
+            // key itself is under test here, not its coverage of any particular title.
+            Ok = result.Reason is "ok" or "no-match",
+            Reason = result.Reason,
+        });
+    }
 
     private static async Task<IResult> TestRawgKey(SettingsService settings)
     {

@@ -143,7 +143,7 @@ mkdir -p "$DATA_DIR"
 
 # The things that must survive an upgrade. Anything left in $APP_DIR is destroyed below.
 mkdir -p "$DATA_DIR/games"    # uploaded archives
-mkdir -p "$DATA_DIR/media"    # re-hosted cover art and screenshots
+mkdir -p "$DATA_DIR/media"    # re-hosted RAWG art, screenshots and uploaded box art
 mkdir -p "$DATA_DIR/keys"     # Data Protection keyring — losing it signs everyone out
 
 # ---------------------------------------------------------------- stop the service
@@ -157,6 +157,18 @@ systemctl stop "$APP_NAME" 2>/dev/null || true
 # ---------------------------------------------------------------- database
 # Nothing to do on a fresh install. The application creates its own schema at startup from a baseline
 # embedded in the binary, which is what lets this script ship without the DDL or the sqlite3 CLI.
+#
+# AND NOTHING TO DO ON AN UPGRADE EITHER, beyond the backup below. A release that adds tables or
+# columns needs NO change to this script: migrations are embedded resources applied by SchemaMigrator
+# before the app serves its first request, so taking a new build IS taking its schema. Adding a step
+# here to "apply the new migration" would mean shipping the DDL and the sqlite3 CLI alongside the
+# tarball again, and would give the schema two owners that could disagree.
+#
+# What that leaves this script responsible for is the part the application cannot do for itself:
+# stopping the service so nothing holds the database open, taking a restorable copy first, and
+# creating the data subdirectories a new feature may start writing into. .github/workflows/
+# install-test.yml exercises the whole path by rolling a real install back to the previous schema
+# version — library and all — and re-running this script over it.
 if [[ $UPGRADE -eq 1 ]]; then
     # One file, so the cheapest possible safety net: a failed upgrade becomes a restore rather than a
     # support thread. The -wal and -shm sidecars are copied too — a WAL database is not just the main

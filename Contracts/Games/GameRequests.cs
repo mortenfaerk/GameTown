@@ -20,6 +20,19 @@ public class AddGameRequest
 }
 
 /// <summary>
+/// What a successful upload answers with.
+///
+/// The id exists so the add-game screen can carry on: tags and box art are set through their own
+/// endpoints, and both need something to address. The endpoint used to answer 204 with no body, which
+/// meant a contributor had to go and find the game they had just added in order to finish describing
+/// it.
+/// </summary>
+public class AddGameResponse
+{
+    public Guid Id { get; set; }
+}
+
+/// <summary>
 /// What the upload form is allowed to send, as the server currently has it configured.
 ///
 /// Fetched before the file picker is used so an oversized or wrong-typed archive is refused in the

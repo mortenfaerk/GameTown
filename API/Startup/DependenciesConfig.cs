@@ -1,4 +1,5 @@
 ﻿using API.Services;
+using API.Services.BoxArt;
 using EFModel.Models;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
@@ -82,8 +83,33 @@ public static class DependenciesConfig
             new SettingsService(provider.GetRequiredService<DatabaseContext>(), dataDirectory));
         builder.Services.AddScoped<RAWGService>();
         builder.Services.AddScoped<FileService>();
+        builder.Services.AddScoped<MediaStore>();
         builder.Services.AddScoped<GTGamesService>();
         builder.Services.AddScoped<UserService>();
+        builder.Services.AddScoped<TagService>();
+        builder.Services.AddScoped<BoxArtService>();
+
+        // The artwork provider is behind an interface because the choice is genuinely open — Google's
+        // Custom Search JSON API is closed to new users and off entirely from 2027, and Bing's image
+        // search was retired in 2025. SteamGridDB is what a replacement would be swapped for here.
+        builder.Services.AddScoped<IBoxArtProvider, SteamGridDbProvider>();
+
+        // Named clients, not `new HttpClient()` per call. The one this replaces — in
+        // RAWGService.RehostImageAsync — created and disposed a client for every image, which holds
+        // its socket in TIME_WAIT; enough screenshots in one metadata refresh and the process runs out
+        // of ephemeral ports.
+        //
+        // The image fetcher's handler is the security boundary for outbound image downloads: it
+        // refuses redirects and connects only to vetted public addresses. Registering it here means
+        // there is exactly one client that can be asked for, and no caller can construct a permissive
+        // one by accident. See ImageFetcher.
+        builder.Services.AddHttpClient(ImageFetcher.HttpClientName)
+               .ConfigurePrimaryHttpMessageHandler(ImageFetcher.BuildHandler);
+        builder.Services.AddHttpClient(SteamGridDbProvider.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(20);
+        });
+        builder.Services.AddScoped<ImageFetcher>();
         #region Authentication
         // Cookie authentication, not JWT bearer. Same-origin hosting (Phase 2a) means the browser
         // can hold an HttpOnly cookie the page cannot read, which is both simpler and better than

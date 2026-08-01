@@ -4,7 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-GameTown is a .NET 10 solution for cataloguing and distributing games. Metadata is enriched from the external [RAWG](https://rawg.io) games API, uploaded game archives are stored on disk, and access is gated by JWT-based auth with `Admin`/`Contributor` roles. The frontend is a Blazor WebAssembly SPA that talks to a minimal-API backend.
+GameTown is a .NET 10 solution for cataloguing and distributing games. Metadata is enriched from the external [RAWG](https://rawg.io) games API, cover art from [SteamGridDB](https://www.steamgriddb.com), uploaded game archives are stored on disk, and access is gated by JWT-based auth with `Admin`/`Contributor` roles. The frontend is a Blazor WebAssembly SPA that talks to a minimal-API backend.
+
+Two things about a game are entered by people rather than imported, because no external source has them:
+
+- **Box art.** RAWG has no cover field — `background_image` is a wide promotional still, which is the wrong picture and the wrong shape for a shelf. A contributor picks one from SteamGridDB (whose "grids" are 600×900 portrait covers), pastes a link, or uploads a file. **A Google Images search is not an option and should not be attempted**: Google's Custom Search JSON API is the only sanctioned route to image results, it is closed to new users, and it switches off on 1 January 2027. Bing's Image Search API was retired in August 2025.
+- **Tags** — split screen, LAN, co-op, competitive, plus anything typed. RAWG genres say what a game *is*; these say how it gets played, which is the question the shelf actually gets asked.
+
+Both are stored locally in every case: box art is always downloaded onto the server and served from `/media`, never hot-linked.
 
 ## Projects
 
@@ -40,7 +47,7 @@ dotnet run --project API --launch-profile https  # run just the API (it serves t
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-107 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
+160 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
 
 Requires the `sqlite3` CLI on the machine running the tests: the harness shells out to it so its view of the database stays independent of the EF model under test. The shipped application does not need it.
 
@@ -55,6 +62,8 @@ They are written against the bug classes this codebase has actually produced, al
 - **`UploadDeduplicationTests`** covers the SHA-256 guard against re-uploading an archive after an upload that only *appeared* to fail. The case that matters most is the negative one: games with no recorded hash (uploaded before migration 003) must not all match each other on `NULL`.
 - **`AbandonedUploadTests`** boots a second app over the same data directory — a service restart, from the filesystem's point of view — and asserts the startup sweep removes `.part` files a killed process left behind while leaving finished archives alone.
 - **`DirectoryProbeTests` / `SetupPathTests`** cover the archive-directory check: it writes and deletes a real file rather than reading permission bits (mode bits predict nothing on a CIFS mount), and the wizard validates *before* creating the administrator — `/setup` 404s once one exists, so rejecting the path afterwards would leave the operator with no wizard to fix it in.
+- **`BoxArtTests` is mostly about refusal, not success.** Setting a cover from a URL is the only place the server fetches an address a user chose, and the appliance sits *inside* a home LAN — so "fetch this for me" reaches routers and metadata endpoints that nothing else can. It pins private-address and non-HTTP URLs being rejected, and that a stored file is named from its sniffed content rather than from the upload: these files are served back from the API's own origin, so an accepted SVG or HTML document would be stored XSS.
+- **`TagTests` pins that a tag's identity is its slug.** Tags are typed by hand, by several people, over months. If the text is the identity, the list fills with "Co-op"/"co op"/"COOP" and the filter bar stops being useful one duplicate at a time — the failure is gradual and never looks like a bug. It also pins that a two-tag filter means AND (an OR returns results, just the wrong ones) and that several new tags in one save get distinct ids, which is the `ValueGeneratedNever` trap below: coining *one* tag succeeds even when the mapping is broken.
 - **`SanitizerTests`** pins what survives `GameMappings`' HTML sanitiser — formatting tags in, every attribute out, and the mXSS shape from the AngleSharp advisory stripped. RAWG descriptions are community-editable and are rendered with `MarkupString` on an anonymous page, so this is an XSS gate, not a formatting preference.
 
 Prefer adding to these over writing a new harness.
@@ -73,9 +82,9 @@ There is **no database initialization step**. Point the connection string at a p
 
 This also removed the dev-only `init-dev-db.ps1` bootstrap, and with it the wedge it existed to work around — an empty or missing `.db` used to be adopted as a pre-versioning install, stamped version 1, and then fail on the first migration because the baseline tables were never created.
 
-Runtime settings (`GameFilesPath`, `RAWGApiKey`, allowed upload types) live in the `Settings` table and are read **per request** by `SettingsService`. That is deliberate and fragile in one specific way: `RAWGService` and `FileService` must keep reading them per call. They used to take these as constructor arguments resolved once at startup, which is exactly what made the settings UI look like it saved and changed nothing.
+Runtime settings (`GameFilesPath`, `RAWGApiKey`, `BoxArtApiKey`, allowed upload types) live in the `Settings` table and are read **per request** by `SettingsService`. That is deliberate and fragile in one specific way: `RAWGService`, `FileService` and `SteamGridDbProvider` must keep reading them per call. The first two used to take these as constructor arguments resolved once at startup, which is exactly what made the settings UI look like it saved and changed nothing.
 
-The RAWG key is optional — without one the app runs normally and metadata is entered by hand.
+Both API keys are optional. Without a RAWG key the app runs normally and metadata is entered by hand; without a SteamGridDB key the box-art *search* reports itself unavailable while uploading a file and pasting a link keep working — so the two paths deliberately share no dependency.
 
 ## HTTPS development certificate (needed on Linux)
 
@@ -142,7 +151,9 @@ Fresh installs run the baseline and then every migration, exactly as an existing
 
 Migrations are embedded resources (`API.csproj`), applied by `SchemaMigrator` at startup before anything serves a request. Each script commits together with its `SchemaVersion` row, so a failure leaves the database at the previous version rather than half-applied. Write them to be safe to re-run (`IF NOT EXISTS`).
 
-`ALTER TABLE ... ADD COLUMN` is the one statement that cannot honour that rule — SQLite has no `IF NOT EXISTS` for it and no conditional DDL — so a migration adding a column is not replayable. `003_game_archive_hash.sql` documents the exception where it occurs. Do not work around it by making `SchemaMigrator` swallow errors.
+`ALTER TABLE ... ADD COLUMN` is the one statement that cannot honour that rule — SQLite has no `IF NOT EXISTS` for it and no conditional DDL — so a migration adding a column is not replayable. `003_game_archive_hash.sql` and `004_game_box_art.sql` document the exception where it occurs. Do not work around it by making `SchemaMigrator` swallow errors.
+
+**The installer needs no change when a migration is added.** Migrations are embedded resources applied by `SchemaMigrator` before the first request, so taking a new build *is* taking its schema; `install.sh` is only responsible for stopping the service, backing the database up and creating any new data subdirectory. `.github/workflows/install-test.yml` proves the whole path by rolling a real install back to the previous schema version — library and all — and re-running `install.sh` over it. Adding an "apply the migration" step to the installer would mean shipping the DDL and the `sqlite3` CLI again, and would give the schema two owners that can disagree.
 
 `ALTER TABLE ... DROP COLUMN` and modern upsert syntax are safe to use: the SQLite version floor is the bundled `SQLitePCLRaw` native library, not whatever the host machine happens to have.
 
@@ -159,7 +170,14 @@ SQLite is dynamically typed, so several things Postgres enforced are now convent
 
 ### RAWG integration & media
 - `RAWGService` calls the RAWG REST API (via RestSharp + Newtonsoft.Json), paginates screenshots, and `AddGameToDb` upserts a RAWG game plus screenshots into the local DB.
-- Screenshot images are **downloaded and re-hosted locally**: `DownloadAndReplaceImageUrlsAsync` writes them to `API/wwwroot/media/` and rewrites URLs to `/media/{guid}.ext` served as static files.
+- Remote images — RAWG covers, RAWG screenshots and box art alike — are **downloaded and re-hosted locally** through `MediaStore`, which writes into the *data* directory (not `wwwroot`, which an in-place upgrade deletes) and returns `/media/{guid}.ext`. `Program.cs` maps that request path onto it.
+- **Every outbound image download goes through `ImageFetcher`, and nothing may bypass it.** It refuses non-HTTP schemes, refuses to follow redirects, connects only to public addresses (checked *after* DNS, and connected to directly so the resolution cannot change underneath), caps the body while reading, and derives the file extension by sniffing magic bytes rather than trusting the URL or the server's `Content-Type`. Each of those closes a distinct hole — see the class comment and SECURITY-NOTES.md. RAWG's URLs go through it too: RAWG is community-editable, so they are attacker-influenced in the same way a pasted link is, just by a longer route.
+
+### Box art and tags
+- `IBoxArtProvider` / `SteamGridDbProvider` search for candidates; `BoxArtService` stores whatever is chosen. The provider is behind an interface because the choice of source is genuinely open (see the Overview on why Google Images is not one).
+- `TagService` owns resolve-or-create-by-slug, whole-set replacement, and orphan cleanup. Quick-add tags are rows flagged `IsQuickAdd`, seeded by migration 005 — **not** a hardcoded list in the UI, so the vocabulary belongs to the library rather than to a build, and the cleanup has a principled reason to keep them.
+- Tag filtering is AND across tags (each narrows), lives in `GTGamesService.BrowseAsync` behind both `/getPaged` and `/search`, and travels as `?tags=slug,slug` so a filtered shelf keeps a pasteable URL — the same reasoning that puts search in `?q=`.
+- `POST /GTGames/Add` answers **201 with the new game's id**, not the 204 it once did. Tags and box art are set through their own endpoints and need something to address; without an id the add-game screen could not finish describing what it had just uploaded.
 
 ## Conventions
 - Target framework is `net10.0` with nullable reference types and implicit usings enabled across all projects.

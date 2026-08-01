@@ -61,6 +61,11 @@ public class SchemaTests
     /// than as a fresh test database, because "the migration runs" and "the migration runs without
     /// destroying anything" are different claims and only the second one matters to an operator.
     /// Data is asserted intact field by field, not just counted.
+    ///
+    /// Deliberately left at version 2 as later migrations are added, rather than moved forward to
+    /// the newest one. An install that skipped two releases replays the whole chain in one boot, and
+    /// that is the run most likely to go wrong — the version this starts from is the oldest still in
+    /// the field, not the most recent.
     /// </summary>
     [Fact]
     public async Task A_populated_install_at_version_2_upgrades_without_losing_its_library()
@@ -84,14 +89,23 @@ public class SchemaTests
         // Booting the new build is the upgrade.
         using (var client = app.CreateBrowser()) await client.GetAsync("/");
 
-        Assert.Equal("3", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+        // Every migration ran, not just the next one. An install can be several releases behind.
+        Assert.Equal("5", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
 
-        // The row is untouched, and the new column is present and NULL rather than backfilled.
-        Assert.Equal("Existing Game|Unzip it|/var/lib/gametown/games/abc.zip|1234.5|",
+        // The row is untouched, and each new column is present and NULL rather than backfilled.
+        Assert.Equal("Existing Game|Unzip it|/var/lib/gametown/games/abc.zip|1234.5||",
             app.QueryScalar("""
-                SELECT "Title"||'|'||"HowTo"||'|'||"URL"||'|'||"Size"||'|'||COALESCE("ArchiveSha256",'')
+                SELECT "Title"||'|'||"HowTo"||'|'||"URL"||'|'||"Size"||'|'
+                       ||COALESCE("ArchiveSha256",'')||'|'||COALESCE("BoxArtUrl",'')
                 FROM "GameTownGame" WHERE "Id" = '11111111-1111-1111-1111-111111111111'
                 """));
+
+        // The game gained no tags on the way past. A migration that seeds a vocabulary must not
+        // apply any of it — what a game is tagged with is a decision, not a default.
+        Assert.Equal("0", app.QueryScalar(@"SELECT COUNT(*) FROM ""GameTownGame_Tags"""));
+
+        // ...but the vocabulary itself is there, exactly once each.
+        Assert.Equal("4", app.QueryScalar(@"SELECT COUNT(*) FROM ""Tags"" WHERE ""IsQuickAdd"" = 1"));
 
         // And nothing else was rebuilt on the way past.
         Assert.Equal("1", app.QueryScalar(@"SELECT COUNT(*) FROM ""GameTownGame"""));

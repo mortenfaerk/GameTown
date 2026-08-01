@@ -33,6 +33,8 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<Setting> Settings { get; set; }
 
+    public virtual DbSet<Tag> Tags { get; set; }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<GameTownGame>(entity =>
@@ -51,6 +53,20 @@ public partial class DatabaseContext : DbContext
             entity.Property(e => e.Url).HasColumnName("URL");
 
             entity.HasOne(d => d.Rawggame).WithMany(p => p.GameTownGames).HasForeignKey(d => d.RawggameId);
+
+            entity.HasMany(d => d.Tags).WithMany(p => p.Games)
+                .UsingEntity<Dictionary<string, object>>(
+                    "GameTownGameTag",
+                    r => r.HasOne<Tag>().WithMany().HasForeignKey("TagId"),
+                    l => l.HasOne<GameTownGame>().WithMany().HasForeignKey("GameId"),
+                    j =>
+                    {
+                        j.HasKey("GameId", "TagId");
+                        j.ToTable("GameTownGame_Tags");
+                        j.HasIndex(new[] { "TagId" }, "IX_GameTownGame_Tags_TagId");
+                        j.IndexerProperty<Guid>("GameId").HasColumnType("uniqueidentifier");
+                        j.IndexerProperty<Guid>("TagId").HasColumnType("uniqueidentifier");
+                    });
         });
 
         modelBuilder.Entity<GameTownRole>(entity =>
@@ -260,6 +276,17 @@ public partial class DatabaseContext : DbContext
         modelBuilder.Entity<Setting>(entity =>
         {
             entity.HasKey(e => e.Key);
+        });
+
+        modelBuilder.Entity<Tag>(entity =>
+        {
+            entity.HasIndex(e => e.Slug, "IX_Tags_Slug").IsUnique();
+
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnType("uniqueidentifier");
+            entity.Property(e => e.IsQuickAdd).HasColumnType("boolean");
+            entity.Property(e => e.Name).UseCollation("NOCASE");
         });
 
         OnModelCreatingPartial(modelBuilder);

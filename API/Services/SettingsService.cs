@@ -26,6 +26,7 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     public const string RawgApiKeyKey = "RAWGApiKey";
     public const string AllowedFileTypesKey = "AllowedFileTypes";
     public const string MaxUploadSizeMbKey = "MaxUploadSizeMb";
+    public const string BoxArtApiKeyKey = "BoxArtApiKey";
 
     /// <summary>Archive extensions accepted by the upload endpoint when nothing is configured.</summary>
     public static readonly string[] DefaultAllowedFileTypes =
@@ -75,6 +76,16 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     /// entered by hand instead of imported.
     /// </summary>
     public Task<string?> GetRawgApiKeyAsync() => GetRawAsync(RawgApiKeyKey);
+
+    /// <summary>
+    /// The artwork provider's key (SteamGridDB), or null when unset.
+    ///
+    /// Optional in the same way the RAWG key is: without one the box-art *search* is unavailable and
+    /// says so, while uploading a file or pasting an image URL keeps working. Losing the search is a
+    /// smaller loss than being unable to set a cover at all, which is why the two paths do not share
+    /// a dependency.
+    /// </summary>
+    public Task<string?> GetBoxArtApiKeyAsync() => GetRawAsync(BoxArtApiKeyKey);
 
     public async Task<string[]> GetAllowedFileTypesAsync()
     {

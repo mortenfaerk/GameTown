@@ -1,0 +1,132 @@
+@using GameTownApp.Services
+@inject GamesService GamesService
+
+@*
+    The tag chip editor.
+
+    Holds a list of names and hands it back on every change; it does not save. The parent owns the
+    save, because on the detail page tags go up with the rest of the edit and on the add-game page
+    they go up after the archive has finished uploading — two different moments, one editor.
+
+    Quick-add buttons come from the server (tags flagged IsQuickAdd), not from a hardcoded list of
+    four. The vocabulary is then a property of the library rather than of this build.
+
+    KEEP THIS OUTSIDE <EditForm>. The name box handles Enter to add a tag, and a text input inside a
+    form submits that form on Enter — so nested in one, adding a tag would also save the game (or
+    upload the archive). Blazor's @onkeydown:preventDefault is decided at render time and cannot be
+    made conditional on which key was pressed, so keeping the editor out of the form is the fix rather
+    than a workaround. Both callers save tags through their own /tags call anyway.
+*@
+
+<div class="gt-tags">
+    @if (Names.Count > 0)
+    {
+        <div class="gt-tags__chips">
+            @foreach (var name in Names)
+            {
+                var captured = name; // per-iteration, or every button would remove the last tag
+                <span class="gt-tag gt-tag--on">
+                    @captured
+                    <button type="button" class="gt-tag__x" disabled="@Disabled"
+                            aria-label="@($"Remove the tag {captured}")"
+                            @onclick="() => Remove(captured)">&times;</button>
+                </span>
+            }
+        </div>
+    }
+
+    @if (Suggestions.Count > 0)
+    {
+        <div class="gt-tags__quick">
+            <span class="gt-eyebrow">Quick add</span>
+            @foreach (var tag in Suggestions)
+            {
+                var captured = tag;
+                <button type="button" class="gt-tag gt-tag--add" disabled="@Disabled"
+                        @onclick="() => Add(captured.Name)">+ @captured.Name</button>
+            }
+        </div>
+    }
+
+    <div class="gt-tags__input">
+        @* A datalist rather than a custom dropdown: the browser handles filtering, keyboard and
+           touch, and there is no popup to position or dismiss. *@
+        <input class="form-control form-control-sm"
+               list="gt-tag-suggestions"
+               placeholder="Add a tag and press Enter…"
+               maxlength="50"
+               disabled="@Disabled"
+               value="@draft"
+               @oninput="e => draft = e.Value?.ToString() ?? string.Empty"
+               @onkeydown="OnKeyDown" />
+        <datalist id="gt-tag-suggestions">
+            @foreach (var tag in KnownTags.Where(t => !Contains(t.Name)))
+            {
+                <option value="@tag.Name" />
+            }
+        </datalist>
+        <button type="button" class="btn btn-sm btn-outline-secondary"
+                disabled="@(Disabled || string.IsNullOrWhiteSpace(draft))"
+                @onclick="() => Add(draft)">Add</button>
+    </div>
+</div>
+
+@code {
+    /// <summary>The tag names currently applied. Owned by the parent; this never mutates it in place.</summary>
+    [Parameter] public List<string> Names { get; set; } = [];
+
+    [Parameter] public EventCallback<List<string>> NamesChanged { get; set; }
+
+    [Parameter] public bool Disabled { get; set; }
+
+    private List<TagContract> KnownTags = [];
+    private string draft = string.Empty;
+
+    /// <summary>Quick-add tags the game does not already carry — an applied one has nothing to offer.</summary>
+    private List<TagContract> Suggestions =>
+        [.. KnownTags.Where(t => t.IsQuickAdd && !Contains(t.Name))];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            KnownTags = await GamesService.GetTags();
+        }
+        catch (Exception)
+        {
+            // A failed suggestion list must not break tagging. Typing a name still works, and the
+            // server coins the tag either way — the suggestions are a convenience, not the mechanism.
+            KnownTags = [];
+        }
+    }
+
+    /// <summary>
+    /// Case-insensitive, because the server treats "LAN" and "lan" as one tag. Matching case-sensitively
+    /// here would let the editor show a duplicate chip that the save then silently collapses.
+    /// </summary>
+    private bool Contains(string name)
+        => Names.Any(n => string.Equals(n, name, StringComparison.OrdinalIgnoreCase));
+
+    private async Task Add(string name)
+    {
+        var trimmed = name.Trim();
+        if (trimmed.Length == 0 || Contains(trimmed)) { draft = string.Empty; return; }
+
+        // A new list rather than Names.Add: the parent holds this reference, and mutating it in place
+        // would change the parent's state without the callback — leaving a save that misses the edit.
+        await NamesChanged.InvokeAsync([.. Names, trimmed]);
+        draft = string.Empty;
+    }
+
+    private async Task Remove(string name)
+        => await NamesChanged.InvokeAsync(
+            [.. Names.Where(n => !string.Equals(n, name, StringComparison.OrdinalIgnoreCase))]);
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        // Comma as well as Enter, because typing a list is what people do and a comma is where they
+        // pause. Enter alone would also submit the surrounding EditForm on the detail page.
+        if (e.Key is "Enter" or ",")
+            await Add(draft);
+    }
+}

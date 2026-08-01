@@ -7,7 +7,8 @@ using API.Models.Games.RAWGData;
 using Microsoft.EntityFrameworkCore;
 namespace API.Services;
 
-public class RAWGService(SettingsService _settings, DatabaseContext _context)
+public class RAWGService(
+    SettingsService _settings, DatabaseContext _context, MediaStore _media, ImageFetcher _fetcher)
 {
     /// <summary>
     /// The RAWG key, read per call rather than captured at construction so the settings page can
@@ -171,24 +172,12 @@ public class RAWGService(SettingsService _settings, DatabaseContext _context)
     /// <summary>Removes a locally re-hosted file that a refresh has just replaced.</summary>
     private void DeleteSupersededMedia(string? previousPath, string? currentPath)
     {
-        if (string.IsNullOrWhiteSpace(previousPath)
-            || !previousPath.StartsWith("/media/")
-            || previousPath == currentPath)
-        {
-            return;
-        }
+        // The equality check is the one part MediaStore.Delete cannot do for us: a refresh that
+        // re-hosted nothing leaves both paths pointing at the same file, and deleting it would blank
+        // the cover it was meant to preserve.
+        if (previousPath == currentPath) return;
 
-        try
-        {
-            var mediaRoot = _settings.MediaDirectory;
-            var fileName = Path.GetFileName(previousPath);
-            var path = Path.Combine(mediaRoot, fileName);
-            if (File.Exists(path)) File.Delete(path);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to remove superseded media {previousPath}: {ex.Message}");
-        }
+        _media.Delete(previousPath);
     }
 
     /// <summary>Adds any related rows that are not already linked, leaving existing links alone.</summary>
@@ -286,42 +275,32 @@ public class RAWGService(SettingsService _settings, DatabaseContext _context)
         return resolved;
     }
     /// <summary>
-    /// Downloads a remote image into the configured media directory and returns its local
-    /// "/media/{guid}.ext" path,
-    /// so the library keeps working on a LAN with no internet. Returns null if the download fails
-    /// (callers keep the original URL). Already-local paths are passed through untouched, which
-    /// makes refreshing a game's metadata idempotent.
+    /// Downloads a remote image into the media directory and returns its local "/media/{guid}.ext"
+    /// path, so the library keeps working on a LAN with no internet. Returns null if the download
+    /// fails, in which case callers keep the original URL and the library still renders — just over
+    /// the internet. Already-local paths pass through untouched, which is what makes refreshing a
+    /// game's metadata idempotent.
+    ///
+    /// Routed through <see cref="ImageFetcher"/> rather than a bare HttpClient, which is a change of
+    /// posture and not just of plumbing. These URLs come out of RAWG, a community-editable database,
+    /// so they are attacker-influenced in exactly the way a pasted box-art URL is — they simply had a
+    /// longer path to get here. The previous code created a client per image (holding a socket in
+    /// TIME_WAIT each time, enough to exhaust ephemeral ports during a screenshot-heavy refresh),
+    /// followed redirects, read an unbounded body into memory, and took the file extension from the
+    /// URL — which decides the Content-Type these files are later served back under.
     /// </summary>
     private async Task<string?> RehostImageAsync(string? remoteUrl)
     {
-        if (string.IsNullOrWhiteSpace(remoteUrl) || remoteUrl.StartsWith("/media/"))
+        if (string.IsNullOrWhiteSpace(remoteUrl) || MediaStore.IsLocal(remoteUrl))
             return remoteUrl;
 
-        // The data directory, NOT wwwroot. Re-hosted art used to be written inside the published
-        // application, where an in-place upgrade deletes it along with the rest of the app folder —
-        // silently emptying the library's covers. The stored "/media/..." URLs are unchanged; only
-        // the physical location moved, and Program.cs maps that request path onto this directory.
-        var mediaRoot = _settings.MediaDirectory;
-        Directory.CreateDirectory(mediaRoot);
-
-        try
+        var fetched = await _fetcher.FetchAsync(remoteUrl);
+        if (!fetched.Success)
         {
-            var uri = new Uri(remoteUrl);
-            var extension = Path.GetExtension(uri.AbsolutePath);
-            if (string.IsNullOrEmpty(extension)) extension = ".jpg";
-
-            var fileName = $"{Guid.NewGuid()}{extension}";
-
-            using var httpClient = new HttpClient();
-            var imageBytes = await httpClient.GetByteArrayAsync(remoteUrl);
-            await File.WriteAllBytesAsync(Path.Combine(mediaRoot, fileName), imageBytes);
-
-            return $"/media/{fileName}";
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to download image {remoteUrl}: {ex.Message}");
+            Console.WriteLine($"Failed to download image {remoteUrl}: {fetched.Reason}");
             return null;
         }
+
+        return await _media.WriteAsync(fetched.Bytes, fetched.Extension);
     }
 }

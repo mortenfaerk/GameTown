@@ -29,6 +29,16 @@ public class SettingsContract
     /// </summary>
     public string? RawgApiKeyMasked { get; set; }
 
+    /// <summary>
+    /// Whether a SteamGridDB key is stored. Without one, box-art *search* is unavailable and says so;
+    /// uploading a file or pasting an image URL still works, which is why this is optional in the same
+    /// way the RAWG key is.
+    /// </summary>
+    public bool BoxArtApiKeyIsSet { get; set; }
+
+    /// <summary>Last four characters only, on the same terms as <see cref="RawgApiKeyMasked"/>.</summary>
+    public string? BoxArtApiKeyMasked { get; set; }
+
     public List<string> AllowedFileTypes { get; set; } = [];
 
     /// <summary>
@@ -57,6 +67,11 @@ public class SettingsUpdateRequest
     public string? RawgApiKey { get; set; }
 
     public bool ClearRawgApiKey { get; set; }
+
+    /// <summary>Blank means "unchanged", not "clear" — same asymmetry as <see cref="RawgApiKey"/>.</summary>
+    public string? BoxArtApiKey { get; set; }
+
+    public bool ClearBoxArtApiKey { get; set; }
 
     public List<string>? AllowedFileTypes { get; set; }
 

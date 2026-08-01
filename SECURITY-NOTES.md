@@ -12,6 +12,9 @@ Since these notes were first written GameTown became something other people inst
 release, a `curl … | bash` installer, a systemd unit and a first-run wizard. That moved several risks
 from "my box" to "every box"; accepted risks 5–8 are the ones that only exist because of it.
 
+Box art then added the first capability that points *outward*: the server now fetches a URL a
+contributor typed. Being on the inside of a LAN is what makes that worth its own entry — see risk 9.
+
 ---
 
 ## Accepted risks
@@ -200,6 +203,51 @@ comment above the check in `API/Program.cs` says `GameTown__RequireHttps=true`, 
 believes redirection is on and the app keeps serving plain HTTP, with no error either way. Nothing
 asserts on this.
 
+### 9. The server fetches URLs a contributor chose (box art)
+
+Box art added a capability GameTown did not have: **a signed-in contributor can name a URL and have
+the server fetch it.** That is server-side request forgery, and the position it happens from is the
+interesting part — GameTown is installed *inside* a home LAN, so a request issued from it reaches
+router admin pages, NAS interfaces, printers and (on a VPS) the cloud metadata endpoint at
+`169.254.169.254`, none of which the attacker could reach directly.
+
+Contained by `API/Services/ImageFetcher.cs`, which is the **only** path anything is allowed to
+download an image through. Five controls, none of them defence in depth — each closes a different
+hole, and removing any one restores a working attack:
+
+- **http/https only.** `file://` would be an arbitrary file read.
+- **Redirects are not followed** (`AllowAutoRedirect = false`). Every other check runs against the
+  URL supplied; a followed 302 is checked against nothing, so this is what stops a public hostname
+  redirecting to `169.254.169.254`.
+- **Public addresses only, checked after DNS resolution** — a hostname is not an address, so
+  `localhost` and a public name pointed at `192.168.x.x` are only refusable once DNS has answered.
+  The vetted address is then **connected to directly** rather than re-resolved, which closes the
+  DNS-rebinding window between check and use.
+- **A byte ceiling enforced while reading** (10 MB). `Content-Length` is a claim, not a fact.
+- **Magic-byte sniffing, with the stored extension taken from the sniff** — never from the URL, the
+  upload's filename or the server's `Content-Type`. These files are written into the media directory
+  and served straight back as static content **from the API's own origin**, so a stored `.svg` or
+  `.html` would be stored XSS with the reach of the login page. SVG is excluded for exactly this
+  reason and its absence is deliberate: it is an image to a person and a script host to a browser.
+
+Two consequences worth knowing:
+
+- **`RAWGService.RehostImageAsync` now goes through the same fetcher**, and must stay that way. RAWG
+  is community-editable, so its image URLs are attacker-influenced too — by a longer route, not a
+  weaker one. It previously used a per-call `new HttpClient()`, followed redirects, read an unbounded
+  body and took the extension from the URL.
+- **Failures are reported as fixed reason codes, never exception text.** The caller chose the
+  destination, so the message can carry DNS state, proxy names and internal addresses back to them —
+  the same rule `TestRawgKey` already followed.
+
+`Tests/GameTown.Tests/BoxArtTests.cs` pins the refusals, including that nothing is written to the
+media directory on a rejected request.
+
+**Residual risk, accepted:** the address allowlist is IP-shaped, so a genuinely public host that an
+attacker controls can still be fetched — this bounds *where* the server will connect, not *what* it
+will retrieve. It also confirms reachability of any public address, which is a weak port-scan
+primitive. Both need a Contributor account first.
+
 ---
 
 ## Invariants — things that look harmless to change and are not
@@ -309,6 +357,28 @@ cleaned without a migration.
 `MetaDataEndpoints.GetGame` must keep returning `game.ToContract()` and not the raw EF entity. It used
 to return the entity, which bypassed the mapping layer entirely and would be a second, unsanitised
 feed straight past the sanitiser.
+
+### Nothing served from `/media` may be a script host
+
+`/media` is static content on the API's **own origin**, which is the same origin as the login page and
+the session cookie. Anything stored there that a browser will execute is stored XSS with full reach.
+
+Two rules keep that true, and both live in `ImageFetcher.SniffExtension`:
+
+- The stored extension comes from the file's **magic bytes**, never from the URL, the upload's
+  filename or the `Content-Type` header — the extension is what decides the served `Content-Type`.
+- The allowlist is **JPEG, PNG and WebP only**. SVG is excluded because it carries script; the
+  omission is a decision, not an oversight, and `BoxArtTests` pins it so "why not SVG, it *is* an
+  image" cannot quietly undo it.
+
+Adding a format here means asking whether a browser will execute it, not whether it is an image.
+
+### Tag names reach the query, but never as SQL
+
+`TagService.Slugify` normalises a hand-typed name before it is stored or matched. That is a
+correctness measure rather than a security one — every query goes through EF Core with parameters, so
+the input is never concatenated into SQL — but it is worth knowing that the slug in `?tags=` is
+user-supplied text on an anonymous route. It is compared, never interpolated. Keep it that way.
 
 ### Auth mechanics
 

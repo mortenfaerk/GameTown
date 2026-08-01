@@ -18,7 +18,15 @@
 }
 @if (!string.IsNullOrEmpty(Notice))
 {
-    <div class="alert alert-success">@Notice</div>
+    <div class="alert alert-success">
+        @Notice
+        @if (AddedGameId is not null)
+        {
+            @* Cover art is set on the detail page, and RAWG has no box art — so for most games this
+               link is the next thing that needs doing. *@
+            <a class="ms-2" href="@($"/game/{AddedGameId}")">Open it to add cover art</a>
+        }
+    </div>
 }
 
 <EditForm Model="Request" OnValidSubmit="Submit">
@@ -112,8 +120,24 @@
     </button>
 </EditForm>
 
+@*
+    Outside the EditForm above — see the comment in TagEditor. Chosen before the upload starts and
+    applied the moment the server hands back the new game's id, so the contributor describes the game
+    once rather than uploading it and then going to find it again.
+*@
+<div class="mt-4">
+    <label class="form-label">Tags (optional)</label>
+    <p class="gt-data mb-2">How it gets played. Applied once the upload finishes.</p>
+    <TagEditor Names="Tags" NamesChanged="names => Tags = names" Disabled="@Busy" />
+</div>
+
 @code {
     private AddGameRequest Request = new();
+    private List<string> Tags = [];
+
+    /// <summary>Set after a successful upload, so the success banner can offer a way to the new game.</summary>
+    private Guid? AddedGameId;
+
     private InputFile? fileInput;
     private IBrowserFile? SelectedFile;
     private RawgGameContract? SelectedRawgGame;
@@ -235,6 +259,7 @@
     {
         Error = null;
         Notice = null;
+        AddedGameId = null;
 
         if (SelectedFile is null || fileInput?.Element is null)
         {
@@ -267,7 +292,7 @@
 
         // The browser streams the file straight from the input element; it never passes through
         // .NET, which is what makes large archives viable.
-        var result = await UploadService.UploadGameAsync(
+        var outcome = await UploadService.UploadGameAsync(
             fileInput.Element.Value,
             GamesService.GetAddGameUrl(),
             Request,
@@ -275,16 +300,35 @@
 
         StopProcessingClock();
 
-        if (result.Success)
+        if (outcome.Result.Success)
         {
-            Notice = $"'{Request.Title}' was added.";
+            var title = Request.Title;
+            Notice = $"'{title}' was added.";
+
+            // Tags go up separately, once the archive is in and the game has an id. Failing here is
+            // reported without retracting the success above: the game IS added, and saying otherwise
+            // would send the contributor back to upload it a second time.
+            if (outcome.GameId is { } gameId && Tags.Count > 0)
+            {
+                var (tagResult, _) = await GamesService.SetGameTags(gameId, Tags);
+                if (!tagResult.Success)
+                    Error = $"'{title}' was added, but its tags were not saved: {tagResult.Error}";
+            }
+
+            // A link rather than a redirect. The common case is adding several games in a row, and
+            // navigating away after each one would make that needlessly slow — but cover art lives on
+            // the detail page, so the way there has to be one click.
+            if (outcome.GameId is { } addedId)
+                AddedGameId = addedId;
+
             Request = new AddGameRequest();
             SelectedFile = null;
             SelectedRawgGame = null;
+            Tags = [];
         }
         else
         {
-            Error = result.Error;
+            Error = outcome.Result.Error;
         }
 
         Busy = false;

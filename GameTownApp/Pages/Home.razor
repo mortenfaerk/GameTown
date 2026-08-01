@@ -1,17 +1,25 @@
 @page "/"
 @inject GamesService GamesService
+@inject NavigationManager Navigation
 
 @* Public by design: anyone on the LAN browses and downloads. Only contributing is gated. *@
 
 <PageTitle>GameTown</PageTitle>
 
-<div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-4">
-    <h1 class="mb-0">@(IsSearching ? "Results" : "Library")</h1>
+<div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-3">
+    <h1 class="mb-0">@(IsFiltered ? "Results" : "Library")</h1>
 
-    @if (IsSearching)
+    @if (IsFiltered)
     {
         <span class="gt-muted">
-            matching &ldquo;<span class="gt-mist-strong">@Q</span>&rdquo;
+            @if (IsSearching)
+            {
+                <span>matching &ldquo;<span class="gt-mist-strong">@Q</span>&rdquo;</span>
+            }
+            @if (SelectedTags.Count > 0)
+            {
+                <span>@(IsSearching ? " and " : "")tagged <span class="gt-mist-strong">@string.Join(" + ", SelectedTags)</span></span>
+            }
             <a class="ms-2" href="/">Clear</a>
         </span>
     }
@@ -20,6 +28,34 @@
         <span class="gt-data">@Games.Count on this page</span>
     }
 </div>
+
+@*
+    The tag filter. Quick-add tags always show; anything else only once it is in use, so a library
+    with three tags does not get a bar built for thirty.
+
+    Selecting one navigates rather than filtering in place, so the filtered shelf keeps a URL — the
+    same reasoning that puts search in ?q=. It is the difference between "look at this" being a link
+    and being a set of instructions.
+*@
+@if (FilterTags.Count > 0)
+{
+    <div class="gt-tags__chips mb-4">
+        @foreach (var tag in FilterTags)
+        {
+            var captured = tag;
+            var on = SelectedTags.Contains(captured.Slug);
+            <button type="button" class="@(on ? "gt-tag gt-tag--on" : "gt-tag")"
+                    aria-pressed="@on.ToString().ToLowerInvariant()"
+                    @onclick="() => ToggleTag(captured.Slug)">
+                @captured.Name
+                @if (!on && captured.GameCount > 0)
+                {
+                    <span class="gt-tag__count">@captured.GameCount</span>
+                }
+            </button>
+        }
+    </div>
+}
 
 @if (!string.IsNullOrEmpty(Error))
 {
@@ -34,9 +70,9 @@ else if (Games.Count == 0)
 {
     <div class="card">
         <div class="card-body">
-            @if (IsSearching)
+            @if (IsFiltered)
             {
-                <p class="mb-0">Nothing matches &ldquo;@Q&rdquo;. <a href="/">Show the whole library</a>.</p>
+                <p class="mb-0">Nothing matches that. <a href="/">Show the whole library</a>.</p>
             }
             else
             {
@@ -58,7 +94,7 @@ else
     <div class="shelf">
         @foreach (var game in Games)
         {
-            var cover = CoverFor(game);
+            var cover = GamesService.CoverFor(game);
             <a class="tile" href="@($"/game/{game.Id}")">
                 <div class="tile__art">
                     @if (cover is not null)
@@ -67,13 +103,19 @@ else
                     }
                     else
                     {
-                        <div class="tile__fallback">@Initials(game.Title)</div>
+                        <div class="tile__fallback">@GamesService.InitialsFor(game.Title)</div>
                     }
                     <span class="tile__size">@FormatSize(game.Size)</span>
                 </div>
                 <p class="tile__title">@game.Title</p>
                 <p class="tile__meta">
-                    @if (game.RawgGame?.Genres.Count > 0)
+                    @* Tags before genres: they are the ones somebody chose to write down, and the
+                       ones being filtered on just above. Genres fill the line when there are none. *@
+                    @if (game.Tags.Count > 0)
+                    {
+                        @string.Join(" · ", game.Tags.Take(3).Select(t => t.Name))
+                    }
+                    else if (game.RawgGame?.Genres.Count > 0)
                     {
                         @string.Join(" · ", game.RawgGame.Genres.Take(3).Select(g => g.Name))
                     }
@@ -99,30 +141,84 @@ else
     [SupplyParameterFromQuery(Name = "q")]
     public string? Q { get; set; }
 
+    /// <summary>
+    /// Selected tag slugs, comma-separated, e.g. "/?tags=lan,co-op".
+    ///
+    /// In the URL rather than in component state for the same reason the search query is: a shelf
+    /// narrowed to "what four of us can play" is exactly the thing someone wants to paste to the
+    /// other three.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "tags")]
+    public string? TagFilter { get; set; }
+
     private List<GameContract> Games = [];
+    private List<TagContract> FilterTags = [];
     private int Page = 1;
     private const int PageSize = 24;
     private bool Loading = true;
     private string? Error;
     private string? loadedQuery;
+    private string? loadedTags;
 
     private bool hasLoaded;
 
     private bool IsSearching => !string.IsNullOrWhiteSpace(Q);
+    private bool IsFiltered => IsSearching || SelectedTags.Count > 0;
+
+    private List<string> SelectedTags =>
+        string.IsNullOrWhiteSpace(TagFilter)
+            ? []
+            : [.. TagFilter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Every tag that is either offered as a quick add or actually in use. A tag nobody has
+            // applied and nobody offers is not a filter anyone can want.
+            FilterTags = [.. (await GamesService.GetTags()).Where(t => t.IsQuickAdd || t.GameCount > 0)];
+        }
+        catch (Exception)
+        {
+            // The library is the page; the filter bar is not worth failing it over.
+            FilterTags = [];
+        }
+    }
 
     protected override async Task OnParametersSetAsync()
     {
-        // Re-runs whenever ?q= changes, including navigating back to the unfiltered library.
+        // Re-runs whenever ?q= or ?tags= changes, including navigating back to the unfiltered library.
         //
         // The guard keys off an explicit flag rather than Loading: parameters get set again whenever
         // the cascading auth state resolves or changes (e.g. right after login), and if that landed
         // mid-request the old guard let a *second* concurrent Load start. Two in-flight fetches then
         // raced to assign Games, which is why the shelf sometimes came up empty.
-        if (hasLoaded && loadedQuery == Q) return;
+        if (hasLoaded && loadedQuery == Q && loadedTags == TagFilter) return;
 
         hasLoaded = true;
         loadedQuery = Q;
+        loadedTags = TagFilter;
         await Load(1);
+    }
+
+    /// <summary>
+    /// Adds or removes a tag from the filter and navigates to the resulting URL.
+    ///
+    /// Page is deliberately not preserved: a narrower filter has fewer pages, and page 4 of a
+    /// three-page result is an empty shelf that looks like the filter matched nothing.
+    /// </summary>
+    private void ToggleTag(string slug)
+    {
+        var selected = SelectedTags;
+        var next = selected.Contains(slug)
+            ? selected.Where(s => s != slug).ToList()
+            : [.. selected, slug];
+
+        var parameters = new List<string>();
+        if (IsSearching) parameters.Add($"q={Uri.EscapeDataString(Q!)}");
+        if (next.Count > 0) parameters.Add($"tags={Uri.EscapeDataString(string.Join(',', next))}");
+
+        Navigation.NavigateTo(parameters.Count == 0 ? "/" : "/?" + string.Join('&', parameters));
     }
 
     private async Task Load(int page)
@@ -133,9 +229,10 @@ else
         Error = null;
         try
         {
+            var tags = SelectedTags;
             Games = IsSearching
-                ? await GamesService.Search(Q!, page, PageSize)
-                : await GamesService.GetPaged(page, PageSize);
+                ? await GamesService.Search(Q!, page, PageSize, tags)
+                : await GamesService.GetPaged(page, PageSize, tags);
             Page = page;
         }
         catch (Exception ex)
@@ -144,32 +241,6 @@ else
             Games = [];
         }
         Loading = false;
-    }
-
-    /// <summary>
-    /// Cover art, then the first screenshot, then nothing — callers fall back to initials.
-    /// The screenshot step matters because RAWG does not always supply a background image.
-    /// Resolved against the API, since that is what serves /media.
-    /// </summary>
-    private string? CoverFor(GameContract game)
-    {
-        var rawg = game.RawgGame;
-        if (rawg is null) return null;
-
-        var path = !string.IsNullOrWhiteSpace(rawg.BackgroundImage)
-            ? rawg.BackgroundImage
-            : rawg.Screenshots.FirstOrDefault(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image))?.Image;
-
-        return GamesService.ResolveMedia(path);
-    }
-
-    private static string Initials(string title)
-    {
-        var words = title.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (words.Length == 0) return "?";
-        var letters = words.Where(w => char.IsLetterOrDigit(w[0])).Take(2).Select(w => char.ToUpperInvariant(w[0]));
-        var result = string.Concat(letters);
-        return string.IsNullOrEmpty(result) ? "?" : result;
     }
 
     private static string FormatSize(double megabytes)

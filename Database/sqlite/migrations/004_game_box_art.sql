@@ -1,0 +1,27 @@
+-- 004 — a box art override per GameTown game
+--
+-- RAWG supplies "background_image", which is a wide promotional still. It is what the shelf has been
+-- rendering, and it is the wrong shape and the wrong picture: a shelf wants the portrait cover you
+-- would see on a box. RAWG has no such field, so the art has to come from somewhere else and be
+-- recorded here.
+--
+-- On "GameTownGame" rather than on "RAWGGames" deliberately. A RAWG row is shared by every GameTown
+-- game that matched the same title, so a cover stored there would be a shared value that one
+-- contributor could change under another. This is a per-library-entry curation choice and belongs to
+-- the entry.
+--
+-- The value is a local "/media/{guid}.{ext}" path, never a remote URL: the file is always downloaded
+-- onto this server first, whether it came from a provider, a pasted link or an upload. That is the
+-- same rule RAWG cover art and screenshots already follow (see RAWGService.RehostImageAsync) and it
+-- exists so the library renders on a LAN with no internet and survives a provider rotating its CDN.
+--
+-- NULL means "no override" and the reader falls back to the RAWG image, then a screenshot, then
+-- initials. Existing rows are therefore correct as they stand and nothing is backfilled.
+--
+-- NOTE ON RE-RUNNING: like 003 and unlike 002/005, the ALTER below is NOT safe to replay — SQLite has
+-- no "ADD COLUMN IF NOT EXISTS" and no conditional DDL, so a second run fails with "duplicate column
+-- name". That is the documented exception to the rule in CLAUDE.md rather than an oversight, because
+-- the rule cannot be honoured for this statement. The runner is version-gated and commits each script
+-- with its version row, so a replay requires an operator to restore a database whose SchemaVersion
+-- disagrees with its own schema.
+ALTER TABLE "GameTownGame" ADD COLUMN "BoxArtUrl" TEXT NULL;

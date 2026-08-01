@@ -12,32 +12,40 @@ namespace API.Services
         readonly DatabaseContext _context;
         readonly RAWGService _rawgService;
         readonly FileService _fileService;
+        readonly MediaStore _media;
 
-        public GTGamesService(DatabaseContext context, RAWGService rawgService, FileService fileService)
+        public GTGamesService(
+            DatabaseContext context, RAWGService rawgService, FileService fileService, MediaStore media)
         {
             _context = context;
             _rawgService = rawgService;
             _fileService = fileService;
+            _media = media;
         }
+
+        /// <summary>
+        /// Everything a <see cref="GameContract"/> needs loaded, in one place.
+        ///
+        /// The four read paths kept drifting apart — screenshots were once missing from the detail
+        /// query while the paged and search queries both had them, so the one screen that displays
+        /// them got none. Tags would have been a fifth chance to make the same mistake.
+        ///
+        /// AsSplitQuery is not optional here: four collection includes in one statement multiply
+        /// together (developers x genres x screenshots x tags), and the row count stops being
+        /// something you can reason about.
+        /// </summary>
+        private IQueryable<GameTownGame> WithContractIncludes()
+            => _context.GameTownGames
+                .Include(g => g.Tags)
+                .Include(g => g.Rawggame).ThenInclude(r => r!.Developers)
+                .Include(g => g.Rawggame).ThenInclude(r => r!.Genres)
+                .Include(g => g.Rawggame).ThenInclude(r => r!.Screenshots)
+                .AsSplitQuery();
 
         public async Task<GameContract?> GetGameById(Guid id)
         {
-            var game = await _context.GameTownGames
-                                                .Include(g => g.Rawggame)
-                                                .ThenInclude(r => r!.Developers)
-                                                .Include(g => g.Rawggame)
-                                                .ThenInclude(r => r!.Genres)
-                                                // Screenshots were missing here while the paged and
-                                                // search queries both loaded them, so the detail
-                                                // page — the one screen that shows them — got none.
-                                                .Include(g => g.Rawggame)
-                                                .ThenInclude(r => r!.Screenshots)
-                                                .AsSplitQuery()
-                                                .SingleOrDefaultAsync(g => g.Id == id);
-            if (game == null)   
-                    return null;  
-            return game.ToContract();
-        
+            var game = await WithContractIncludes().SingleOrDefaultAsync(g => g.Id == id);
+            return game?.ToContract();
         }
         /// <summary>
         /// Stored path plus title for a game. The title is what the browser should see as the
@@ -64,24 +72,19 @@ namespace API.Services
 
                 if (!rawgStillInUse)
                 {
-                    try
-                    {
-                        foreach (var screenshot in game.Rawggame.Screenshots)
-                        {
-                            var fileName = Path.GetFileName(screenshot.Image);
-                            var filePath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "media", fileName);
-                            if (File.Exists(filePath))
-                            {
-                                File.Delete(filePath);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        throw new Exception($"Error deleting screenshots for game {game.Title}: {ex.Message}", ex);
-                    }
+                    // Through MediaStore, which resolves against the DATA directory. This used to
+                    // build its own path from Directory.GetCurrentDirectory() + "wwwroot/media" — the
+                    // location re-hosted art was moved out of, precisely because an in-place upgrade
+                    // deletes the application folder. Nothing has been written there for some time, so
+                    // this quietly matched nothing and orphaned every screenshot it was meant to bin.
+                    foreach (var screenshot in game.Rawggame.Screenshots)
+                        _media.Delete(screenshot.Image);
                 }
             }
+
+            // The override, if this game had one. Unlike the RAWG screenshots above there is no
+            // shared-use check to make: box art belongs to exactly one game by construction.
+            _media.Delete(game.BoxArtUrl);
 
             // Uploads live under GameFilesPath, so resolve through FileService. The previous
             // wwwroot/games lookup never matched and silently orphaned every uploaded archive.
@@ -118,7 +121,15 @@ namespace API.Services
                 .FirstOrDefaultAsync();
         }
 
-        public async Task AddGame(RequestGameTownGameDTO game, string fileUrl, double fileSize, string? archiveSha256 = null)
+        /// <summary>
+        /// Adds a game and returns its new id.
+        ///
+        /// The id is returned rather than discarded because the add-game screen has follow-up work to
+        /// do with it — tags and box art are set by separate calls, and without the id there is
+        /// nothing to address them to. This used to return void and the endpoint answered 204, which
+        /// left the contributor having to find the game again to finish describing it.
+        /// </summary>
+        public async Task<Guid> AddGame(RequestGameTownGameDTO game, string fileUrl, double fileSize, string? archiveSha256 = null)
         {
             var newGame = new GameTownGame
             {
@@ -140,6 +151,7 @@ namespace API.Services
             }
             _context.GameTownGames.Add(newGame);
             await _context.SaveChangesAsync();
+            return newGame.Id;
         }
         public async Task UpdateGame(GameTownGamePatchRequest game)
         {
@@ -159,54 +171,76 @@ namespace API.Services
             // Url is intentionally not patchable — it is the on-disk location, set once at upload.
             await _context.SaveChangesAsync();
         }
-        public async Task<List<GameContract>> GetGamePaged(int page, int page_size)
+        public Task<List<GameContract>> GetGamePaged(int page, int page_size, IEnumerable<string>? tagSlugs = null)
         {
             if (page < 1 || page_size < 1)
                 throw new ArgumentOutOfRangeException("Page and page size must be greater than zero.");
-            var games = await _context.GameTownGames
-                .Include(g => g.Rawggame)
-                .ThenInclude(r => r!.Developers)
-                .Include(g => g.Rawggame)
-                .ThenInclude(r => r!.Genres)
-                .Include(g => g.Rawggame)
-                                    .ThenInclude(r => r!.Screenshots)
-                // Paging without an ORDER BY leaves the order up to Postgres, so a game could appear
-                // on two pages or on none. Title is the order the shelf is presented in anyway.
-                .OrderBy(g => g.Title)
-                .Skip((page - 1) * page_size)
-                .Take(page_size)
-                // Three collection includes in one query multiplies the rows together
-                // (developers x genres x screenshots); split into separate queries instead.
-                .AsSplitQuery()
-                .ToListAsync();
-            var results = new List<GameContract>();
-            foreach (var game in games) {
-                results.Add(game.ToContract());
-                    };
-            return results;
+
+            return BrowseAsync(query: null, tagSlugs, page, page_size);
         }
-        public async Task<List<GameContract>> SearchGames(string query, int page, int pageSize)
+
+        public Task<List<GameContract>> SearchGames(
+            string query, int page, int pageSize, IEnumerable<string>? tagSlugs = null)
         {
             if (string.IsNullOrWhiteSpace(query))
                 throw new ArgumentException("Search query cannot be empty.", nameof(query));
             if (page < 1 || pageSize < 1)
                 throw new ArgumentOutOfRangeException("Page and page size must be greater than zero.");
-            var lowerQuery = query.ToLower();
 
-            var games = await _context.GameTownGames
-                .Include(g => g.Rawggame)
-                    .ThenInclude(r => r!.Developers)
-                .Include(g => g.Rawggame)
-                    .ThenInclude(r => r!.Genres)
-                .Include(g=>g.Rawggame)
-                                    .ThenInclude(r => r!.Screenshots)
-                .Where(g => g.Title.ToLower().Contains(lowerQuery))
+            return BrowseAsync(query, tagSlugs, page, pageSize);
+        }
+
+        /// <summary>
+        /// The single query behind both the library listing and the search.
+        ///
+        /// They were two near-identical LINQ chains that had already drifted once (see
+        /// <see cref="WithContractIncludes"/>), and tag filtering applies to both — an unfiltered shelf
+        /// narrowed to "LAN" is the same operation as a search for "quake" narrowed to "LAN".
+        ///
+        /// Multiple tags are <b>AND</b>, not OR: each one narrows. "Split screen" plus "LAN" means a
+        /// game that does both, because the question being asked is "what can the four of us play
+        /// tonight" and an OR would answer a question nobody has.
+        /// </summary>
+        private async Task<List<GameContract>> BrowseAsync(
+            string? query, IEnumerable<string>? tagSlugs, int page, int pageSize)
+        {
+            var games = WithContractIncludes();
+
+            if (!string.IsNullOrWhiteSpace(query))
+            {
+                var lowerQuery = query.ToLower();
+
+                // Tag names are matched as well as titles, so typing "co-op" into the search box does
+                // what someone typing it expects rather than returning nothing. Slug as well as name,
+                // because "co-op" and "Co-op" reach it by different routes.
+                games = games.Where(g =>
+                    g.Title.ToLower().Contains(lowerQuery)
+                    || g.Tags.Any(t => t.Name.ToLower().Contains(lowerQuery)
+                                       || t.Slug.Contains(lowerQuery)));
+            }
+
+            if (tagSlugs is not null)
+            {
+                // One Where per tag, deliberately. A single `.All(...)` over the requested list would
+                // be OR-ish in translation; a separate EXISTS per tag is what actually means AND.
+                foreach (var slug in tagSlugs.Where(s => !string.IsNullOrWhiteSpace(s)).Distinct())
+                {
+                    // Captured per iteration — without the local, every closure would see the last
+                    // value and the filter would silently apply one tag N times.
+                    var wanted = slug.Trim().ToLowerInvariant();
+                    games = games.Where(g => g.Tags.Any(t => t.Slug == wanted));
+                }
+            }
+
+            var page_of_games = await games
+                // Paging without an ORDER BY leaves the order up to the database, so a game could
+                // appear on two pages or on none. Title is the order the shelf is presented in anyway.
                 .OrderBy(g => g.Title)
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .AsSplitQuery()
                 .ToListAsync();
-            return games.Select(g => g.ToContract()).ToList();
+
+            return [.. page_of_games.Select(g => g.ToContract())];
         }
     }
 }

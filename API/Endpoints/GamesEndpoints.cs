@@ -19,7 +19,7 @@ public static class GamesEndpoints
         // request falls through to MapFallbackToFile and comes back 200 text/html, so the caller sees
         // success and tries to parse the SPA shell as JSON.
         var group = app.MapGroup("/GTGames")
-            .WithTags("GameTown Games")
+            .WithTags("GameTown Games")
             .WithDescription("Endpoints for managing games in GameTown.");
         group.MapPost("/Add", AddGameWithFile)
             // Describes the body for OpenAPI only. The handler does NOT model-bind it — see
@@ -27,7 +27,7 @@ public static class GamesEndpoints
             // file first. AddGameWithFileForm exists purely to keep the documented shape honest.
             .Accepts<AddGameWithFileForm>("multipart/form-data")
             .RequireAuthorization("Contributor")
-            .Produces(StatusCodes.Status204NoContent)
+            .Produces<AddGameResponse>(StatusCodes.Status201Created)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
             .Produces(StatusCodes.Status409Conflict)
@@ -139,13 +139,28 @@ public static class GamesEndpoints
         }
         return Results.NoContent();
     }
-    private static async Task<IResult> GetGamesPaged(int page, int pageSize, GTGamesService service)
+    /// <summary>
+    /// Splits the optional "tags" query parameter into slugs.
+    ///
+    /// Comma-separated in one parameter rather than repeated ("?tags=lan&amp;tags=co-op"), because the
+    /// value goes straight into the library page's own URL — "/?tags=lan,co-op" is something a person
+    /// can read, edit and paste into chat, which is the whole reason the filter lives in the URL.
+    ///
+    /// An unrecognised slug is not an error: it simply matches nothing, so a stale link degrades to an
+    /// empty shelf rather than a 400.
+    /// </summary>
+    private static string[] ParseTags(string? tags)
+        => string.IsNullOrWhiteSpace(tags)
+            ? []
+            : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static async Task<IResult> GetGamesPaged(int page, int pageSize, GTGamesService service, string? tags = null)
     {
         if (page < 1 || pageSize < 1)
             return Results.BadRequest("Page and page size must be greater than zero.");
         try
         {
-            var games = await service.GetGamePaged(page, pageSize);
+            var games = await service.GetGamePaged(page, pageSize, ParseTags(tags));
             return Results.Ok(games);
         }
         catch (Exception ex)
@@ -153,7 +168,8 @@ public static class GamesEndpoints
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
     }
-    private static async Task<IResult> SearchGame(string query, int page, int pageSize, GTGamesService service)
+    private static async Task<IResult> SearchGame(
+        string query, int page, int pageSize, GTGamesService service, string? tags = null)
     {
         if (string.IsNullOrWhiteSpace(query))
             return Results.BadRequest("Search query cannot be empty.");
@@ -161,7 +177,7 @@ public static class GamesEndpoints
             return Results.BadRequest("Page and page size must be greater than zero.");
         try
         {
-            var games = await service.SearchGames(query, page, pageSize);
+            var games = await service.SearchGames(query, page, pageSize, ParseTags(tags));
             return Results.Ok(games);
         }
         catch (Exception ex)
@@ -252,9 +268,11 @@ public static class GamesEndpoints
             RAWGGameId = upload.Field("rawgGameId")
         };
 
+        Guid newGameId;
         try
         {
-            await _gameService.AddGame(game, upload.StoredPath, upload.Bytes / (1024.0 * 1024.0), upload.Sha256);
+            newGameId = await _gameService.AddGame(
+                game, upload.StoredPath, upload.Bytes / (1024.0 * 1024.0), upload.Sha256);
         }
         catch (KeyNotFoundException ex)
         {
@@ -269,7 +287,14 @@ public static class GamesEndpoints
             TryDeleteArchive(upload.StoredPath);
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
-        return Results.NoContent();
+
+        // 201 with the new id, not the 204 this used to answer. Tags and box art are set by separate
+        // calls, and with no id in the response the add-game screen had nothing to address them to —
+        // the contributor had to go and find the game again to finish describing it.
+        //
+        // Still a success status, so nothing that only checked for 2xx changes behaviour; the SPA's
+        // XHR upload path goes through ApiResult.FromStatus, which treats any 2xx as success.
+        return Results.Created($"/GTGames/{newGameId}", new AddGameResponse { Id = newGameId });
     }
 
     private static void TryDeleteArchive(string path)

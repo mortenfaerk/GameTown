@@ -138,6 +138,48 @@ else if (Tab == "metadata")
             }
         </div>
     </div>
+
+    <div class="card mt-3">
+        <div class="card-body">
+            <h5 class="card-title">SteamGridDB (cover art)</h5>
+            <p class="text-secondary small">
+                Used to search for the portrait box art games are shelved under. RAWG has no such
+                field — what it supplies is a wide promotional still, which is why this is a separate
+                source. A free key comes with a SteamGridDB account.
+                <strong>Optional</strong> — without one, contributors can still upload a cover file or
+                paste an image link; only the search is unavailable.
+            </p>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label">
+                        API key
+                        @if (Current.BoxArtApiKeyIsSet)
+                        {
+                            <span class="text-secondary">(currently @Current.BoxArtApiKeyMasked)</span>
+                        }
+                    </label>
+                    <input class="form-control" type="password" placeholder="@(Current.BoxArtApiKeyIsSet ? "Leave blank to keep the current key" : "Not set")" @bind="BoxArtApiKey" />
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-outline-secondary" @onclick="TestBoxArtKey" disabled="@Busy">Test key</button>
+                    <button class="btn btn-primary" @onclick="SaveBoxArt" disabled="@Busy">Save</button>
+                </div>
+            </div>
+
+            @if (Current.BoxArtApiKeyIsSet)
+            {
+                <button class="btn btn-link text-danger px-0 mt-2" @onclick="ClearBoxArtKey" disabled="@Busy">Remove the stored key</button>
+            }
+
+            @if (BoxArtKeyCheck is not null)
+            {
+                <div class="alert @(BoxArtKeyCheck.Ok ? "alert-success" : "alert-warning") mt-3 mb-0">
+                    @DescribeKeyCheck(BoxArtKeyCheck, "SteamGridDB")
+                </div>
+            }
+        </div>
+    </div>
 }
 else if (Tab == "uploads")
 {
@@ -223,12 +265,14 @@ else if (Tab == "uploads")
     private SettingsContract? Current;
     private string GameFilesPath = string.Empty;
     private string RawgApiKey = string.Empty;
+    private string BoxArtApiKey = string.Empty;
     private List<string> AllowedFileTypes = [];
     private string NewType = string.Empty;
     private long MaxUploadSizeMb;
 
     private PathCheckResult? PathCheck;
     private RawgKeyCheckResult? KeyCheck;
+    private RawgKeyCheckResult? BoxArtKeyCheck;
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -250,7 +294,10 @@ else if (Tab == "uploads")
         GameFilesPath = settings.GameFilesPath;
         AllowedFileTypes = [.. settings.AllowedFileTypes];
         MaxUploadSizeMb = settings.MaxUploadSizeMb;
+        // Both key boxes are emptied rather than repopulated: the browser is never given a stored
+        // key, so there is nothing to put back, and a blank box is what "unchanged" looks like.
         RawgApiKey = string.Empty;
+        BoxArtApiKey = string.Empty;
     }
 
     private async Task SaveStorage()
@@ -268,6 +315,19 @@ else if (Tab == "uploads")
 
     private async Task ClearKey()
         => await Save(new SettingsUpdateRequest { ClearRawgApiKey = true }, "RAWG key removed.");
+
+    private async Task SaveBoxArt()
+    {
+        if (string.IsNullOrWhiteSpace(BoxArtApiKey))
+        {
+            Error = "Enter a key, or use \"Remove the stored key\" to clear it.";
+            return;
+        }
+        await Save(new SettingsUpdateRequest { BoxArtApiKey = BoxArtApiKey }, "Cover art key saved.");
+    }
+
+    private async Task ClearBoxArtKey()
+        => await Save(new SettingsUpdateRequest { ClearBoxArtApiKey = true }, "Cover art key removed.");
 
     private async Task SaveUploads()
         => await Save(new SettingsUpdateRequest { AllowedFileTypes = AllowedFileTypes }, "Allowed file types saved.");
@@ -318,6 +378,13 @@ else if (Tab == "uploads")
         Busy = false;
     }
 
+    private async Task TestBoxArtKey()
+    {
+        Busy = true;
+        BoxArtKeyCheck = await SettingsService.TestBoxArtKey();
+        Busy = false;
+    }
+
     private void AddType()
     {
         var candidate = NewType.Trim().ToLowerInvariant();
@@ -359,11 +426,17 @@ else if (Tab == "uploads")
         _ => "That path is not usable.",
     };
 
-    private static string DescribeKeyCheck(RawgKeyCheckResult check) => check.Reason switch
+    /// <summary>
+    /// Both key tests answer in the same reason codes, so they share the wording — only the provider's
+    /// name changes. "no-match" is a SteamGridDB-only outcome and counts as working: the key was
+    /// accepted and the provider answered, it simply had no art for the title used as the probe.
+    /// </summary>
+    private static string DescribeKeyCheck(RawgKeyCheckResult check, string provider = "RAWG") => check.Reason switch
     {
-        "ok" => "RAWG accepted the key.",
-        "rejected" => "RAWG rejected the key.",
-        "unreachable" => "RAWG could not be reached — check the server's internet connection.",
+        "ok" => $"{provider} accepted the key.",
+        "no-match" => $"{provider} accepted the key.",
+        "rejected" => $"{provider} rejected the key.",
+        "unreachable" => $"{provider} could not be reached — check the server's internet connection.",
         "not-configured" => "No key is stored yet.",
         _ => "The key could not be checked.",
     };

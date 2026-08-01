@@ -20,6 +20,17 @@ public class ApiRoutingTests
     [
         "/GTGames/getPaged/1/5",
         "/GTGames/search/?query=x&page=1&pageSize=5",
+        // The tag filter travels as a query parameter on both of the above. A typo in the parameter
+        // name would not 400 — the routes would simply match without it and quietly return the
+        // unfiltered library, which looks like a filter that does not work rather than a broken URL.
+        "/GTGames/getPaged/1/5?tags=lan",
+        "/GTGames/search/?query=x&page=1&pageSize=5&tags=lan,co-op",
+        // Anonymous, because the library's filter bar is. Behind the fallback authorization policy
+        // this would answer 401 rather than falling through to the SPA, but the assertion below is
+        // the one that matters either way.
+        "/tags/",
+        "/tags/?quick=true",
+        "/tags/game/11111111-1111-1111-1111-111111111111",
     ];
 
     [Theory]
@@ -52,6 +63,25 @@ public class ApiRoutingTests
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         }
+    }
+
+    /// <summary>
+    /// The box-art search, which is Contributor-gated and so cannot go in the anonymous theory above.
+    ///
+    /// Worth its own case because it answers 200 for every outcome including "no provider is
+    /// configured" — which is what this test environment is. A route that had fallen through to the
+    /// SPA would also answer 200, so the content type is the only thing separating the two.
+    /// </summary>
+    [Fact]
+    public async Task The_box_art_search_returns_json_even_with_no_provider_configured()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+
+        var response = await client.GetAsync("/boxart/search?title=Portal");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
     }
 
     /// <summary>
