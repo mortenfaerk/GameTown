@@ -21,6 +21,8 @@ public partial class GameTownGame
 
     public string? BoxArtUrl { get; set; }
 
+    public bool GuideBaked { get; set; }
+
     public virtual Rawggame? Rawggame { get; set; }
 
     public virtual ICollection<Tag> Tags { get; set; } = new List<Tag>();

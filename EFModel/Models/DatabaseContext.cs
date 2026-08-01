@@ -48,6 +48,7 @@ public partial class DatabaseContext : DbContext
             entity.Property(e => e.Id)
                 .ValueGeneratedNever()
                 .HasColumnType("uniqueidentifier");
+            entity.Property(e => e.GuideBaked).HasColumnType("boolean");
             entity.Property(e => e.RawggameId).HasColumnName("RAWGGameId");
             entity.Property(e => e.Title).UseCollation("NOCASE");
             entity.Property(e => e.Url).HasColumnName("URL");

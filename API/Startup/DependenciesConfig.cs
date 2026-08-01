@@ -1,4 +1,5 @@
 ﻿using API.Services;
+using API.Services.Archives;
 using API.Services.BoxArt;
 using EFModel.Models;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -88,6 +89,7 @@ public static class DependenciesConfig
         builder.Services.AddScoped<UserService>();
         builder.Services.AddScoped<TagService>();
         builder.Services.AddScoped<BoxArtService>();
+        builder.Services.AddScoped<ArchiveGuideService>();
 
         // The artwork provider is behind an interface because the choice is genuinely open — Google's
         // Custom Search JSON API is closed to new users and off entirely from 2027, and Bing's image

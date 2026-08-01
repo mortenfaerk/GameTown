@@ -70,6 +70,7 @@ app.AddRootEndpoints();
 app.AddGamesTownGamesEndpoints();
 app.AddBoxArtEndpoints();
 app.AddTagEndpoints();
+app.AddGuideEndpoints();
 app.AddMetaDataEndpoints();
 app.AddUserEndpoints();
 app.AddAuthEndpoints();

@@ -131,9 +131,52 @@
     <TagEditor Names="Tags" NamesChanged="names => Tags = names" Disabled="@Busy" />
 </div>
 
+<div class="mt-4">
+    <label class="form-label">Instructions in the download</label>
+    <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="bake-guide"
+               checked="@BakeGuide"
+               disabled="@(Busy || !CanBakeGuide)"
+               @onchange="e => BakeGuide = e.Value is true" />
+        <label class="form-check-label" for="bake-guide">
+            Include a <code>GameTownGuide.txt</code> inside the archive
+        </label>
+    </div>
+    <p class="gt-data mb-0 mt-1">
+        @if (SelectedFile is null)
+        {
+            <span>Choose an archive first — only ZIP files can carry one.</span>
+        }
+        else if (!CanBakeGuide)
+        {
+            <span>
+                @SelectedFile.Name is not a ZIP. A ZIP keeps its index at the end, so a file can be
+                added without repacking it; RAR and 7z would have to be rebuilt.
+            </span>
+        }
+        else
+        {
+            <span>
+                Written in after the upload finishes, so the instructions are there after extracting.
+                The archive is not repacked and the upload is not slowed down.
+            </span>
+        }
+    </p>
+</div>
+
 @code {
     private AddGameRequest Request = new();
     private List<string> Tags = [];
+    private bool BakeGuide;
+
+    /// <summary>
+    /// Whether the chosen file can carry a guide. Decided here from the file name so the toggle
+    /// reacts as soon as a file is picked, rather than after the upload has already happened; the
+    /// server decides for real, from the archive it actually stored.
+    /// </summary>
+    private bool CanBakeGuide =>
+        SelectedFile is not null
+        && ".zip".Equals(Path.GetExtension(SelectedFile.Name), StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Set after a successful upload, so the success banner can offer a way to the new game.</summary>
     private Guid? AddedGameId;
@@ -188,6 +231,10 @@
     {
         SelectedFile = e.File;
         Error = null;
+
+        // Swapping a ZIP for a RAR must not leave a ticked box that cannot be honoured. The server
+        // would refuse it anyway; this keeps the form from claiming otherwise in the meantime.
+        if (!CanBakeGuide) BakeGuide = false;
     }
 
     private void OnRawgGameSelected(RawgGameContract? game)
@@ -315,6 +362,18 @@
                     Error = $"'{title}' was added, but its tags were not saved: {tagResult.Error}";
             }
 
+            // Written after the upload rather than during it, so the archive reaches its final
+            // location untouched and a failure here cannot cost the transfer. Same rule as the tags
+            // above: the game is added either way, and saying otherwise would send the contributor
+            // back to upload it a second time.
+            if (outcome.GameId is { } bakeId && BakeGuide)
+            {
+                var (guideResult, _) = await GamesService.SetArchiveGuide(bakeId, baked: true);
+                if (!guideResult.Success)
+                    Error = $"'{title}' was added, but the instructions were not written into the "
+                          + $"archive: {guideResult.Error}";
+            }
+
             // A link rather than a redirect. The common case is adding several games in a row, and
             // navigating away after each one would make that needlessly slow — but cover art lives on
             // the detail page, so the way there has to be one click.
@@ -325,6 +384,7 @@
             SelectedFile = null;
             SelectedRawgGame = null;
             Tags = [];
+            BakeGuide = false;
         }
         else
         {

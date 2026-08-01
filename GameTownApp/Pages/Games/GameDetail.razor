@@ -173,6 +173,38 @@ else
 
                 <hr class="my-4" />
 
+                @* Also outside the EditForm: this saves on its own, because it writes to a file on
+                   disk and can fail in ways that must not retract a save that already worked. *@
+                <label class="form-label">Instructions in the download</label>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="bake-guide"
+                           checked="@Game.GuideBaked"
+                           disabled="@(Busy || !Game.CanBakeGuide)"
+                           @onchange="OnGuideToggled" />
+                    <label class="form-check-label" for="bake-guide">
+                        Include a <code>GameTownGuide.txt</code> inside the archive
+                    </label>
+                </div>
+                <p class="gt-data mb-0 mt-1">
+                    @if (!Game.CanBakeGuide)
+                    {
+                        <span>
+                            Only ZIP archives can carry one. A ZIP keeps its index at the end, so a file
+                            can be added without repacking; RAR and 7z would have to be rebuilt.
+                        </span>
+                    }
+                    else if (Game.GuideBaked)
+                    {
+                        <span>The archive carries a copy of the instructions above. Saving changes rewrites it.</span>
+                    }
+                    else
+                    {
+                        <span>Adds the instructions to the archive so they are there after extracting. The archive is not repacked.</span>
+                    }
+                </p>
+
+                <hr class="my-4" />
+
                 <label class="form-label">Cover art</label>
                 <p class="gt-data mb-2">
                     @if (Game.BoxArtUrl is not null)
@@ -289,6 +321,42 @@ else
         Error = null;
         Notice = "Cover art updated.";
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Applies immediately rather than waiting for Save, like the cover picker above it.
+    ///
+    /// Both write to a file rather than to a row, and both can fail on their own terms — a damaged
+    /// archive, a share that has gone read-only — so folding them into the form's save would mean one
+    /// button that half-succeeds.
+    /// </summary>
+    private async Task OnGuideToggled(ChangeEventArgs e)
+    {
+        if (Game is null) return;
+
+        var wanted = e.Value is true;
+
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        var (result, updated) = await GamesService.SetArchiveGuide(Game.Id, wanted);
+
+        if (result.Success && updated is not null)
+        {
+            Game = updated;
+            Notice = wanted
+                ? "The instructions are now inside the archive."
+                : "The instructions were removed from the archive.";
+        }
+        else
+        {
+            // The checkbox is bound to Game.GuideBaked, which has not changed — so re-rendering puts
+            // it back where it was, and the tick does not sit there claiming something that failed.
+            Error = result.Error;
+        }
+
+        Busy = false;
     }
 
     private async Task ClearBoxArt()

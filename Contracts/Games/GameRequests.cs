@@ -20,6 +20,17 @@ public class AddGameRequest
 }
 
 /// <summary>
+/// Whether the game's instructions should be present inside its archive as GameTownGuide.txt.
+///
+/// The desired state rather than an add/remove verb: the caller is saying "make the archive match the
+/// toggle", so a retry after a dropped response cannot leave the file and the flag disagreeing.
+/// </summary>
+public class SetGuideRequest
+{
+    public bool Baked { get; set; }
+}
+
+/// <summary>
 /// What a successful upload answers with.
 ///
 /// The id exists so the add-game screen can carry on: tags and box art are set through their own

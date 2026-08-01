@@ -22,5 +22,23 @@ public class GameContract
     /// <summary>Manual tags. Always present, possibly empty. <see cref="TagContract.GameCount"/> is not populated here.</summary>
     public List<TagContract> Tags { get; set; } = [];
 
+    /// <summary>
+    /// Whether this game's instructions have been written into its archive as GameTownGuide.txt.
+    ///
+    /// The archive holds a copy; <see cref="HowTo"/> is the original. Editing the instructions with
+    /// this set rewrites the copy.
+    /// </summary>
+    public bool GuideBaked { get; set; }
+
+    /// <summary>
+    /// Whether the archive's format allows a guide to be added to it at all — in practice, whether it
+    /// is a ZIP.
+    ///
+    /// A computed flag rather than the file name, because the stored path is a server location and has
+    /// no business reaching the browser. It exists so the toggle can be shown disabled with a reason
+    /// instead of silently vanishing for some uploads and not others.
+    /// </summary>
+    public bool CanBakeGuide { get; set; }
+
     public RawgGameContract? RawgGame { get; set; }
 }

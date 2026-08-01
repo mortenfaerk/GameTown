@@ -182,6 +182,20 @@ public class GamesService(HttpClient http)
         return (result, await response.Content.ReadFromJsonAsync<List<TagContract>>() ?? []);
     }
 
+    // ---------------------------------------------------------------- archive guide
+
+    /// <summary>
+    /// Writes the game's instructions into its archive as GameTownGuide.txt, or takes them out.
+    ///
+    /// Answers with the updated game so the caller refreshes from the response rather than issuing a
+    /// second GET it would then have to keep in step.
+    /// </summary>
+    public async Task<(ApiResult Result, GameContract? Game)> SetArchiveGuide(Guid id, bool baked)
+    {
+        var response = await _http.PutAsJsonAsync($"/guide/{id}", new SetGuideRequest { Baked = baked });
+        return await ReadGameResult(response);
+    }
+
     // ---------------------------------------------------------------- box art
 
     /// <summary>

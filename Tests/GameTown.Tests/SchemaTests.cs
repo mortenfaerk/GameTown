@@ -90,13 +90,14 @@ public class SchemaTests
         using (var client = app.CreateBrowser()) await client.GetAsync("/");
 
         // Every migration ran, not just the next one. An install can be several releases behind.
-        Assert.Equal("5", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+        Assert.Equal("6", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
 
-        // The row is untouched, and each new column is present and NULL rather than backfilled.
-        Assert.Equal("Existing Game|Unzip it|/var/lib/gametown/games/abc.zip|1234.5||",
+        // The row is untouched, and each new column is present with its "nobody asked for this"
+        // value rather than being backfilled with a guess.
+        Assert.Equal("Existing Game|Unzip it|/var/lib/gametown/games/abc.zip|1234.5|||0",
             app.QueryScalar("""
                 SELECT "Title"||'|'||"HowTo"||'|'||"URL"||'|'||"Size"||'|'
-                       ||COALESCE("ArchiveSha256",'')||'|'||COALESCE("BoxArtUrl",'')
+                       ||COALESCE("ArchiveSha256",'')||'|'||COALESCE("BoxArtUrl",'')||'|'||"GuideBaked"
                 FROM "GameTownGame" WHERE "Id" = '11111111-1111-1111-1111-111111111111'
                 """));
 

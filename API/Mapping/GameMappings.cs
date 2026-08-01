@@ -1,3 +1,4 @@
+using API.Services.Archives;
 using EFModel.Models;
 using Ganss.Xss;
 using GameTown.Contracts.Games;
@@ -58,6 +59,10 @@ public static class GameMappings
         HowTo = game.HowTo,
         Size = game.Size,
         BoxArtUrl = game.BoxArtUrl,
+        GuideBaked = game.GuideBaked,
+        // Derived from the stored path but never exposing it: the client needs to know whether the
+        // toggle is available, not where the archive lives.
+        CanBakeGuide = ArchiveGuideService.IsSupported(game.Url),
         // Ordered here rather than relying on the join's natural order, which is the primary key's
         // and therefore effectively random to a reader. Quick-add tags first so the ones people scan
         // for — split screen, LAN, co-op — sit in a stable place on every card.

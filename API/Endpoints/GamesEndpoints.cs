@@ -1,5 +1,6 @@
 ﻿using API.Models.Games;
 using API.Services;
+using API.Services.Archives;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 
@@ -119,7 +120,8 @@ public static class GamesEndpoints
         }
         return Results.NoContent();
     }
-    private static async Task<IResult> UpdateGame(GameTownGamePatchRequest game, GTGamesService service)
+    private static async Task<IResult> UpdateGame(
+        GameTownGamePatchRequest game, GTGamesService service, ArchiveGuideService guides)
     {
         if (!Guid.TryParse(game.Id, out var gameId))
             return Results.BadRequest("Invalid game ID format.");
@@ -137,6 +139,14 @@ public static class GamesEndpoints
         {
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
+
+        // The copy inside the archive has to follow the instructions it was made from, or the version
+        // a player actually reads is the stale one — and they have no way of knowing that.
+        //
+        // After the save and deliberately not able to fail it: a game whose archive sits on a share
+        // that has gone away must still be editable. Does nothing for a game with no guide.
+        await guides.RefreshIfBakedAsync(gameId);
+
         return Results.NoContent();
     }
     /// <summary>

@@ -373,6 +373,23 @@ Two rules keep that true, and both live in `ImageFetcher.SniffExtension`:
 
 Adding a format here means asking whether a browser will execute it, not whether it is an image.
 
+### The guide writer mutates a stored archive, and must stay append-only
+
+`ZipGuideWriter` is the only code that writes into a file a contributor uploaded. Two properties keep
+that acceptable, and both are structural rather than checks that could be skipped:
+
+- **It only ever appends.** Nothing below the original end of file is read for modification, moved or
+  overwritten, so the recovery for any failure is `SetLength(originalLength)` — an exact rollback
+  rather than a repair attempt. This matters because the archive is frequently the only copy anyone
+  has, and it may be on a share that disappears mid-write.
+- **The path is resolved through `FileService.TryResolveGameFileAsync` first**, like the download and
+  delete paths, so a bad row cannot direct a *write* outside the archive directory. That is a larger
+  concern here than on the read paths.
+
+The entry name is a constant (`GameTownGuide.txt`), never anything derived from user input — a name
+containing `../` would be written into the archive's index verbatim, and some extractors act on it.
+If that ever becomes configurable, it needs the same treatment as an uploaded filename.
+
 ### Tag names reach the query, but never as SQL
 
 `TagService.Slugify` normalises a hand-typed name before it is stored or matched. That is a

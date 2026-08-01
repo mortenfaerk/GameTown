@@ -13,6 +13,8 @@ Two things about a game are entered by people rather than imported, because no e
 
 Both are stored locally in every case: box art is always downloaded onto the server and served from `/media`, never hot-linked.
 
+A game's instructions can also be written **into its archive** as `GameTownGuide.txt`, so they are there after extracting rather than only on a web page nobody has open by then. **ZIP only, and that is a property of the formats, not a backlog item**: ZIP keeps its index at the end where it can be rewritten cheaply, TAR could be added the same way, 7z would need the external 7-Zip binary (the dependency class this appliance exists without) and RAR has no free writer at all.
+
 ## Projects
 
 | Project | SDK / Type | Role |
@@ -47,7 +49,7 @@ dotnet run --project API --launch-profile https  # run just the API (it serves t
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-160 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
+185 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
 
 Requires the `sqlite3` CLI on the machine running the tests: the harness shells out to it so its view of the database stays independent of the EF model under test. The shipped application does not need it.
 
@@ -63,6 +65,7 @@ They are written against the bug classes this codebase has actually produced, al
 - **`AbandonedUploadTests`** boots a second app over the same data directory — a service restart, from the filesystem's point of view — and asserts the startup sweep removes `.part` files a killed process left behind while leaving finished archives alone.
 - **`DirectoryProbeTests` / `SetupPathTests`** cover the archive-directory check: it writes and deletes a real file rather than reading permission bits (mode bits predict nothing on a CIFS mount), and the wizard validates *before* creating the administrator — `/setup` 404s once one exists, so rejecting the path afterwards would leave the operator with no wizard to fix it in.
 - **`BoxArtTests` is mostly about refusal, not success.** Setting a cover from a URL is the only place the server fetches an address a user chose, and the appliance sits *inside* a home LAN — so "fetch this for me" reaches routers and metadata endpoints that nothing else can. It pins private-address and non-HTTP URLs being rejected, and that a stored file is named from its sniffed content rather than from the upload: these files are served back from the API's own origin, so an accepted SVG or HTML document would be stored XSS.
+- **`ZipGuideWriterTests` reads every result back with `System.IO.Compression`, never with the writer's own parser.** Checking a hand-rolled ZIP writer against itself proves only self-consistency; what has to hold is that an independent implementation still opens the file and still finds every entry that was in it before. The failure being guarded is not "the guide is missing" — it is a contributor's multi-gigabyte archive being quietly corrupted by a feature that adds a text file to it. Note the awkward fixtures (a trailing comment, prepended data, a nested stored ZIP, 70,000 entries): each targets a way the backwards EOCD scan or the ZIP64 records can go wrong on real archives while passing on small ones.
 - **`TagTests` pins that a tag's identity is its slug.** Tags are typed by hand, by several people, over months. If the text is the identity, the list fills with "Co-op"/"co op"/"COOP" and the filter bar stops being useful one duplicate at a time — the failure is gradual and never looks like a bug. It also pins that a two-tag filter means AND (an OR returns results, just the wrong ones) and that several new tags in one save get distinct ids, which is the `ValueGeneratedNever` trap below: coining *one* tag succeeds even when the mapping is broken.
 - **`SanitizerTests`** pins what survives `GameMappings`' HTML sanitiser — formatting tags in, every attribute out, and the mXSS shape from the AngleSharp advisory stripped. RAWG descriptions are community-editable and are rendered with `MarkupString` on an anonymous page, so this is an XSS gate, not a formatting preference.
 
@@ -151,7 +154,7 @@ Fresh installs run the baseline and then every migration, exactly as an existing
 
 Migrations are embedded resources (`API.csproj`), applied by `SchemaMigrator` at startup before anything serves a request. Each script commits together with its `SchemaVersion` row, so a failure leaves the database at the previous version rather than half-applied. Write them to be safe to re-run (`IF NOT EXISTS`).
 
-`ALTER TABLE ... ADD COLUMN` is the one statement that cannot honour that rule — SQLite has no `IF NOT EXISTS` for it and no conditional DDL — so a migration adding a column is not replayable. `003_game_archive_hash.sql` and `004_game_box_art.sql` document the exception where it occurs. Do not work around it by making `SchemaMigrator` swallow errors.
+`ALTER TABLE ... ADD COLUMN` is the one statement that cannot honour that rule — SQLite has no `IF NOT EXISTS` for it and no conditional DDL — so a migration adding a column is not replayable. `003_game_archive_hash.sql`, `004_game_box_art.sql` and `006_game_guide.sql` document the exception where it occurs. Do not work around it by making `SchemaMigrator` swallow errors.
 
 **The installer needs no change when a migration is added.** Migrations are embedded resources applied by `SchemaMigrator` before the first request, so taking a new build *is* taking its schema; `install.sh` is only responsible for stopping the service, backing the database up and creating any new data subdirectory. `.github/workflows/install-test.yml` proves the whole path by rolling a real install back to the previous schema version — library and all — and re-running `install.sh` over it. Adding an "apply the migration" step to the installer would mean shipping the DDL and the `sqlite3` CLI again, and would give the schema two owners that can disagree.
 
@@ -177,6 +180,7 @@ SQLite is dynamically typed, so several things Postgres enforced are now convent
 - `IBoxArtProvider` / `SteamGridDbProvider` search for candidates; `BoxArtService` stores whatever is chosen. The provider is behind an interface because the choice of source is genuinely open (see the Overview on why Google Images is not one).
 - `TagService` owns resolve-or-create-by-slug, whole-set replacement, and orphan cleanup. Quick-add tags are rows flagged `IsQuickAdd`, seeded by migration 005 — **not** a hardcoded list in the UI, so the vocabulary belongs to the library rather than to a build, and the cleanup has a principled reason to keep them.
 - Tag filtering is AND across tags (each narrows), lives in `GTGamesService.BrowseAsync` behind both `/getPaged` and `/search`, and travels as `?tags=slug,slug` so a filtered shelf keeps a pasteable URL — the same reasoning that puts search in `?q=`.
+- `ArchiveGuideService` / `ZipGuideWriter` write `GameTownGuide.txt` into a game's own ZIP. **Never replace `ZipGuideWriter` with `ZipArchiveMode.Update`** — it documents itself as holding the entire archive in memory and writing nothing until dispose, so a one-kilobyte text file costs a full multi-gigabyte read, allocate and rewrite. It would pass every test built on a small fixture. The writer instead *only appends*: a new index and end-of-central-directory record go on the end, the old ones become unreachable bytes, and no existing byte is moved. That also makes failure recoverable — the rollback is a truncate back to the original length.
 - `POST /GTGames/Add` answers **201 with the new game's id**, not the 204 it once did. Tags and box art are set through their own endpoints and need something to address; without an id the add-game screen could not finish describing what it had just uploaded.
 
 ## Conventions

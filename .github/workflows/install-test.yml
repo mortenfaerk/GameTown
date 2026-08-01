@@ -101,7 +101,7 @@ jobs:
           version="$(sudo sqlite3 /var/lib/gametown/gametown.db 'SELECT MAX("Version") FROM "SchemaVersion"')"
           roles="$(sudo sqlite3 /var/lib/gametown/gametown.db 'SELECT COUNT(*) FROM "GameTownRoles"')"
           echo "schema version=$version roles=$roles"
-          [[ "$version" -ge 5 ]] || { echo "::error::schema did not migrate past the baseline"; exit 1; }
+          [[ "$version" -ge 6 ]] || { echo "::error::schema did not migrate past the baseline"; exit 1; }
           [[ "$roles" -eq 2 ]]   || { echo "::error::roles were not seeded"; exit 1; }
 
       # Turns the install just made into one from an OLDER release, so the next step is a genuine
@@ -135,6 +135,7 @@ jobs:
             DROP TABLE IF EXISTS "GameTownGame_Tags";
             DROP TABLE IF EXISTS "Tags";
             ALTER TABLE "GameTownGame" DROP COLUMN "BoxArtUrl";
+            ALTER TABLE "GameTownGame" DROP COLUMN "GuideBaked";
             DELETE FROM "SchemaVersion" WHERE "Version" > 3;
           SQL
 
@@ -175,7 +176,7 @@ jobs:
           db=/var/lib/gametown/gametown.db
 
           version="$(sudo sqlite3 "$db" 'SELECT MAX("Version") FROM "SchemaVersion"')"
-          [[ "$version" -ge 5 ]] \
+          [[ "$version" -ge 6 ]] \
             || { echo "::error::the upgrade did not migrate past version 3 (got $version)"; exit 1; }
 
           # Replayed migrations would show up as a duplicate version row.
@@ -196,9 +197,13 @@ jobs:
           [[ "$size"  == "1234.5" ]]        || { echo "::error::Size changed: $size"; exit 1; }
           [[ "$hash"  == "abc123" ]]        || { echo "::error::ArchiveSha256 changed: $hash"; exit 1; }
 
-          # ...and it gained the new column, unset, rather than being rewritten.
+          # ...and it gained the new columns with their "nobody asked for this" values, rather than
+          # being rewritten with a guess.
           boxart="$(sudo sqlite3 "$db" 'SELECT COUNT(*) FROM "GameTownGame" WHERE "BoxArtUrl" IS NULL')"
           [[ "$boxart" -eq 1 ]] || { echo "::error::BoxArtUrl was not added as NULL"; exit 1; }
+
+          guide="$(sudo sqlite3 "$db" 'SELECT COUNT(*) FROM "GameTownGame" WHERE "GuideBaked" = 0')"
+          [[ "$guide" -eq 1 ]] || { echo "::error::GuideBaked was not added as 0"; exit 1; }
 
           # The quick-add tags are seeded exactly once each.
           quick="$(sudo sqlite3 "$db" 'SELECT COUNT(*) FROM "Tags" WHERE "IsQuickAdd" = 1')"

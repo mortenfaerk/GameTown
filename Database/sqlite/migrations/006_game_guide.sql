@@ -1,0 +1,23 @@
+-- 006 — remember whether a game's instructions have been written into its archive
+--
+-- The instructions live on the web page, which is no use at the moment someone actually needs them:
+-- they have downloaded the archive, they are looking at a folder of files, and the browser tab is
+-- long closed. Writing a "GameTownGuide.txt" into the archive itself puts the text where the problem
+-- is.
+--
+-- This column records only the *decision*, not the text. The text is HowTo, and the file inside the
+-- archive is a copy of it — so the archive is a cache and this flag is what says the cache should
+-- exist. Editing HowTo with the flag set rewrites the copy; clearing the flag removes it.
+--
+-- Reading the archive would answer the same question without a column, but at the cost of opening a
+-- file on a network share every time a game is rendered. This is one boolean per row.
+--
+-- NOT NULL DEFAULT 0 is safe on an ALTER: SQLite fills existing rows with the default, and 0 —
+-- "nobody has asked for this" — is the correct answer for every game that predates the feature.
+--
+-- NOTE ON RE-RUNNING: like 003 and 004, the ALTER below is NOT replayable. SQLite has no
+-- "ADD COLUMN IF NOT EXISTS" and no conditional DDL, so a second run fails with "duplicate column
+-- name". That is the documented exception to the rule in CLAUDE.md rather than an oversight. The
+-- runner is version-gated and commits each script with its version row, so a replay requires an
+-- operator to restore a database whose SchemaVersion disagrees with its own schema.
+ALTER TABLE "GameTownGame" ADD COLUMN "GuideBaked" boolean NOT NULL DEFAULT 0;
