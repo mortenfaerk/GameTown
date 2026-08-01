@@ -16,8 +16,7 @@ public static class AuthEndpoints
         // has to be answerable by someone who is not.
         var group = app.MapGroup("/auth")
            .AllowAnonymous()
-           .WithTags("Authentication")
-           .WithOpenApi()
+           .WithTags("Authentication")
            .WithDescription("Sign-in, sign-out, and the current user's identity");
 
         group.MapPost("/login", Login)
@@ -25,8 +24,7 @@ public static class AuthEndpoints
              .Produces<CurrentUser>(StatusCodes.Status200OK)
              .Produces(StatusCodes.Status401Unauthorized)
              .WithName("Login")
-             .WithDescription("Signs in and issues the auth cookie")
-             .WithOpenApi();
+             .WithDescription("Signs in and issues the auth cookie");
         // The (Delegate) cast is not decoration. Logout's signature — Task<IResult>(HttpContext) —
         // is implicitly convertible to RequestDelegate, so overload resolution prefers
         // MapPost(string, RequestDelegate), which returns IEndpointConventionBuilder and has no
@@ -36,14 +34,12 @@ public static class AuthEndpoints
         group.MapPost("/logout", (Delegate)Logout)
              .Produces(StatusCodes.Status204NoContent)
              .WithName("Logout")
-             .WithDescription("Signs out and clears the auth cookie")
-             .WithOpenApi();
+             .WithDescription("Signs out and clears the auth cookie");
         group.MapGet("/me", Me)
              .Produces<CurrentUser>(StatusCodes.Status200OK)
              .Produces(StatusCodes.Status401Unauthorized)
              .WithName("CurrentUser")
-             .WithDescription("Returns the signed-in user, or 401 when anonymous")
-             .WithOpenApi();
+             .WithDescription("Returns the signed-in user, or 401 when anonymous");
     }
 
     private static async Task<IResult> Login(HttpContext http, LoginRequest req, UserService userService)

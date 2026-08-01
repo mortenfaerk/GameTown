@@ -25,9 +25,24 @@ public static class DependenciesConfig
         // lifted: Kestrel rejects first, then the form reader would. Until now anything larger than
         // ~28.6 MB failed with a 413 while the upload form advertised 2 GB.
         //
-        // No ceiling is set deliberately. Uploading requires the Contributor policy, so this is not
-        // an anonymous vector, but there is no backstop against a contributor filling the disk.
-        builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = null);
+        // No ceiling here, deliberately — but there IS one now, and it is per-request: the upload
+        // endpoint lowers MaxRequestBodySize to the admin-configured "MaxUploadSizeMb" through
+        // IHttpMaxRequestBodySizeFeature before it reads the body. A limit fixed at startup could
+        // not have been a runtime setting.
+        builder.WebHost.ConfigureKestrel(options =>
+        {
+            options.Limits.MaxRequestBodySize = null;
+
+            // Removing the size cap is not enough on its own. Kestrel also aborts a request whose
+            // body arrives slower than 240 bytes/sec averaged over 5 seconds, which is meant to
+            // defend against slowloris but reads a genuine multi-gigabyte upload from a phone on
+            // hotel wifi the same way. The connection simply dies, and the browser reports it as an
+            // unexplained network error rather than as anything with a status code.
+            //
+            // Safe to drop because uploading requires the Contributor policy — an attacker would
+            // need an account before they could hold a connection open.
+            options.Limits.MinRequestBodyDataRate = null;
+        });
         builder.Services.Configure<FormOptions>(options =>
         {
             options.MultipartBodyLengthLimit = long.MaxValue;

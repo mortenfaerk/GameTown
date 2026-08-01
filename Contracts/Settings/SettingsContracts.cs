@@ -30,6 +30,15 @@ public class SettingsContract
     public string? RawgApiKeyMasked { get; set; }
 
     public List<string> AllowedFileTypes { get; set; } = [];
+
+    /// <summary>
+    /// Largest archive a contributor may upload, in megabytes. <c>0</c> means no limit.
+    ///
+    /// Worth remembering when this looks like it is not working: a reverse proxy in front of GameTown
+    /// has its own body-size limit and it wins, because it rejects the request before the application
+    /// ever sees it. nginx defaults to 1 MB.
+    /// </summary>
+    public long MaxUploadSizeMb { get; set; }
 }
 
 /// <summary>
@@ -50,6 +59,9 @@ public class SettingsUpdateRequest
     public bool ClearRawgApiKey { get; set; }
 
     public List<string>? AllowedFileTypes { get; set; }
+
+    /// <summary>Null means "unchanged". <c>0</c> is a real value and means "no limit".</summary>
+    public long? MaxUploadSizeMb { get; set; }
 }
 
 public class PathCheckRequest

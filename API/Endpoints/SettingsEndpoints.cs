@@ -12,8 +12,7 @@ public static class SettingsEndpoints
         // request with an attacker-chosen string. Neither should be reachable by a Contributor.
         var group = app.MapGroup("/settings")
             .RequireAuthorization("Admin")
-            .WithTags("Settings")
-            .WithOpenApi();
+            .WithTags("Settings");
 
         group.MapGet("/", GetSettings)
              .Produces<SettingsContract>(StatusCodes.Status200OK)
@@ -53,6 +52,7 @@ public static class SettingsEndpoints
             RawgApiKeyIsSet = key is not null,
             RawgApiKeyMasked = Mask(key),
             AllowedFileTypes = [.. await settings.GetAllowedFileTypesAsync()],
+            MaxUploadSizeMb = await settings.GetMaxUploadSizeMbAsync(),
         };
     }
 
@@ -97,6 +97,18 @@ public static class SettingsEndpoints
                 return Results.BadRequest("At least one file type must be allowed, or nothing could be uploaded.");
 
             await settings.SetAsync(SettingsService.AllowedFileTypesKey, string.Join(',', normalised));
+        }
+
+        if (request.MaxUploadSizeMb is { } maxUploadSizeMb)
+        {
+            if (maxUploadSizeMb < 0)
+                return Results.BadRequest("The maximum upload size cannot be negative. Use 0 for no limit.");
+
+            // Stored even when it is 0, rather than deleted to fall back to the default. They happen
+            // to mean the same thing today, but "an admin chose no limit" and "nobody has touched
+            // this" should not be indistinguishable in the database.
+            await settings.SetAsync(SettingsService.MaxUploadSizeMbKey,
+                maxUploadSizeMb.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         return Results.Ok(await BuildContract(settings));

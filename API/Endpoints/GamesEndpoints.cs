@@ -1,5 +1,6 @@
 ﻿using API.Models.Games;
 using API.Services;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 
 namespace API.Endpoints;
@@ -18,19 +19,31 @@ public static class GamesEndpoints
         // request falls through to MapFallbackToFile and comes back 200 text/html, so the caller sees
         // success and tries to parse the SPA shell as JSON.
         var group = app.MapGroup("/GTGames")
-            .WithTags("GameTown Games")
-            .WithOpenApi()
+            .WithTags("GameTown Games")
             .WithDescription("Endpoints for managing games in GameTown.");
         group.MapPost("/Add", AddGameWithFile)
+            // Describes the body for OpenAPI only. The handler does NOT model-bind it — see
+            // AddGameWithFile — because binding an IFormFile buffers the whole archive to a temp
+            // file first. AddGameWithFileForm exists purely to keep the documented shape honest.
             .Accepts<AddGameWithFileForm>("multipart/form-data")
             .RequireAuthorization("Contributor")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
+            .Produces(StatusCodes.Status409Conflict)
+            .Produces(StatusCodes.Status413PayloadTooLarge)
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("AddGame")
             .WithDescription("Uploads a zipped game data file.")
             .DisableAntiforgery();
+        // A literal segment, so routing prefers it over "/{id}" below — the same reason
+        // "/download/{id}" works. Contributor rather than anonymous: only uploaders need it, and it
+        // reports how the server is configured.
+        group.MapGet("/upload-limits", GetUploadLimits)
+            .RequireAuthorization("Contributor")
+            .Produces<UploadLimitsContract>(StatusCodes.Status200OK)
+            .WithName("GetUploadLimits")
+            .WithDescription("The upload size ceiling and file-type allowlist currently in force.");
         // Browsing and downloading are public by design (anyone on the LAN); everything that
         // mutates requires Contributor. The global fallback policy means the reads below have to
         // opt out explicitly.
@@ -156,53 +169,112 @@ public static class GamesEndpoints
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
     }
-    private static async Task<IResult> AddGameWithFile([FromForm] AddGameWithFileForm form, GTGamesService _gameService, FileService _fileService, SettingsService _settings)
-    {
-        if (form.File == null)
-            return Results.BadRequest("No file uploaded.");
-
-        // The allowlist is configurable (admin settings) rather than hard-coded, and it is checked
-        // HERE rather than only in the browser: the file picker's accept filter is a convenience,
-        // not a control, since anything can POST to this endpoint directly.
-        var fileExtension = Path.GetExtension(form.File.FileName).ToLowerInvariant();
-        if (!await _fileService.IsAllowedFileTypeAsync(form.File.FileName))
+    private static async Task<IResult> GetUploadLimits(SettingsService _settings)
+        => Results.Ok(new UploadLimitsContract
         {
-            var allowed = string.Join(", ", await _settings.GetAllowedFileTypesAsync());
-            return Results.BadRequest($"Invalid file format. Allowed types: {allowed}.");
+            MaxUploadSizeMb = await _settings.GetMaxUploadSizeMbAsync(),
+            AllowedFileTypes = [.. await _settings.GetAllowedFileTypesAsync()],
+        });
+
+    /// <summary>
+    /// Takes HttpContext rather than a bound [FromForm] model on purpose.
+    ///
+    /// Model binding an IFormFile spools the entire archive to Path.GetTempPath() before the handler
+    /// runs, and the handler then had to copy it again into GameFilesPath — a second full pass over
+    /// every byte that could only begin after the last one arrived. That silent window is what a
+    /// reverse proxy in front of GameTown times out on. ArchiveUpload streams the body to its final
+    /// location instead; see that class for the full reasoning.
+    /// </summary>
+    private static async Task<IResult> AddGameWithFile(
+        HttpContext context, GTGamesService _gameService, FileService _fileService, SettingsService _settings)
+    {
+        var limitBytes = await _settings.GetMaxUploadSizeBytesAsync();
+
+        // Kestrel's own ceiling, raised or lowered per request from the admin setting. Set before a
+        // byte of the body is read, because the feature goes read-only once reading starts.
+        //
+        // ArchiveUpload counts bytes as well and would catch an oversized upload on its own; this is
+        // here because Kestrel can abort at the transport level, without the application having to
+        // read and discard the rest of a body it has already decided to reject. Absent under
+        // TestServer, hence the null check.
+        var sizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (sizeFeature is { IsReadOnly: false })
+            sizeFeature.MaxRequestBodySize = limitBytes;
+
+        // Fast path for the common case of a client that declares its size honestly: reject before
+        // reading rather than after receiving the whole thing.
+        if (limitBytes is not null && context.Request.ContentLength > limitBytes)
+            return Results.Json(ArchiveUpload.TooLargeMessage(limitBytes.Value),
+                statusCode: StatusCodes.Status413PayloadTooLarge);
+
+        var upload = await ArchiveUpload.ReadAsync(
+            context.Request, _fileService, _settings, context.RequestAborted);
+
+        if (!upload.Success)
+            return Results.Json(upload.Error, statusCode: upload.StatusCode);
+
+        // Validated after the body has been read, not before: the title arrives in that same body.
+        // Previously a missing title reached the database and came back as a 500.
+        var title = upload.Field("title")?.Trim();
+        if (string.IsNullOrEmpty(title))
+        {
+            TryDeleteArchive(upload.StoredPath);
+            return Results.BadRequest("A title is required.");
         }
 
-
-        // Never build a path from the client-supplied name: identically named uploads would
-        // overwrite each other, and "../" would escape GameFilesPath entirely. The friendly name
-        // shown on download is derived from the game's Title instead.
-        var storedFileName = $"{Guid.NewGuid()}{fileExtension}";
-        var filePath = await _fileService.GetGameFilePathAsync(storedFileName);
-        using (var stream = new FileStream(filePath, FileMode.Create))
+        // The dedupe guard. Its motivating case is a retry that should never have happened: a long
+        // upload outlives a reverse proxy's read timeout, the browser reports a network error, the
+        // server completes anyway, and the contributor uploads the same archive again — ending up
+        // with two library entries and two copies on disk.
+        //
+        // Checked here rather than up front because the identity being matched is the file's
+        // content, which is not known until the last byte has arrived. The upload is therefore not
+        // saved by this, only the library and the disk.
+        //
+        // Not enforced by a UNIQUE index: that would turn two people uploading the same archive in
+        // the same instant into a 500, and a retry — the case this exists for — is sequential by
+        // definition, so the read-then-write window is not one a real workflow reaches.
+        var duplicateOf = await _gameService.FindTitleByArchiveHash(upload.Sha256);
+        if (duplicateOf is not null)
         {
-            await form.File.CopyToAsync(stream);
+            TryDeleteArchive(upload.StoredPath);
+            return Results.Json(
+                $"That exact archive is already in the library as '{duplicateOf}'. "
+                + "If an earlier upload appeared to fail, it did not — the game is there. "
+                + "Delete that entry first if you meant to replace it.",
+                statusCode: StatusCodes.Status409Conflict);
         }
 
         var game = new RequestGameTownGameDTO
         {
-            Title = form.Title,
-            HowTo = form.HowTo,
-            RAWGGameId = form.RAWGGameId
+            Title = title,
+            HowTo = upload.Field("howTo") ?? string.Empty,
+            RAWGGameId = upload.Field("rawgGameId")
         };
 
         try
         {
-            var fileSizeMb = form.File.Length / (1024.0 * 1024.0);
-            await _gameService.AddGame(game, filePath, fileSizeMb);
+            await _gameService.AddGame(game, upload.StoredPath, upload.Bytes / (1024.0 * 1024.0), upload.Sha256);
         }
         catch (KeyNotFoundException ex)
         {
+            // The archive is already on disk at this point. Nothing references it if the row was not
+            // written, so leaving it would silently consume the disk this endpoint exists to fill
+            // carefully.
+            TryDeleteArchive(upload.StoredPath);
             return Results.NotFound(ex.Message);
         }
         catch (Exception ex)
         {
+            TryDeleteArchive(upload.StoredPath);
             return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
         return Results.NoContent();
+    }
+
+    private static void TryDeleteArchive(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }
     }
     private static async Task<IResult> DownloadGame(string id, GTGamesService service, FileService _fileService)
     {

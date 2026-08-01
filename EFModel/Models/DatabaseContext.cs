@@ -39,6 +39,8 @@ public partial class DatabaseContext : DbContext
         {
             entity.ToTable("GameTownGame");
 
+            entity.HasIndex(e => e.ArchiveSha256, "IX_GameTownGame_ArchiveSha256");
+
             entity.HasIndex(e => e.Title, "IX_GameTownGame_Title");
 
             entity.Property(e => e.Id)

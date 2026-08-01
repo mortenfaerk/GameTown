@@ -176,6 +176,41 @@ else if (Tab == "uploads")
             </div>
         </div>
     </div>
+
+    <div class="card mt-4">
+        <div class="card-body">
+            <h5 class="card-title">Maximum upload size</h5>
+            <p class="text-secondary small">
+                The largest archive a contributor may upload. <strong>0 means no limit</strong>, which
+                is the default. Enforced against the bytes as they arrive, so a client that
+                understates the size of its file is still stopped.
+            </p>
+
+            <div class="alert alert-secondary small">
+                A reverse proxy in front of GameTown has its own limit, and it wins — it rejects the
+                request before GameTown ever sees it. nginx (including Nginx Proxy Manager) defaults
+                to <strong>1 MB</strong> and answers with a 413. Set
+                <code>client_max_body_size 0;</code> there and let this setting be the real ceiling.
+            </div>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label" for="max-upload-size">Maximum size (MB)</label>
+                    <input id="max-upload-size" type="number" min="0" step="1" class="form-control"
+                           @bind="MaxUploadSizeMb" />
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-primary" @onclick="SaveMaxUploadSize" disabled="@Busy">Save</button>
+                </div>
+            </div>
+
+            <p class="text-secondary small mt-2 mb-0">
+                @(MaxUploadSizeMb <= 0
+                    ? "Currently unlimited."
+                    : $"Currently {MaxUploadSizeMb} MB.")
+            </p>
+        </div>
+    </div>
 }
 
 @code {
@@ -190,6 +225,7 @@ else if (Tab == "uploads")
     private string RawgApiKey = string.Empty;
     private List<string> AllowedFileTypes = [];
     private string NewType = string.Empty;
+    private long MaxUploadSizeMb;
 
     private PathCheckResult? PathCheck;
     private RawgKeyCheckResult? KeyCheck;
@@ -213,6 +249,7 @@ else if (Tab == "uploads")
         Current = settings;
         GameFilesPath = settings.GameFilesPath;
         AllowedFileTypes = [.. settings.AllowedFileTypes];
+        MaxUploadSizeMb = settings.MaxUploadSizeMb;
         RawgApiKey = string.Empty;
     }
 
@@ -234,6 +271,18 @@ else if (Tab == "uploads")
 
     private async Task SaveUploads()
         => await Save(new SettingsUpdateRequest { AllowedFileTypes = AllowedFileTypes }, "Allowed file types saved.");
+
+    private async Task SaveMaxUploadSize()
+    {
+        if (MaxUploadSizeMb < 0)
+        {
+            Error = "Enter 0 for no limit, or a positive number of megabytes.";
+            return;
+        }
+
+        await Save(new SettingsUpdateRequest { MaxUploadSizeMb = MaxUploadSizeMb },
+            MaxUploadSizeMb == 0 ? "Upload size limit removed." : $"Upload size limit set to {MaxUploadSizeMb} MB.");
+    }
 
     private async Task Save(SettingsUpdateRequest request, string success)
     {

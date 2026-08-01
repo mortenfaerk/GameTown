@@ -63,7 +63,11 @@ public class RAWGService(SettingsService _settings, DatabaseContext _context)
         int foundCount = result.Count;
         screenshots = result.Results.ToList();
 
-        while (result.Next != null && screenshots.Count < foundCount)
+        // `result?` rather than `result`: the loop body reassigns it from a deserialise that can
+        // return null, and the next iteration's condition would then throw. The guard below only
+        // skips the AddRange, so an unparseable page part-way through pagination — RAWG returning an
+        // error body, say — used to take the whole request down with a NullReferenceException.
+        while (result?.Next != null && screenshots.Count < foundCount)
         {
             request = new RestRequest(result.Next, Method.Get).AddParameter("key", await GetApiKeyAsync());
             response = await client.ExecuteAsync(request);

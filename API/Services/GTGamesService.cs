@@ -24,14 +24,14 @@ namespace API.Services
         {
             var game = await _context.GameTownGames
                                                 .Include(g => g.Rawggame)
-                                                .ThenInclude(r => r.Developers)
+                                                .ThenInclude(r => r!.Developers)
                                                 .Include(g => g.Rawggame)
-                                                .ThenInclude(r => r.Genres)
+                                                .ThenInclude(r => r!.Genres)
                                                 // Screenshots were missing here while the paged and
                                                 // search queries both loaded them, so the detail
                                                 // page — the one screen that shows them — got none.
                                                 .Include(g => g.Rawggame)
-                                                .ThenInclude(r => r.Screenshots)
+                                                .ThenInclude(r => r!.Screenshots)
                                                 .AsSplitQuery()
                                                 .SingleOrDefaultAsync(g => g.Id == id);
             if (game == null)   
@@ -52,7 +52,7 @@ namespace API.Services
         }
         public async Task RemoveGameById(Guid id)
         {
-            var game = await _context.GameTownGames.Include(g=>g.Rawggame).ThenInclude(rg=>rg.Screenshots).FirstOrDefaultAsync(g=>g.Id == id) ?? throw new KeyNotFoundException($"Game with ID {id} not found.");
+            var game = await _context.GameTownGames.Include(g=>g.Rawggame).ThenInclude(rg => rg!.Screenshots).FirstOrDefaultAsync(g=>g.Id == id) ?? throw new KeyNotFoundException($"Game with ID {id} not found.");
 
             // Rawggame is null for games uploaded without RAWG metadata. The screenshots also hang
             // off the shared RAWG record, so only bin the image files once no other GameTown game
@@ -102,7 +102,23 @@ namespace API.Services
             await _context.SaveChangesAsync();
 
         }
-        public async Task AddGame(RequestGameTownGameDTO game, string fileUrl, double fileSize)
+        /// <summary>
+        /// The title of the game already holding this archive hash, or null if it is new.
+        ///
+        /// Games uploaded before migration 003 have no hash recorded and are deliberately not
+        /// matched — the null check keeps them from all colliding with each other.
+        /// </summary>
+        public async Task<string?> FindTitleByArchiveHash(string sha256)
+        {
+            if (string.IsNullOrEmpty(sha256)) return null;
+
+            return await _context.GameTownGames
+                .Where(g => g.ArchiveSha256 != null && g.ArchiveSha256 == sha256)
+                .Select(g => g.Title)
+                .FirstOrDefaultAsync();
+        }
+
+        public async Task AddGame(RequestGameTownGameDTO game, string fileUrl, double fileSize, string? archiveSha256 = null)
         {
             var newGame = new GameTownGame
             {
@@ -110,7 +126,8 @@ namespace API.Services
                 Title = game.Title,
                 HowTo = game.HowTo,
                 Url = fileUrl,
-                Size = fileSize
+                Size = fileSize,
+                ArchiveSha256 = string.IsNullOrEmpty(archiveSha256) ? null : archiveSha256
             };
             if (game.RAWGGameId != null)
             {
@@ -148,11 +165,11 @@ namespace API.Services
                 throw new ArgumentOutOfRangeException("Page and page size must be greater than zero.");
             var games = await _context.GameTownGames
                 .Include(g => g.Rawggame)
-                .ThenInclude(r => r.Developers)
+                .ThenInclude(r => r!.Developers)
                 .Include(g => g.Rawggame)
-                .ThenInclude(r => r.Genres)
+                .ThenInclude(r => r!.Genres)
                 .Include(g => g.Rawggame)
-                                    .ThenInclude(r => r.Screenshots)
+                                    .ThenInclude(r => r!.Screenshots)
                 // Paging without an ORDER BY leaves the order up to Postgres, so a game could appear
                 // on two pages or on none. Title is the order the shelf is presented in anyway.
                 .OrderBy(g => g.Title)
@@ -178,11 +195,11 @@ namespace API.Services
 
             var games = await _context.GameTownGames
                 .Include(g => g.Rawggame)
-                    .ThenInclude(r => r.Developers)
+                    .ThenInclude(r => r!.Developers)
                 .Include(g => g.Rawggame)
-                    .ThenInclude(r => r.Genres)
+                    .ThenInclude(r => r!.Genres)
                 .Include(g=>g.Rawggame)
-                                    .ThenInclude(r => r.Screenshots)
+                                    .ThenInclude(r => r!.Screenshots)
                 .Where(g => g.Title.ToLower().Contains(lowerQuery))
                 .OrderBy(g => g.Title)
                 .Skip((page - 1) * pageSize)

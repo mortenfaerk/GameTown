@@ -39,12 +39,18 @@
         <label class="form-label" for="game-file">Game archive</label>
         @* @ref so the raw <input> can be handed to the JS uploader. *@
         <InputFile id="game-file" @ref="fileInput" class="form-control"
-                   OnChange="OnFileSelected" accept=".zip,.rar,.7z" disabled="@Busy" />
+                   OnChange="OnFileSelected" accept="@AcceptAttribute" disabled="@Busy" />
         @if (SelectedFile is not null)
         {
             <div class="form-text">@SelectedFile.Name — @FormatSize(SelectedFile.Size)</div>
         }
-        <div class="form-text">Allowed formats: .zip, .rar, .7z</div>
+        <div class="form-text">
+            Allowed formats: @string.Join(", ", AllowedExtensions).
+            @if (MaxUploadBytes > 0)
+            {
+                @($" Maximum size: {Limits!.MaxUploadSizeMb} MB.")
+            }
+        </div>
     </div>
 
     <div class="mb-3">
@@ -66,28 +72,37 @@
     {
         <div class="upload mb-3">
             <div class="d-flex justify-content-between align-items-baseline mb-1">
-                <span class="gt-data">
-                    @if (TotalBytes > 0)
-                    {
-                        @($"{Percent}% · {FormatSize(UploadedBytes)} of {FormatSize(TotalBytes)}")
-                    }
-                    else
-                    {
-                        @("Starting upload…")
-                    }
-                </span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="Cancel">Cancel</button>
+                <span class="gt-data">@StatusText</span>
+                @* Hidden once the body is sent. Aborting the XHR at that point does not stop the
+                   server — it only throws away the answer, leaving the contributor unsure whether
+                   the game was added and likely to upload it a second time. *@
+                @if (!Processing)
+                {
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="Cancel">Cancel</button>
+                }
             </div>
 
-            <div class="progress" role="progressbar" aria-label="Upload progress"
+            <div class="progress" role="progressbar" aria-label="@(Processing ? "Server processing" : "Upload progress")"
                  aria-valuenow="@Percent" aria-valuemin="0" aria-valuemax="100">
-                <div class="progress-bar @(TotalBytes > 0 ? "" : "progress-bar-striped progress-bar-animated")"
-                     style="width: @(TotalBytes > 0 ? Percent : 100)%"></div>
+                <div class="progress-bar @(Indeterminate ? "progress-bar-striped progress-bar-animated" : "")"
+                     style="width: @(Indeterminate ? 100 : Percent)%"></div>
             </div>
 
-            @if (Percent >= 100)
+            @if (Processing)
             {
-                <p class="gt-data mt-1 mb-0">Transfer complete — the server is still saving it.</p>
+                @* There is no real percentage to show here. The server writes the archive as it
+                   arrives, so by this point the remaining work is the database row plus any RAWG
+                   artwork download — neither of which reports progress. An honest indeterminate bar
+                   with an elapsed clock beats a fake percentage. *@
+                <p class="gt-data mt-1 mb-0">
+                    Transfer complete — the server is saving
+                    @(SelectedRawgGame is null ? "the game" : "the game and fetching artwork from RAWG").
+                    @FormatElapsed(ProcessingSeconds) elapsed.
+                </p>
+                @if (ProcessingSeconds >= 20)
+                {
+                    <p class="gt-muted mb-0">Leave this page open — closing it will not cancel it, but you will not see the result.</p>
+                }
             }
         </div>
     }
@@ -113,7 +128,37 @@
 
     private int Percent => TotalBytes > 0 ? (int)(UploadedBytes * 100 / TotalBytes) : 0;
 
-    private static readonly string[] AllowedExtensions = [".zip", ".rar", ".7z"];
+    /// <summary>True once the last byte is sent and the server has yet to answer.</summary>
+    private bool Processing;
+    private int ProcessingSeconds;
+    private CancellationTokenSource? processingClock;
+
+    /// <summary>Striped and animated when there is no meaningful percentage to show.</summary>
+    private bool Indeterminate => Processing || TotalBytes == 0;
+
+    private string StatusText => Processing
+        ? "Saving on the server…"
+        : TotalBytes > 0
+            ? $"{Percent}% · {FormatSize(UploadedBytes)} of {FormatSize(TotalBytes)}"
+            : "Starting upload…";
+
+    private UploadLimitsContract? Limits;
+
+    // Fallbacks for the case where the limits could not be fetched. Permissive on purpose: the
+    // server enforces both regardless, and guessing a stricter rule here would block uploads the
+    // server would have accepted.
+    private static readonly string[] FallbackExtensions = [".zip", ".rar", ".7z"];
+
+    private string[] AllowedExtensions =>
+        Limits is { AllowedFileTypes.Count: > 0 } ? [.. Limits.AllowedFileTypes] : FallbackExtensions;
+
+    private string AcceptAttribute => string.Join(",", AllowedExtensions);
+
+    /// <summary>Zero means the server has no ceiling configured.</summary>
+    private long MaxUploadBytes => (Limits?.MaxUploadSizeMb ?? 0) * 1024L * 1024L;
+
+    protected override async Task OnInitializedAsync()
+        => Limits = await GamesService.GetUploadLimits();
 
     private void OnFileSelected(InputFileChangeEventArgs e)
     {
@@ -139,8 +184,51 @@
     {
         UploadedBytes = loaded;
         TotalBytes = total;
+
+        // The browser fires a final progress event when the last byte goes out, and everything after
+        // it is server-side work the client cannot see. That transition is the only signal available
+        // for switching the UI over, so take it — but only once; the event can repeat at 100%.
+        if (!Processing && total > 0 && loaded >= total)
+            StartProcessingClock();
+
         StateHasChanged();
         return Task.CompletedTask;
+    }
+
+    private void StartProcessingClock()
+    {
+        Processing = true;
+        ProcessingSeconds = 0;
+        processingClock = new CancellationTokenSource();
+        _ = TickAsync(processingClock.Token);
+    }
+
+    // Not a System.Threading.Timer: on WASM there is one thread, and a plain awaited loop keeps
+    // every mutation on the same context the renderer runs on.
+    private async Task TickAsync(CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(1000, token);
+                ProcessingSeconds++;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Upload finished or the page went away.
+        }
+    }
+
+    private void StopProcessingClock()
+    {
+        processingClock?.Cancel();
+        processingClock?.Dispose();
+        processingClock = null;
+        Processing = false;
+        ProcessingSeconds = 0;
     }
 
     private async Task Submit()
@@ -155,9 +243,19 @@
         }
 
         var extension = Path.GetExtension(SelectedFile.Name).ToLowerInvariant();
-        if (!AllowedExtensions.Contains(extension))
+        if (!AllowedExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
         {
-            Error = "Invalid file format. Only .zip, .rar and .7z files are allowed.";
+            Error = $"Invalid file format. Allowed types: {string.Join(", ", AllowedExtensions)}.";
+            return;
+        }
+
+        // Checked before the upload starts, not after. Both this and the type check above are
+        // courtesies — the server enforces the same two rules — but without them a contributor
+        // spends twenty minutes uploading an archive only to be told the size limit at the end.
+        if (MaxUploadBytes > 0 && SelectedFile.Size > MaxUploadBytes)
+        {
+            Error = $"That file is {FormatSize(SelectedFile.Size)}, over this server's "
+                  + $"{Limits!.MaxUploadSizeMb} MB upload limit.";
             return;
         }
 
@@ -174,6 +272,8 @@
             GamesService.GetAddGameUrl(),
             Request,
             selfRef);
+
+        StopProcessingClock();
 
         if (result.Success)
         {
@@ -197,6 +297,7 @@
     public async ValueTask DisposeAsync()
     {
         // Abort anything still running, or the upload outlives the page it belongs to.
+        StopProcessingClock();
         await UploadService.AbortAsync();
         selfRef?.Dispose();
     }
@@ -206,4 +307,7 @@
         double mb = bytes / (1024.0 * 1024.0);
         return mb < 1 ? $"{bytes / 1024.0:0.#} KB" : $"{mb:0.##} MB";
     }
+
+    private static string FormatElapsed(int seconds)
+        => seconds < 60 ? $"{seconds}s" : $"{seconds / 60}m {seconds % 60:00}s";
 }

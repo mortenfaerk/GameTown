@@ -54,6 +54,76 @@ public class SchemaTests
     }
 
     /// <summary>
+    /// The question every schema change has to answer: does a real, populated, already-deployed
+    /// install survive the upgrade?
+    ///
+    /// Set up as a v0.1.1 appliance actually is — schema at version 2, with a library in it — rather
+    /// than as a fresh test database, because "the migration runs" and "the migration runs without
+    /// destroying anything" are different claims and only the second one matters to an operator.
+    /// Data is asserted intact field by field, not just counted.
+    /// </summary>
+    [Fact]
+    public async Task A_populated_install_at_version_2_upgrades_without_losing_its_library()
+    {
+        using var app = new GameTownApp();
+
+        // Bring the database to exactly version 2: the state of an install running the last release.
+        app.RunSql(GameTownApp.SchemaFile(Path.Combine("migrations", "002_game_title_index.sql")));
+        app.QueryScalar(@"INSERT INTO ""SchemaVersion"" (""Version"") VALUES (2)");
+
+        // A library that predates the new column. GUID literal uppercase — EF writes them that way
+        // and SQLite compares TEXT binary.
+        app.QueryScalar("""
+            INSERT INTO "GameTownGame" ("Id","Title","HowTo","RAWGGameId","URL","Size")
+            VALUES ('11111111-1111-1111-1111-111111111111','Existing Game','Unzip it',NULL,
+                    '/var/lib/gametown/games/abc.zip', 1234.5)
+            """);
+
+        Assert.Equal("2", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+
+        // Booting the new build is the upgrade.
+        using (var client = app.CreateBrowser()) await client.GetAsync("/");
+
+        Assert.Equal("3", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+
+        // The row is untouched, and the new column is present and NULL rather than backfilled.
+        Assert.Equal("Existing Game|Unzip it|/var/lib/gametown/games/abc.zip|1234.5|",
+            app.QueryScalar("""
+                SELECT "Title"||'|'||"HowTo"||'|'||"URL"||'|'||"Size"||'|'||COALESCE("ArchiveSha256",'')
+                FROM "GameTownGame" WHERE "Id" = '11111111-1111-1111-1111-111111111111'
+                """));
+
+        // And nothing else was rebuilt on the way past.
+        Assert.Equal("1", app.QueryScalar(@"SELECT COUNT(*) FROM ""GameTownGame"""));
+        Assert.Equal("2", app.QueryScalar(@"SELECT COUNT(*) FROM ""GameTownRoles"""));
+    }
+
+    /// <summary>
+    /// Rolling back to the previous release after the upgrade has run. The old binary knows nothing
+    /// about version 3 or the new column, and must simply leave both alone rather than trying to
+    /// "fix" the database it does not recognise.
+    /// </summary>
+    [Fact]
+    public async Task A_database_ahead_of_the_binary_is_left_alone()
+    {
+        using var app = new GameTownApp();
+        using (var client = app.CreateBrowser()) await client.GetAsync("/");
+
+        // Pretend a future release has been and gone.
+        app.QueryScalar(@"INSERT INTO ""SchemaVersion"" (""Version"") VALUES (99)");
+
+        var before = app.QueryScalar(
+            @"SELECT COUNT(*)||'/'||MAX(""Version"") FROM ""SchemaVersion""");
+
+        API.Startup.SchemaMigrator.ApplyMigrations(
+            API.Startup.SqliteConnectionString.WithRequiredPragmas($"Data Source={app.DatabasePath}"),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+
+        Assert.Equal(before, app.QueryScalar(
+            @"SELECT COUNT(*)||'/'||MAX(""Version"") FROM ""SchemaVersion"""));
+    }
+
+    /// <summary>
     /// The failure this design exists to prevent: the frozen baseline and the numbered migrations
     /// drifting apart. It would only ever show on upgraded installs, never in development — so the
     /// two paths are compared directly.

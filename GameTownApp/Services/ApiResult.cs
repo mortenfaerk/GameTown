@@ -47,20 +47,41 @@ public class ApiResult
 
     private static string ExtractError(string? rawBody, int status)
     {
-        if (status == 401) return "You are not signed in.";
-        if (status == 403) return "You do not have permission to do that.";
-        if (status == 413) return "That file is too large for the server to accept.";
+        var message = TryReadMessage(rawBody);
 
+        // The fallbacks matter as much as the message. 401 and 403 come from the auth middleware
+        // with no body at all, and a 413 may not be ours: a reverse proxy over its own
+        // client_max_body_size answers with an HTML error page before the request ever reaches
+        // GameTown, so there is no JSON to read and the generic wording has to carry it.
+        return status switch
+        {
+            401 => "You are not signed in.",
+            403 => "You do not have permission to do that.",
+            // 409 always carries our own explanation of what already exists — that IS the message,
+            // so there is nothing useful to fall back to beyond saying so.
+            409 => message ?? "That already exists.",
+            413 => message ?? "That file is too large for the server to accept. "
+                            + "If GameTown is behind a reverse proxy, its upload limit is lower than GameTown's.",
+            _ => message ?? $"Request failed ({status})."
+        };
+    }
+
+    /// <summary>
+    /// Pulls a human-readable message out of a response body, or null when there is nothing safe to
+    /// show.
+    /// </summary>
+    private static string? TryReadMessage(string? rawBody)
+    {
         var body = (rawBody ?? string.Empty).Trim();
         if (string.IsNullOrEmpty(body))
-            return $"Request failed ({status}).";
+            return null;
 
         try
         {
             using var doc = JsonDocument.Parse(body);
 
             if (doc.RootElement.ValueKind == JsonValueKind.String)
-                return doc.RootElement.GetString() ?? body;
+                return doc.RootElement.GetString();
 
             if (doc.RootElement.ValueKind == JsonValueKind.Object)
             {
@@ -72,9 +93,16 @@ public class ApiResult
         }
         catch (JsonException)
         {
-            // Not JSON — fall through and show the raw body.
+            // Not JSON — a plain-text body is still worth showing, subject to the guards below.
         }
 
-        return body;
+        // Markup is never a message. Two things upstream of this produce HTML on an error path: a
+        // reverse proxy's own error page, and MapFallbackToFile handing back the SPA shell for a
+        // route that did not match. Both would put a whole web page in the alert banner.
+        if (body.StartsWith('<'))
+            return null;
+
+        // Nor is anything of essay length; that is a stack trace or a dump, not a sentence.
+        return body.Length > 500 ? null : body;
     }
 }

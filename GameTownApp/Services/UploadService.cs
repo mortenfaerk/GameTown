@@ -48,11 +48,23 @@ public class UploadService(IJSRuntime js) : IAsyncDisposable
             if (response.Aborted)
                 return ApiResult.Failed("Upload cancelled.");
 
+            // A transport failure carries no status code, so it cannot go through FromStatus. The
+            // most common cause by far is a reverse proxy in front of GameTown closing the
+            // connection — over its body-size limit, or past its read timeout — so the message says
+            // so rather than blaming the network in general.
+            if (response.NetworkError)
+                return ApiResult.Failed(
+                    "The upload could not reach the server — the connection was closed before it finished. "
+                    + "If GameTown is behind a reverse proxy, check its upload size and timeout limits.");
+
             return ApiResult.FromStatus(response.Status, response.Body);
         }
-        catch (JSException ex)
+        catch (JSException)
         {
-            return ApiResult.Failed(ex.Message);
+            // Deliberately not ex.Message. Blazor composes that from the JavaScript Error object, so
+            // it carries the module's file name, line number and call stack — which is exactly what
+            // used to be shown to the user in the error banner.
+            return ApiResult.Failed("The upload could not be started. Reload the page and try again.");
         }
     }
 
@@ -71,5 +83,5 @@ public class UploadService(IJSRuntime js) : IAsyncDisposable
         _module = null;
     }
 
-    private sealed record UploadResponse(int Status, string? Body, bool Aborted);
+    private sealed record UploadResponse(int Status, string? Body, bool Aborted, bool NetworkError);
 }

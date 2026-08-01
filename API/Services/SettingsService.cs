@@ -25,10 +25,17 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     public const string GameFilesPathKey = "GameFilesPath";
     public const string RawgApiKeyKey = "RAWGApiKey";
     public const string AllowedFileTypesKey = "AllowedFileTypes";
+    public const string MaxUploadSizeMbKey = "MaxUploadSizeMb";
 
     /// <summary>Archive extensions accepted by the upload endpoint when nothing is configured.</summary>
     public static readonly string[] DefaultAllowedFileTypes =
         [".zip", ".7z", ".rar", ".tar", ".gz", ".iso"];
+
+    /// <summary>
+    /// No ceiling by default, which is what the application did before this setting existed — an
+    /// upgrade must not start rejecting archives an install has been accepting for months.
+    /// </summary>
+    public const long DefaultMaxUploadSizeMb = 0;
 
     public string DataDirectory => dataDirectory;
 
@@ -78,6 +85,35 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
         // An empty list would accept nothing at all and make uploading impossible, which is a worse
         // failure than falling back. Treat "configured to nothing" as "not configured".
         return parsed.Length == 0 ? DefaultAllowedFileTypes : parsed;
+    }
+
+    /// <summary>
+    /// Largest archive a contributor may upload, in megabytes. Zero means no ceiling.
+    ///
+    /// A stored value that will not parse is treated as unset rather than as zero, so a hand-edited
+    /// row cannot silently remove the limit an operator thought they had set.
+    /// </summary>
+    public async Task<long> GetMaxUploadSizeMbAsync()
+    {
+        var raw = await GetRawAsync(MaxUploadSizeMbKey);
+        if (raw is null) return DefaultMaxUploadSizeMb;
+
+        return long.TryParse(raw, out var megabytes) && megabytes >= 0
+            ? megabytes
+            : DefaultMaxUploadSizeMb;
+    }
+
+    /// <summary>
+    /// The same limit in bytes, or null when there is no limit.
+    ///
+    /// Null rather than long.MaxValue because that is what
+    /// <c>IHttpMaxRequestBodySizeFeature.MaxRequestBodySize</c> wants for "unlimited", and the
+    /// upload reader uses the same convention.
+    /// </summary>
+    public async Task<long?> GetMaxUploadSizeBytesAsync()
+    {
+        var megabytes = await GetMaxUploadSizeMbAsync();
+        return megabytes <= 0 ? null : megabytes * 1024L * 1024L;
     }
 
     /// <summary>

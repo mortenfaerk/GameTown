@@ -68,7 +68,9 @@ internal sealed class BearerSecuritySchemeTransformer(Microsoft.AspNetCore.Authe
             document.Components ??= new OpenApiComponents();
             document.Components.SecuritySchemes = requirements;
 
-            foreach (var operation in document.Paths.Values.SelectMany(path => path.Operations))
+            // Operations is nullable on a path item; a path with none is not an error, just nothing
+            // to attach a security requirement to.
+            foreach (var operation in document.Paths.Values.SelectMany(path => path.Operations ?? []))
             {
                 operation.Value.Security ??= [];
                 operation.Value.Security.Add(new OpenApiSecurityRequirement

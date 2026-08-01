@@ -16,7 +16,7 @@ let currentRequest = null;
  * @param {string} url                    absolute URL of the upload endpoint
  * @param {object} fields                 text form fields; keys must match the API's [FromForm(Name)]
  * @param {object} dotNetRef              receives OnUploadProgress(loaded, total)
- * @returns {Promise<{status: number, body: string, aborted: boolean}>}
+ * @returns {Promise<{status: number, body: string, aborted: boolean, networkError: boolean}>}
  */
 export function uploadGame(inputElement, url, fields, dotNetRef) {
     return new Promise((resolve, reject) => {
@@ -51,18 +51,31 @@ export function uploadGame(inputElement, url, fields, dotNetRef) {
 
         xhr.onload = () => {
             currentRequest = null;
-            resolve({ status: xhr.status, body: xhr.responseText ?? "", aborted: false });
+            resolve({ status: xhr.status, body: xhr.responseText ?? "", aborted: false, networkError: false });
         };
 
+        // Resolved, not rejected. A rejected promise reaches .NET as a JSException whose Message is
+        // built from the JavaScript Error — including its stack — and that string was going straight
+        // into the user-facing error banner ("uploadGame/</xhr.onerror@…/upload.js:60:20"). Reporting
+        // the failure as data keeps the wording in C# where the rest of it lives.
+        //
+        // No status is available on a transport failure, hence the flag rather than a status code.
         xhr.onerror = () => {
             currentRequest = null;
-            // Status is unavailable on a transport failure; the caller reports it as a network error.
-            reject(new Error("The upload could not reach the server."));
+            resolve({ status: 0, body: "", aborted: false, networkError: true });
+        };
+
+        // Nothing sets xhr.timeout today, so this cannot fire. It is wired anyway because the
+        // failure mode if someone ever does set it is a promise that never settles — the upload
+        // would appear to hang forever with no error.
+        xhr.ontimeout = () => {
+            currentRequest = null;
+            resolve({ status: 0, body: "", aborted: false, networkError: true });
         };
 
         xhr.onabort = () => {
             currentRequest = null;
-            resolve({ status: 0, body: "", aborted: true });
+            resolve({ status: 0, body: "", aborted: true, networkError: false });
         };
 
         xhr.send(form);

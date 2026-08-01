@@ -21,6 +21,16 @@ SchemaMigrator.ApplyMigrations(
         builder.Configuration.GetConnectionString("DefaultConnection")),
     app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("SchemaMigrator"));
 
+// Also before anything serves a request, and for the same kind of reason: an upload interrupted by
+// the process dying leaves a ".part" file that nothing references and nothing else will ever remove.
+// Doing it here rather than on a timer is what lets it delete every one it finds — see the method.
+using (var scope = app.Services.CreateScope())
+{
+    await API.Services.ArchiveUpload.SweepAbandonedPartsAsync(
+        scope.ServiceProvider.GetRequiredService<API.Services.FileService>(),
+        app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("ArchiveUpload"));
+}
+
 app.UseOpenApi();
 
 // Serves the Blazor WASM bundle from this project. Must precede UseStaticFiles so the

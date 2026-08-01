@@ -82,6 +82,19 @@ public class GamesService(HttpClient http)
     /// </summary>
     public string GetAddGameUrl() => $"{_http.BaseAddress}GTGames/Add";
 
+    /// <summary>
+    /// What the server will accept, so the upload form can refuse a file before sending it rather
+    /// than after. Null if it could not be fetched — callers fall back to permissive defaults and
+    /// let the server be the one to say no, which it does regardless.
+    /// </summary>
+    public async Task<UploadLimitsContract?> GetUploadLimits()
+    {
+        var response = await _http.GetAsync("/GTGames/upload-limits");
+        return response.IsSuccessStatusCode
+            ? await response.Content.ReadFromJsonAsync<UploadLimitsContract>()
+            : null;
+    }
+
     public async Task<ApiResult> UpdateGame(GameTownGamePatchRequest request)
         => await ApiResult.FromResponse(await _http.PatchAsJsonAsync("/GTGames/update", request));
 

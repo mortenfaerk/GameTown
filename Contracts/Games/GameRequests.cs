@@ -20,6 +20,21 @@ public class AddGameRequest
 }
 
 /// <summary>
+/// What the upload form is allowed to send, as the server currently has it configured.
+///
+/// Fetched before the file picker is used so an oversized or wrong-typed archive is refused in the
+/// browser instead of after a multi-gigabyte upload. Both limits are still enforced server-side —
+/// this is a courtesy to the user, not a control.
+/// </summary>
+public class UploadLimitsContract
+{
+    /// <summary>Megabytes. <c>0</c> means no limit.</summary>
+    public long MaxUploadSizeMb { get; set; }
+
+    public List<string> AllowedFileTypes { get; set; } = [];
+}
+
+/// <summary>
 /// Partial update of a game. Null members are left unchanged.
 ///
 /// There is deliberately no Url member: the stored path is server-generated at upload and must never

@@ -91,6 +91,43 @@ is a same-origin `SameSite=Lax` cookie, not one that requires `Secure`. It does 
 the network in the clear — to terminate TLS, put a reverse proxy in front and add
 `Environment=RequireHttps=true` to `/etc/systemd/system/gametown.service`.
 
+### Behind a reverse proxy: uploads need three settings changed
+
+GameTown sets no upload ceiling of its own by default, but a proxy in front of it has one and **the
+proxy wins** — it answers the request before GameTown ever sees it. Every default is wrong for an
+application whose main job is moving multi-gigabyte archives, and each fails in a way that looks like
+a GameTown bug:
+
+| Default | What the contributor sees |
+|---|---|
+| `client_max_body_size 1m` | *"That file is too large for the server to accept"* on anything over 1 MB |
+| `proxy_request_buffering on` | The progress bar reaches 100%, then a long silence — it measured bytes reaching the proxy's disk, not GameTown |
+| `proxy_read_timeout 60s` | *"The upload could not reach the server"* after a long upload that the server may well have completed |
+
+For nginx, including **Nginx Proxy Manager** (Advanced tab of the proxy host):
+
+```nginx
+client_max_body_size 0;
+proxy_request_buffering off;
+proxy_read_timeout 3600s;
+proxy_send_timeout 3600s;
+client_body_timeout 3600s;
+send_timeout 3600s;
+```
+
+Two things to watch:
+
+- **Do not wrap these in a `location / { }` block.** Nginx Proxy Manager inserts the Advanced text
+  inside the `server` block, and your own `location /` shadows the one it generated — taking
+  `proxy_pass` with it, so the site stops working entirely. Bare directives inherit correctly.
+- **`client_max_body_size 0` is deliberate.** It hands the size policy to GameTown, where
+  *Administer → Settings → Uploads* can set a real ceiling that produces a useful message ("that file
+  is over the 2000 MB limit") instead of an nginx error page.
+
+Caddy needs only `request_body { max_size 0 }`; it has no equivalent response timeout by default.
+Cloudflare's proxy enforces a **100 MB** upload cap on Free and Pro that no configuration removes —
+the DNS record has to be grey-clouded, or uploads sent to a hostname that bypasses it.
+
 ### Storing the archives on a network share
 
 The archive directory is the one thing people want on a NAS rather than in the container. Setting it

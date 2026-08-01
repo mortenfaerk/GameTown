@@ -12,8 +12,7 @@ namespace API.Endpoints
                // being spent by anyone who can reach the host.
                var group = app.MapGroup("meta")
                 .WithTags("Metadata")
-                     .RequireAuthorization("Contributor")
-                     .WithOpenApi()
+                     .RequireAuthorization("Contributor")
                      .WithDescription("Endpoints for managing metadata related to the application.");
                group.MapGet("/searchMetadata", SearchGame)
                 .Produces<List<RawgGameContract>>(StatusCodes.Status200OK)

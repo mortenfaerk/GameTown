@@ -9,22 +9,19 @@ public static class TestEndpoints
     public static void AddTestEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/test")
-           .WithTags("Test")
-           .WithOpenApi()
+           .WithTags("Test")
            .WithDescription("Endpoints Test during dev, only mounted if environment is set to dev!");
 
         group.MapGet("/secure-HelloWorld", GiveUserInfoBack)
             .RequireAuthorization("Admin")
             .WithTags("Test")
             .WithName("GetSecureData")
-            .Produces(StatusCodes.Status200OK)
-            .WithOpenApi();
+            .Produces(StatusCodes.Status200OK);
         group.MapPost("/add", AddUser).WithDescription("Adds a new user")
             .Accepts<UserCreationRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
-            .WithName("DEBUG: Add user")
-            .WithOpenApi();
+            .WithName("DEBUG: Add user");
     }
     private static async Task<IResult> GiveUserInfoBack(ClaimsPrincipal user)
     {

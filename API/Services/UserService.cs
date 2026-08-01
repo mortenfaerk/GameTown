@@ -6,9 +6,15 @@ using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 namespace API.Services;
 
-public class UserService(DatabaseContext dbContext)
+public class UserService(DatabaseContext dbContext, ILogger<UserService> logger)
 {
     readonly DatabaseContext _dbContext = dbContext;
+
+    // Every catch below used to swallow the exception behind a "//log `ex` here" comment, so a
+    // database failure reached the operator as "A database error occurred" and reached the journal
+    // as nothing at all. The generic message to the caller is right — it must not leak schema or
+    // connection detail — but it is only safe because the detail goes somewhere.
+    readonly ILogger<UserService> _logger = logger;
 
     public async Task<bool> CreateUser(UserCreationRequest userDTO, string creatingUser)
     {
@@ -66,7 +72,7 @@ public class UserService(DatabaseContext dbContext)
         }
         catch (Exception ex)
         {
-            //log `ex` here
+            _logger.LogError(ex, "Failed to update user.");
             return UserUpdateResult.Failed("A database error occurred while updating the user.");
         }
     }
@@ -85,7 +91,7 @@ public class UserService(DatabaseContext dbContext)
         }
         catch (Exception ex)
         {
-            //log `ex` here
+            _logger.LogError(ex, "Failed to delete user.");
             return UserDeleteResult.Failed("A database error occurred while deleting the user.");
         }
     }
@@ -124,7 +130,7 @@ public class UserService(DatabaseContext dbContext)
         }
         catch (Exception ex)
         {
-            //log `ex` here
+            _logger.LogError(ex, "Failed to add user to role.");
             return UserRoleUpdateResult.Failed("A database error occurred while adding the user to the role.");
         }
     }
@@ -149,7 +155,7 @@ public class UserService(DatabaseContext dbContext)
         }
         catch (Exception ex)
         {
-            //log `ex` here
+            _logger.LogError(ex, "Failed to remove user from role.");
             return UserRoleUpdateResult.Failed("A database error occurred while removing the user from the role.");
         }
     }
@@ -187,7 +193,7 @@ public class UserService(DatabaseContext dbContext)
         }
         catch (Exception ex)
         {
-            //log `ex` here
+            _logger.LogError(ex, "Failed to update role.");
             return RoleUpdateResult.Failed("A database error occurred while updating the role.");
         }
     }
@@ -208,7 +214,7 @@ public class UserService(DatabaseContext dbContext)
         }
         catch (Exception ex)
         {
-            //log `ex` here
+            _logger.LogError(ex, "Failed to delete role.");
             return RoleDeleteResult.Failed("A database error occurred while deleting the role.");
         }
 

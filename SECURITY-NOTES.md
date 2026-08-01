@@ -48,26 +48,40 @@ attribute dropped.
   repository, so `NU1902` on a local build is the only signal.
 - **Real class-level fix for this whole category:** a CSP (see Not done, below).
 
-### 2. No upload size limit
+### 2. Upload size limit — now available, off by default
 
-`API/Startup/DependenciesConfig.cs` sets Kestrel's `MaxRequestBodySize = null` and
-`FormOptions.MultipartBodyLengthLimit = long.MaxValue`, deliberately.
+`API/Startup/DependenciesConfig.cs` sets Kestrel's global `MaxRequestBodySize = null` and
+`FormOptions.MultipartBodyLengthLimit = long.MaxValue`, deliberately. Before that, uploads silently
+failed above **~28.6 MB** (the Kestrel default) with a 413 while the UI advertised 2 GB.
 
-Before this, uploads silently failed above **~28.6 MB** (the Kestrel default) with a 413, while the
-UI advertised 2 GB. Removing the ceiling was a deliberate choice over picking a number.
+There is now a real ceiling available: **`Administer → Settings → Uploads → Maximum upload size`**,
+stored as `MaxUploadSizeMb`. **It defaults to 0, meaning unlimited** — an upgrade must not start
+rejecting archives an install has been accepting — so the risk below is open until an operator sets
+it. Enforcement is in two places, both in the upload path:
 
-Uploading requires the `Contributor` policy, so this is **not an anonymous vector** — but there is no
-backstop against a contributor filling the disk. If GameTown ever grows untrusted contributors, put a
-ceiling back.
+- `AddGameWithFile` lowers the per-request limit through `IHttpMaxRequestBodySizeFeature` before
+  reading the body, so Kestrel can abort at the transport level.
+- `ArchiveUpload.CopyAsync` counts the bytes it actually receives. This is the one that matters:
+  `Content-Length` is written by the client and can understate the body.
 
-There *is* now a file-type allowlist (`Administer -> Settings -> Uploads`), enforced in the upload
-endpoint via `FileService.IsAllowedFileTypeAsync`. It must stay enforced server-side: the SPA also
-filters the file picker, but that is a convenience, and anything can POST to `/GTGames/Add` directly.
-The size ceiling remains the open half of this risk.
+Uploading requires the `Contributor` policy, so this is **not an anonymous vector**. With the ceiling
+at 0 there is still no backstop against a contributor filling the disk.
 
-Two disks are exposed, not one: anything over 64 KB spills to `Path.GetTempPath()` while the form is
-read, which under the unit's `PrivateTmp=true` is the service's own private tmp, before it lands in
-the archive directory. A contributor can therefore exhaust either.
+There is also a file-type allowlist (same settings tab), enforced via
+`FileService.IsAllowedFileTypeAsync` *before the first byte is written*. It must stay enforced
+server-side: the SPA also filters the file picker, but that is a convenience, and anything can POST
+to `/GTGames/Add` directly.
+
+**Only one disk is exposed now.** Uploads used to be bound as an `IFormFile`, which spooled anything
+over 64 KB to `Path.GetTempPath()` — under the unit's `PrivateTmp=true`, potentially a RAM-backed
+tmpfs — and then copied it again into the archive directory, so a contributor could exhaust either.
+`ArchiveUpload` streams the body straight to its final location: no temp copy, one disk, and half the
+I/O. Do not reintroduce `[FromForm]` binding on this endpoint.
+
+**A reverse proxy in front of GameTown has its own body limit and it takes precedence**, because it
+rejects before the request arrives. That is a hardening opportunity as much as a footgun: an operator
+who wants a hard cap that does not depend on application code can set one there. See the reverse
+proxy section in README.md.
 
 ### 3. CSRF, reintroduced by moving to cookie authentication
 

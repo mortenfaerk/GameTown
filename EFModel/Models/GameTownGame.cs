@@ -17,5 +17,7 @@ public partial class GameTownGame
 
     public double Size { get; set; }
 
+    public string? ArchiveSha256 { get; set; }
+
     public virtual Rawggame? Rawggame { get; set; }
 }

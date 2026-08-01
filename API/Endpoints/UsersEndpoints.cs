@@ -17,8 +17,7 @@ public static class UserEndpoints
     public static void AddUserEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/users")
-           .WithTags("Users")
-           .WithOpenApi()
+           .WithTags("Users")
            .WithDescription("Endpoints managing API users, and their keys");
 
         group.MapPost("/add", AddUser).WithDescription("Adds a new user")
@@ -26,16 +25,14 @@ public static class UserEndpoints
             .Accepts<UserCreationRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .Produces(StatusCodes.Status400BadRequest)
-            .WithName("Add user")
-            .WithOpenApi();
+            .WithName("Add user");
 
         group.MapGet("/get", GetUser).WithDescription("Get user")
             .RequireAuthorization("Admin")
             .Produces<UserContract>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status404NotFound)
-            .WithName("Get user")
-            .WithOpenApi();
+            .WithName("Get user");
 
         group.MapPut("/update", UpdateUser).WithDescription("Update user")
             .RequireAuthorization("Admin")
@@ -44,52 +41,45 @@ public static class UserEndpoints
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status404NotFound)
             .Produces<string>(StatusCodes.Status500InternalServerError)
-            .WithName("Update user")
-            .WithOpenApi();
+            .WithName("Update user");
         group.MapDelete("/delete", DeleteUser).WithDescription("Delete user")
             .RequireAuthorization("Admin")
             .Produces(StatusCodes.Status204NoContent)
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status404NotFound)
             .Produces<string>(StatusCodes.Status500InternalServerError)
-            .WithName("Delete user")
-            .WithOpenApi();
+            .WithName("Delete user");
         group.MapGet("/getAll", GetAllUsers).WithDescription("Get all users")
             .RequireAuthorization("Admin")
             .Produces<List<UserContract>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status500InternalServerError)
-            .WithName("Get all users")
-            .WithOpenApi();
+            .WithName("Get all users");
         group.MapGet("/getAllRoles", GetAllRoles).WithDescription("Get all roles")
             .RequireAuthorization("Admin")
             .Produces<List<RoleContract>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status500InternalServerError)
-            .WithName("Get all roles")
-            .WithOpenApi();
+            .WithName("Get all roles");
         group.MapPost("/addUserToRole", AddUserToRole).WithDescription("Add user to role")
             .RequireAuthorization("Admin")
             .Produces(StatusCodes.Status204NoContent)
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status404NotFound)
             .Produces<string>(StatusCodes.Status500InternalServerError)
-            .WithName("Add user to role")
-            .WithOpenApi();
+            .WithName("Add user to role");
         group.MapDelete("/removeUserFromRole", RemoveUserFromRole).WithDescription("Remove user from role")
             .RequireAuthorization("Admin")
             .Produces(StatusCodes.Status204NoContent)
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status404NotFound)
             .Produces<string>(StatusCodes.Status500InternalServerError)
-            .WithName("Remove user from role")
-            .WithOpenApi();
+            .WithName("Remove user from role");
         group.MapPost("/addRole", AddRole).WithDescription("Add role")
             .RequireAuthorization("Admin")
             .Accepts<RoleCreationRequest>("application/json")
             .Produces(StatusCodes.Status204NoContent)
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status500InternalServerError)
-            .WithName("Add role")
-            .WithOpenApi();
+            .WithName("Add role");
         group.MapPut("/updateRole", UpdateRole).WithDescription("Update role")
             .RequireAuthorization("Admin")
             .Accepts<RoleUpdateRequest>("application/json")
@@ -97,16 +87,14 @@ public static class UserEndpoints
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status404NotFound)
             .Produces<string>(StatusCodes.Status500InternalServerError)
-            .WithName("Update role")
-            .WithOpenApi();
+            .WithName("Update role");
         group.MapDelete("/deleteRole", DeleteRole).WithDescription("Delete role")
             .RequireAuthorization("Admin")
             .Produces(StatusCodes.Status204NoContent)
             .Produces<string>(StatusCodes.Status400BadRequest)
             .Produces<string>(StatusCodes.Status404NotFound)
             .Produces<string>(StatusCodes.Status500InternalServerError)
-            .WithName("Delete role")
-            .WithOpenApi();
+            .WithName("Delete role");
     }
 
 

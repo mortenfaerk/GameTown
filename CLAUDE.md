@@ -40,7 +40,7 @@ dotnet run --project API --launch-profile https  # run just the API (it serves t
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-88 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
+107 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
 
 Requires the `sqlite3` CLI on the machine running the tests: the harness shells out to it so its view of the database stays independent of the EF model under test. The shipped application does not need it.
 
@@ -49,8 +49,11 @@ They are written against the bug classes this codebase has actually produced, al
 - **`ApiRoutingTests` asserts on `Content-Type`, not just status.** Under SPA-fallback hosting an unmatched route returns `200 text/html`, so a status-only assertion passes while the caller parses a web page as JSON. This is how `.Accepts<T>()` on GET routes went unnoticed.
 - **`AuthenticationTests`** pins the three cookie settings that fail silently: not `Secure` (or the browser discards it over the LAN's plain HTTP), `SameSite=Lax` (the CSRF mitigation), and rejections as 401/403 rather than a 302 to HTML.
 - **`SettingsTests`** boots with no RAWG key configured and asserts a saved key becomes visible to the running service — proof that `RAWGService`/`FileService` still read per call rather than capturing at startup.
-- **`SchemaTests`** compares a fresh install against an upgraded one object-by-object, which is the only place baseline/migration drift would show.
+- **`SchemaTests`** compares a fresh install against an upgraded one object-by-object, which is the only place baseline/migration drift would show. It also boots against a *populated* database pinned at the previous release's version and asserts the library survives field by field — "the migration runs" and "the migration runs without destroying anything" are different claims, and only the second matters to someone with games in there.
 - **`FileContainmentTests`** covers `FileService.TryResolveWithin`, the check that keeps a stored path from escaping the archive directory.
+- **`UploadTests` asserts the archive directory is empty after every rejected upload.** The endpoint streams the body straight to its final location, so the bytes are already on disk when a missing title or an exceeded size limit is discovered — a handler that forgets to clean up leaks a file per failed upload instead of failing harmlessly. It also pins that field order does not matter, since nothing in multipart guarantees one.
+- **`UploadDeduplicationTests`** covers the SHA-256 guard against re-uploading an archive after an upload that only *appeared* to fail. The case that matters most is the negative one: games with no recorded hash (uploaded before migration 003) must not all match each other on `NULL`.
+- **`AbandonedUploadTests`** boots a second app over the same data directory — a service restart, from the filesystem's point of view — and asserts the startup sweep removes `.part` files a killed process left behind while leaving finished archives alone.
 - **`DirectoryProbeTests` / `SetupPathTests`** cover the archive-directory check: it writes and deletes a real file rather than reading permission bits (mode bits predict nothing on a CIFS mount), and the wizard validates *before* creating the administrator — `/setup` 404s once one exists, so rejecting the path afterwards would leave the operator with no wizard to fix it in.
 - **`SanitizerTests`** pins what survives `GameMappings`' HTML sanitiser — formatting tags in, every attribute out, and the mXSS shape from the AngleSharp advisory stripped. RAWG descriptions are community-editable and are rendered with `MarkupString` on an anonymous page, so this is an XSS gate, not a formatting preference.
 
@@ -138,6 +141,8 @@ GUI-launched IDEs do not read your shell profile — set it in the run configura
 Fresh installs run the baseline and then every migration, exactly as an existing install does, so the two cannot drift apart. Keeping the baseline "current" *and* writing migrations is the alternative, and its failure mode — the two disagreeing — only ever appears on upgraded installs, never in development.
 
 Migrations are embedded resources (`API.csproj`), applied by `SchemaMigrator` at startup before anything serves a request. Each script commits together with its `SchemaVersion` row, so a failure leaves the database at the previous version rather than half-applied. Write them to be safe to re-run (`IF NOT EXISTS`).
+
+`ALTER TABLE ... ADD COLUMN` is the one statement that cannot honour that rule — SQLite has no `IF NOT EXISTS` for it and no conditional DDL — so a migration adding a column is not replayable. `003_game_archive_hash.sql` documents the exception where it occurs. Do not work around it by making `SchemaMigrator` swallow errors.
 
 `ALTER TABLE ... DROP COLUMN` and modern upsert syntax are safe to use: the SQLite version floor is the bundled `SQLitePCLRaw` native library, not whatever the host machine happens to have.
 
