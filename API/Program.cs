@@ -72,6 +72,7 @@ app.AddBoxArtEndpoints();
 app.AddTagEndpoints();
 app.AddGuideEndpoints();
 app.AddMetaDataEndpoints();
+app.AddMetadataRelinkEndpoints();
 app.AddUserEndpoints();
 app.AddAuthEndpoints();
 app.AddSettingsEndpoints();

@@ -275,7 +275,7 @@ public static class GamesEndpoints
         {
             Title = title,
             HowTo = upload.Field("howTo") ?? string.Empty,
-            RAWGGameId = upload.Field("rawgGameId")
+            ProviderGameId = upload.Field("providerGameId")
         };
 
         Guid newGameId;

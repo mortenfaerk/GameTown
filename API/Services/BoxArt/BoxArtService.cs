@@ -15,7 +15,7 @@ public record BoxArtResult(bool Success, string? StoredPath, string Reason)
 ///
 /// Every route in — a provider candidate, a pasted URL, an uploaded file — converges on one stored
 /// form: a local file in the media directory, recorded as "/media/{guid}.{ext}". Nothing keeps a
-/// remote URL. That mirrors what RAWG cover art and screenshots already do, for the same three
+/// remote URL. That mirrors what provider cover art and screenshots already do, for the same three
 /// reasons: the library has to render on a LAN with no internet, a provider rotating its CDN must not
 /// blank the shelf, and no third-party host should get a request for every visitor to the library.
 /// </summary>
@@ -82,7 +82,7 @@ public class BoxArtService(
     }
 
     /// <summary>
-    /// Removes the override, so the game falls back to its RAWG image again.
+    /// Removes the override, so the game falls back to the metadata provider's image again.
     ///
     /// The file is deleted rather than orphaned: a stored box art belongs to exactly one game and is
     /// written under a fresh GUID every time, so nothing else can be referencing it.

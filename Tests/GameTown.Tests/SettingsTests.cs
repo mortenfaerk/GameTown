@@ -7,30 +7,37 @@ namespace GameTown.Tests;
 public class SettingsTests
 {
     /// <summary>
-    /// The check that justifies the whole Phase 3 refactor. RAWGService used to take its key as a
-    /// constructor argument resolved once at startup, so the settings page would have saved
-    /// successfully and changed nothing until a restart.
+    /// The check that justifies the whole Phase 3 refactor, now guarding the IGDB credentials that
+    /// replaced the RAWG key. The old RAWGService took its key as a constructor argument resolved once
+    /// at startup, so the settings page would have saved successfully and changed nothing until a
+    /// restart.
     ///
-    /// The app boots here with no key configured anywhere, so a "not-configured" answer turning into
-    /// anything else can only mean the running service read the new value.
+    /// It matters MORE for IGDB than it did for RAWG. The token derived from these credentials IS
+    /// cached — deliberately, since it lasts about sixty days — so this is exactly the shape of code
+    /// where a stale value could outlive a settings change. IgdbTokenProvider keys its cache on a hash
+    /// of the credentials to prevent that, and this test is what would catch it regressing.
+    ///
+    /// The app boots here with nothing configured, so a "not-configured" answer turning into anything
+    /// else can only mean the running service read the new value.
     /// </summary>
     [Fact]
-    public async Task A_saved_rawg_key_is_visible_to_the_running_service_without_a_restart()
+    public async Task Saved_igdb_credentials_are_visible_to_the_running_service_without_a_restart()
     {
         using var app = new GameTownApp();
         using var client = await app.SignInAsAdminAsync();
 
-        var before = await client.PostAsync("/settings/test-rawg-key", null);
+        var before = await client.PostAsync("/settings/test-igdb-credentials", null);
         var beforeResult = await before.Content.ReadFromJsonAsync<KeyCheck>();
         Assert.Equal("not-configured", beforeResult!.Reason);
 
-        await client.PatchAsJsonAsync("/settings", new { rawgApiKey = "some-test-key-1234" });
+        await client.PatchAsJsonAsync("/settings",
+            new { igdbClientId = "test-client-id", igdbClientSecret = "test-secret-1234" });
 
-        var after = await client.PostAsync("/settings/test-rawg-key", null);
+        var after = await client.PostAsync("/settings/test-igdb-credentials", null);
         var afterResult = await after.Content.ReadFromJsonAsync<KeyCheck>();
 
-        // Anything other than "not-configured" proves the key was read at call time. Which of
-        // "rejected" or "unreachable" comes back depends on whether the test machine has internet,
+        // Anything other than "not-configured" proves the credentials were read at call time. Which
+        // of "rejected" or "unreachable" comes back depends on whether the test machine has internet,
         // so both are accepted — asserting on one would make this fail offline for the wrong reason.
         Assert.NotEqual("not-configured", afterResult!.Reason);
     }
@@ -43,7 +50,7 @@ public class SettingsTests
 
         var settings = await client.GetFromJsonAsync<SettingsDto>("/settings");
 
-        Assert.False(settings!.RawgApiKeyIsSet);
+        Assert.False(settings!.IgdbCredentialsAreSet);
         Assert.Contains(".zip", settings.AllowedFileTypes);
         Assert.StartsWith(app.DataDirectory, settings.GameFilesPath);
         Assert.StartsWith(app.DataDirectory, settings.MediaDirectory);
@@ -54,43 +61,76 @@ public class SettingsTests
     /// which is what makes a blank submission mean "unchanged" rather than "clear".
     /// </summary>
     [Fact]
-    public async Task The_rawg_key_is_returned_masked_and_never_in_full()
+    public async Task The_igdb_secret_is_returned_masked_and_never_in_full()
     {
         using var app = new GameTownApp();
         using var client = await app.SignInAsAdminAsync();
 
-        await client.PatchAsJsonAsync("/settings", new { rawgApiKey = "supersecretkey9876" });
+        await client.PatchAsJsonAsync("/settings",
+            new { igdbClientId = "public-client-id", igdbClientSecret = "supersecretkey9876" });
         var settings = await client.GetFromJsonAsync<SettingsDto>("/settings");
 
-        Assert.True(settings!.RawgApiKeyIsSet);
-        Assert.DoesNotContain("supersecretkey", settings.RawgApiKeyMasked ?? "");
-        Assert.EndsWith("9876", settings.RawgApiKeyMasked);
+        Assert.True(settings!.IgdbCredentialsAreSet);
+        Assert.DoesNotContain("supersecretkey", settings.IgdbClientSecretMasked ?? "");
+        Assert.EndsWith("9876", settings.IgdbClientSecretMasked);
+
+        // The client id, by contrast, IS returned in full and deliberately so: it is sent as a header
+        // on every request and is not a secret. Masking it would only stop an admin confirming which
+        // Twitch application this install is pointed at.
+        Assert.Equal("public-client-id", settings.IgdbClientId);
     }
 
     [Fact]
-    public async Task A_blank_key_leaves_the_stored_one_alone()
+    public async Task A_blank_secret_leaves_the_stored_one_alone()
     {
         using var app = new GameTownApp();
         using var client = await app.SignInAsAdminAsync();
 
-        await client.PatchAsJsonAsync("/settings", new { rawgApiKey = "keepthiskey1234" });
-        await client.PatchAsJsonAsync("/settings", new { rawgApiKey = "" });
+        await client.PatchAsJsonAsync("/settings",
+            new { igdbClientId = "id-1", igdbClientSecret = "keepthiskey1234" });
+        await client.PatchAsJsonAsync("/settings", new { igdbClientId = "", igdbClientSecret = "" });
         var settings = await client.GetFromJsonAsync<SettingsDto>("/settings");
 
-        Assert.True(settings!.RawgApiKeyIsSet);
+        Assert.True(settings!.IgdbCredentialsAreSet);
+    }
+
+    /// <summary>
+    /// Rotating the secret alone must work: Twitch regenerates a secret without changing the client
+    /// id, so requiring both to be retyped would invite the id to be retyped wrongly.
+    /// </summary>
+    [Fact]
+    public async Task The_secret_can_be_rotated_without_resending_the_client_id()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+
+        await client.PatchAsJsonAsync("/settings",
+            new { igdbClientId = "stable-id", igdbClientSecret = "oldsecret0000" });
+        await client.PatchAsJsonAsync("/settings", new { igdbClientSecret = "newsecret9999" });
+
+        var settings = await client.GetFromJsonAsync<SettingsDto>("/settings");
+
+        Assert.True(settings!.IgdbCredentialsAreSet);
+        Assert.Equal("stable-id", settings.IgdbClientId);
+        Assert.EndsWith("9999", settings.IgdbClientSecretMasked);
     }
 
     [Fact]
-    public async Task Clearing_the_key_is_an_explicit_action()
+    public async Task Clearing_the_credentials_is_an_explicit_action()
     {
         using var app = new GameTownApp();
         using var client = await app.SignInAsAdminAsync();
 
-        await client.PatchAsJsonAsync("/settings", new { rawgApiKey = "removethiskey" });
-        await client.PatchAsJsonAsync("/settings", new { clearRawgApiKey = true });
+        await client.PatchAsJsonAsync("/settings",
+            new { igdbClientId = "id-2", igdbClientSecret = "removethiskey" });
+        await client.PatchAsJsonAsync("/settings", new { clearIgdbCredentials = true });
         var settings = await client.GetFromJsonAsync<SettingsDto>("/settings");
 
-        Assert.False(settings!.RawgApiKeyIsSet);
+        Assert.False(settings!.IgdbCredentialsAreSet);
+
+        // BOTH halves, not just the secret. A client id left behind would show on the settings page
+        // as a configured-looking value the provider cannot actually use.
+        Assert.Null(settings.IgdbClientId);
     }
 
     [Fact]
@@ -152,7 +192,8 @@ public class SettingsTests
 
     private sealed record SettingsDto(
         string GameFilesPath, string MediaDirectory, string DataDirectory,
-        bool RawgApiKeyIsSet, string? RawgApiKeyMasked, List<string> AllowedFileTypes);
+        bool IgdbCredentialsAreSet, string? IgdbClientId, string? IgdbClientSecretMasked,
+        List<string> AllowedFileTypes);
 
     private sealed record PathCheck(
         bool Exists, bool Writable, string Reason, long? FreeBytes, string? FileSystem);

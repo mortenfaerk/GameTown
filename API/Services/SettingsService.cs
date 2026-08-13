@@ -7,8 +7,8 @@ namespace API.Services;
 /// Runtime-editable configuration, stored in the database and read on demand.
 ///
 /// The point of reading on demand is that the admin settings page can change these without a
-/// restart. Anything that caches a value at startup — the constructor arguments FileService and
-/// RAWGService used to take — silently defeats that: the UI saves, the database updates, and the
+/// restart. Anything that caches a value at startup — the constructor arguments FileService and the
+/// old RAWGService used to take — silently defeats that: the UI saves, the database updates, and the
 /// running service keeps using the value it captured at boot.
 ///
 /// There is deliberately **no cache**. At this scale a settings read is a primary-key lookup against
@@ -23,7 +23,13 @@ namespace API.Services;
 public class SettingsService(DatabaseContext dbContext, string dataDirectory)
 {
     public const string GameFilesPathKey = "GameFilesPath";
-    public const string RawgApiKeyKey = "RAWGApiKey";
+
+    /// <summary>
+    /// IGDB authenticates with a Twitch application, so the credential is a PAIR, not a key. The
+    /// retired RAWGApiKey row is deleted by migration 007.
+    /// </summary>
+    public const string IgdbClientIdKey = "IGDBClientId";
+    public const string IgdbClientSecretKey = "IGDBClientSecret";
     public const string AllowedFileTypesKey = "AllowedFileTypes";
     public const string MaxUploadSizeMbKey = "MaxUploadSizeMb";
     public const string BoxArtApiKeyKey = "BoxArtApiKey";
@@ -72,15 +78,38 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
         => Path.Combine(dataDirectory, "media");
 
     /// <summary>
-    /// Null when unset. RAWG is optional: without a key the app still works, metadata is just
-    /// entered by hand instead of imported.
+    /// The IGDB credential pair, or nulls when unset.
+    ///
+    /// Optional, as the RAWG key was: without credentials the app still works and metadata is entered
+    /// by hand instead of imported. Both halves are returned together and both are null unless both
+    /// are stored — a client id with no secret cannot authenticate, and treating it as configured
+    /// would turn a clear "not set up" into a confusing failure at the first search.
+    ///
+    /// Read from the database on every call, with no cache. That is the rule the whole settings design
+    /// rests on (see this class's summary), and it holds here even though the token derived from these
+    /// values IS cached — see IgdbTokenProvider for how the two coexist.
     /// </summary>
-    public Task<string?> GetRawgApiKeyAsync() => GetRawAsync(RawgApiKeyKey);
+    public async Task<(string? ClientId, string? ClientSecret)> GetIgdbCredentialsAsync()
+    {
+        var clientId = await GetRawAsync(IgdbClientIdKey);
+        var clientSecret = await GetRawAsync(IgdbClientSecretKey);
+
+        return clientId is null || clientSecret is null ? (null, null) : (clientId, clientSecret);
+    }
+
+    /// <summary>
+    /// The client id on its own, whether or not a secret accompanies it.
+    ///
+    /// Only for display: the settings page shows which Twitch application an install is pointed at,
+    /// including the half-configured state <see cref="GetIgdbCredentialsAsync"/> deliberately hides.
+    /// Never use this to decide whether IGDB is usable.
+    /// </summary>
+    public Task<string?> GetIgdbClientIdAsync() => GetRawAsync(IgdbClientIdKey);
 
     /// <summary>
     /// The artwork provider's key (SteamGridDB), or null when unset.
     ///
-    /// Optional in the same way the RAWG key is: without one the box-art *search* is unavailable and
+    /// Optional in the same way the IGDB credentials are: without one the box-art *search* is unavailable and
     /// says so, while uploading a file or pasting an image URL keeps working. Losing the search is a
     /// smaller loss than being unable to set a cover at all, which is why the two paths do not share
     /// a dependency.

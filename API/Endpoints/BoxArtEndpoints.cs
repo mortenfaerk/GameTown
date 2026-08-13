@@ -17,7 +17,7 @@ public static class BoxArtEndpoints
     {
         // Contributor throughout, including the search. Two reasons: it spends the provider's API key,
         // and it makes the server issue an outbound request with a caller-influenced string — the same
-        // pair of concerns that gates /meta and /settings/test-rawg-key.
+        // pair of concerns that gates /meta and /settings/test-igdb-credentials.
         //
         // NB: no .Accepts<T>() on the GET below. Accepts describes a request body and constrains the
         // endpoint's content type; a GET carries neither, and adding one makes the route unmatchable
@@ -61,7 +61,7 @@ public static class BoxArtEndpoints
              .Produces(StatusCodes.Status400BadRequest)
              .Produces(StatusCodes.Status404NotFound)
              .WithName("ClearBoxArt")
-             .WithDescription("Removes the override, falling back to the RAWG image.");
+             .WithDescription("Removes the override, falling back to the provider's image.");
     }
 
     private static async Task<IResult> SearchBoxArt(

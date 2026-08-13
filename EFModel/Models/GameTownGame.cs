@@ -23,6 +23,10 @@ public partial class GameTownGame
 
     public bool GuideBaked { get; set; }
 
+    public int? MetadataId { get; set; }
+
+    public virtual MetadataGame? Metadata { get; set; }
+
     public virtual Rawggame? Rawggame { get; set; }
 
     public virtual ICollection<Tag> Tags { get; set; } = new List<Tag>();

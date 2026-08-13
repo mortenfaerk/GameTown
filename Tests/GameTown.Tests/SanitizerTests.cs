@@ -4,8 +4,12 @@ using EFModel.Models;
 namespace GameTown.Tests;
 
 /// <summary>
-/// The description sanitiser, which is the only thing standing between a community-editable RAWG
+/// The description sanitiser, which is the only thing standing between a community-editable provider
 /// field and Blazor's MarkupString on a page anyone on the network can load.
+///
+/// Still load-bearing after the move off RAWG, and arguably more so: the description column now holds
+/// both RAWG HTML that migration 007 carried across unchanged — including anything stored before this
+/// sanitiser existed — and IGDB summaries encoded into HTML at ingest.
 ///
 /// These call the mapping directly rather than going over HTTP: the sanitiser is configured once in
 /// a static field, and what needs pinning is that configuration — an allowlist that lets nothing
@@ -16,7 +20,7 @@ public class SanitizerTests
     // Description is scaffolded non-nullable, but the column is nullable and EF materialises null
     // into it regardless of the annotation — which is exactly the case the last test covers.
     private static string Sanitized(string? description)
-        => new Rawggame { Description = description! }.ToContract().Description ?? string.Empty;
+        => new MetadataGame { Description = description! }.ToContract().Description ?? string.Empty;
 
     [Theory]
     [InlineData("<script>alert(1)</script>")]

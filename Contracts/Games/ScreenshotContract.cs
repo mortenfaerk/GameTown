@@ -1,6 +1,6 @@
 namespace GameTown.Contracts.Games;
 
-/// <summary>A RAWG screenshot, re-hosted locally under /media/.</summary>
+/// <summary>A screenshot from the metadata provider, re-hosted locally under /media/.</summary>
 public class ScreenshotContract
 {
     public int Id { get; set; }

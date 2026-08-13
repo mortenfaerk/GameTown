@@ -10,8 +10,13 @@ administrator is created in the browser on first visit.
 Browsing and downloading are open to anyone who can reach the host — no account needed, because the
 whole point is that a guest on the sofa can grab a game. Uploading and administering require an
 account. Game metadata (cover art, screenshots, genres, developers) is pulled from the
-[RAWG](https://rawg.io) games API and re-hosted locally, so the library keeps working when the
+[IGDB](https://www.igdb.com) games API and re-hosted locally, so the library keeps working when the
 internet does not.
+
+That re-hosting stopped being a nicety in 2026, when RAWG — the previous metadata source — went away.
+Because every image had always been downloaded onto the server rather than hot-linked, existing
+libraries lost nothing: the upgrade to IGDB moves the stored rows into provider-neutral tables with no
+network access at all, and a library that never sets up IGDB keeps rendering exactly as it did.
 
 It is not built to face the public internet as it stands — see
 [SECURITY-NOTES.md](SECURITY-NOTES.md).
@@ -182,7 +187,7 @@ an upgrade lives in a single data directory.
         │  same origin — no CORS, no token, an HttpOnly SameSite=Lax cookie
         ▼
    ┌──────────────────────────────┐        ┌──────────────┐
-   │  GameTown (single process)   │───────▶│  RAWG API    │
+   │  GameTown (single process)   │───────▶│  IGDB API    │
    │                              │        └──────────────┘
    │   Blazor WASM SPA (wwwroot)  │
    │   minimal-API endpoints      │
@@ -204,7 +209,7 @@ artifact runs on any LAN, port or reverse proxy without a rebuild.
 
 | Project | Type | Role |
 |---|---|---|
-| `API` | `Microsoft.NET.Sdk.Web` | Minimal-API backend: endpoints, services, auth, RAWG integration. |
+| `API` | `Microsoft.NET.Sdk.Web` | Minimal-API backend: endpoints, services, auth, metadata integration. |
 | `GameTownApp` | Blazor WebAssembly | The SPA. Library, game detail, upload, admin console. |
 | `Contracts` | classlib | Wire types shared by both ends. **No EF Core, no ASP.NET** — see below. |
 | `EFModel` | classlib | EF Core `DbContext` and entities, **scaffolded from the live database**. |
@@ -268,21 +273,31 @@ column would silently become a `string`. That and three sibling traps — foreig
 `ValueGeneratedNever` on Guid keys, GUID text casing — are documented in [CLAUDE.md](CLAUDE.md).
 All four produce a working build and wrong behaviour.
 
-GameTown's own entities use `Guid` primary keys; RAWG entities reuse RAWG's integer ids, which is why
-games, developers, genres and screenshots are shared rows rather than per-game copies. That sharing is
-the reason `RAWGService.EnsureRawgGamePersisted` resolves every related row against what is already
-stored before attaching it.
+GameTown's own entities use `Guid` primary keys. Metadata entities use integer **surrogate** keys with
+the provider's own id in `external_id`, which is why games, developers, genres and screenshots are
+shared rows rather than per-game copies. That sharing is the reason
+`GameMetadataService.PersistAsync` resolves every related row against what is already stored before
+attaching it — otherwise a second game by the same studio collides on a primary key.
 
-### RAWG integration and media
+### Metadata integration and media
 
-`API/Services/RAWGService.cs` calls RAWG over REST and deserialises straight into the EF entities.
-RAWG serves snake_case, so a `SnakeCaseNamingStrategy` contract resolver is applied — without it every
-underscored field (including `background_image`) silently binds to null.
+`API/Services/Metadata/` holds the provider. `IgdbProvider` queries IGDB with
+[Apicalypse](https://api-docs.igdb.com/) over POST, expanding related records inline so a full game —
+cover, screenshots, genres, developers — is a single request.
+
+IGDB authenticates through a **Twitch application** rather than an API key: register one at
+[dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) (the account needs 2FA) and enter the
+Client ID and Client Secret under *Administer → Settings*. `IgdbTokenProvider` holds the resulting
+bearer token, which lasts about sixty days.
+
+The tables are **provider-neutral** — every metadata row carries a `provider` column — so a library
+can hold records from a retired source and a current one side by side. `Administer → Re-link metadata`
+moves old entries across, one at a time or in bulk, and never runs by itself.
 
 Cover art and screenshots are **downloaded and re-hosted** into the data directory's `media/` folder,
 with the stored URLs rewritten to `/media/{guid}.ext` and served from there. They deliberately do not
 live in `wwwroot`: an in-place upgrade replaces the application folder, which would silently delete
-every cover in the library.
+every cover in the library. This is also what made surviving RAWG's retirement a non-event.
 
 Uploaded archives are written to the configured archive directory under a generated GUID name; the
 original filename is never used to build a path, and the extension must be on the allowlist configured
@@ -308,7 +323,7 @@ server *looks* like it works and then resolves its API address to itself — eve
 `index.html`.
 
 The **only** required configuration is the SQLite connection string; everything else is edited in the
-app under *Administer → Settings*. The RAWG key is optional.
+app under *Administer → Settings*. The IGDB credentials are optional.
 
 ```bash
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Data Source=$HOME/gametown/gametown.db" --project API

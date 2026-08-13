@@ -143,7 +143,7 @@ mkdir -p "$DATA_DIR"
 
 # The things that must survive an upgrade. Anything left in $APP_DIR is destroyed below.
 mkdir -p "$DATA_DIR/games"    # uploaded archives
-mkdir -p "$DATA_DIR/media"    # re-hosted RAWG art, screenshots and uploaded box art
+mkdir -p "$DATA_DIR/media"    # re-hosted cover art, screenshots and uploaded box art
 mkdir -p "$DATA_DIR/keys"     # Data Protection keyring — losing it signs everyone out
 
 # ---------------------------------------------------------------- stop the service

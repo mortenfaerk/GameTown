@@ -154,7 +154,7 @@ public class ImageFetcher(IHttpClientFactory httpClientFactory)
         {
             // No exception detail escapes. This request's destination was chosen by the caller, so the
             // message can carry DNS state, proxy names and internal addresses back to them — the same
-            // reasoning as SettingsEndpoints.TestRawgKey.
+            // reasoning as SettingsEndpoints.TestIgdbCredentials.
             return ImageFetchResult.Failed("unreachable");
         }
     }

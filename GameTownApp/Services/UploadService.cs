@@ -37,7 +37,7 @@ public class UploadService(IJSRuntime js) : IAsyncDisposable
         {
             ["title"] = request.Title,
             ["howTo"] = request.HowTo,
-            ["rawgGameId"] = request.RawgGameId
+            ["providerGameId"] = request.ProviderGameId
         };
 
         try

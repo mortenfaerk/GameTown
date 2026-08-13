@@ -1,6 +1,7 @@
 ﻿using API.Services;
 using API.Services.Archives;
 using API.Services.BoxArt;
+using API.Services.Metadata;
 using EFModel.Models;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.DataProtection;
@@ -75,14 +76,13 @@ public static class DependenciesConfig
         // SettingsService is the only one that still needs a constructed value, and it is a path
         // derived from the connection string rather than a setting in its own right.
         //
-        // RAWGService and FileService used to be registered with factory lambdas precisely because
-        // they took primitive constructor arguments — a RAWG key and an archive directory, both read
-        // once at startup. That is what made those values un-editable at runtime, so they are plain
-        // scoped registrations now and read what they need per call.
+        // The old RAWGService and FileService used to be registered with factory lambdas precisely
+        // because they took primitive constructor arguments — an API key and an archive directory,
+        // both read once at startup. That is what made those values un-editable at runtime, so they
+        // are plain scoped registrations now and read what they need per call.
         var dataDirectory = SqliteConnectionString.GetDataDirectory(connectionString);
         builder.Services.AddScoped(provider =>
             new SettingsService(provider.GetRequiredService<DatabaseContext>(), dataDirectory));
-        builder.Services.AddScoped<RAWGService>();
         builder.Services.AddScoped<FileService>();
         builder.Services.AddScoped<MediaStore>();
         builder.Services.AddScoped<GTGamesService>();
@@ -90,6 +90,21 @@ public static class DependenciesConfig
         builder.Services.AddScoped<TagService>();
         builder.Services.AddScoped<BoxArtService>();
         builder.Services.AddScoped<ArchiveGuideService>();
+        builder.Services.AddScoped<GameMetadataService>();
+        builder.Services.AddScoped<MetadataRelinkService>();
+
+        // The metadata provider is behind an interface for the reason the artwork one is, except this
+        // one is no longer hypothetical: this application shipped against RAWG, RAWG stopped
+        // answering, and the tables underneath were RAWG-shaped down to the column names. Migration
+        // 007 fixed the schema; this registration is the other half.
+        builder.Services.AddScoped<IGameMetadataProvider, IgdbProvider>();
+
+        // SINGLETON, and deliberately not scoped. It holds the Twitch OAuth token, which is valid for
+        // about sixty days — a scoped cache would be no cache at all, re-authenticating on every
+        // request. The credentials it derives that token from are still read per call from the
+        // database; only the token is reused, and only while the credentials that produced it are
+        // still current. See IgdbTokenProvider.
+        builder.Services.AddSingleton<IgdbTokenProvider>();
 
         // The artwork provider is behind an interface because the choice is genuinely open — Google's
         // Custom Search JSON API is closed to new users and off entirely from 2027, and Bing's image
@@ -108,6 +123,22 @@ public static class DependenciesConfig
         builder.Services.AddHttpClient(ImageFetcher.HttpClientName)
                .ConfigurePrimaryHttpMessageHandler(ImageFetcher.BuildHandler);
         builder.Services.AddHttpClient(SteamGridDbProvider.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(20);
+        });
+
+        // Two clients for IGDB, because they talk to two different hosts for two different purposes:
+        // id.twitch.tv issues the token, api.igdb.com answers queries. Separate so a slow auth
+        // endpoint cannot consume the query timeout, and so the auth client's traffic is trivially
+        // identifiable in a capture.
+        //
+        // Neither is the image path. Cover art and screenshots from images.igdb.com go through
+        // ImageFetcher's client above, which is the one with the redirect and address restrictions.
+        builder.Services.AddHttpClient(IgdbTokenProvider.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+        builder.Services.AddHttpClient(IgdbProvider.HttpClientName, client =>
         {
             client.Timeout = TimeSpan.FromSeconds(20);
         });

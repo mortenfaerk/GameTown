@@ -15,8 +15,16 @@ public class AddGameRequest
     [Required(ErrorMessage = "Instructions are required.")]
     public string HowTo { get; set; } = string.Empty;
 
-    /// <summary>RAWG game id chosen via the metadata picker. Optional — games can exist without metadata.</summary>
-    public string? RawgGameId { get; set; }
+    /// <summary>
+    /// The <b>provider's</b> id for the game chosen in the metadata picker (IGDB's id, not a local
+    /// one). Optional — games can exist without metadata.
+    ///
+    /// Deliberately not called MetadataId. At this point no metadata row exists yet: the server
+    /// fetches the record and creates it while saving, assigning a local surrogate key of its own. A
+    /// field named MetadataId on the wire would invite the caller's value to be used as that key,
+    /// which is exactly the collision the surrogate exists to prevent.
+    /// </summary>
+    public string? ProviderGameId { get; set; }
 }
 
 /// <summary>
@@ -74,5 +82,7 @@ public class GameTownGamePatchRequest
     public string? Title { get; set; }
 
     public string? HowTo { get; set; }
-    public string? RawgGameId { get; set; }
+
+    /// <summary>The provider's id, on the same terms as <see cref="AddGameRequest.ProviderGameId"/>.</summary>
+    public string? ProviderGameId { get; set; }
 }

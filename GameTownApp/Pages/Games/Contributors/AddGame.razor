@@ -7,7 +7,7 @@
 <PageTitle>Add game</PageTitle>
 
 <h1>Add a game</h1>
-<p class="gt-muted">Upload a game archive and, optionally, attach RAWG metadata to it.</p>
+<p class="gt-muted">Upload a game archive and, optionally, attach metadata to it.</p>
 
 @if (!string.IsNullOrEmpty(Error))
 {
@@ -22,7 +22,7 @@
         @Notice
         @if (AddedGameId is not null)
         {
-            @* Cover art is set on the detail page, and RAWG has no box art — so for most games this
+            @* Cover art is set on the detail page — so for most games this
                link is the next thing that needs doing. *@
             <a class="ms-2" href="@($"/game/{AddedGameId}")">Open it to add cover art</a>
         }
@@ -68,19 +68,19 @@
     </div>
 
     <div class="mb-3">
-        <label class="form-label">RAWG metadata (optional)</label>
-        <RawgGamePicker SelectedGameChanged="OnRawgGameSelected"
-                        Placeholder="Search RAWG for this game…" />
-        @if (SelectedRawgGame is not null)
+        <label class="form-label">Game metadata (optional)</label>
+        <MetadataPicker SelectedGameChanged="OnMetadataSelected"
+                        Placeholder="Search for this game…" />
+        @if (SelectedMetadata is not null)
         {
             <div class="d-flex align-items-center gap-2 mb-2">
-                <span class="badge bg-success">Attached: @SelectedRawgGame.Name (id @SelectedRawgGame.Id)</span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearRawgGame" disabled="@Busy">Clear</button>
+                <span class="badge bg-success">Attached: @SelectedMetadata.Name (@SelectedMetadata.Provider @SelectedMetadata.ExternalId)</span>
+                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearMetadata" disabled="@Busy">Clear</button>
             </div>
         }
     </div>
 
-    <RawgGameCard Game="SelectedRawgGame" />
+    <MetadataCard Game="SelectedMetadata" />
 </EditForm>
 
 @*
@@ -151,12 +151,12 @@
         @if (Processing)
         {
             @* There is no real percentage to show here. The server writes the archive as it
-               arrives, so by this point the remaining work is the database row plus any RAWG
+               arrives, so by this point the remaining work is the database row plus any
                artwork download — neither of which reports progress. An honest indeterminate bar
                with an elapsed clock beats a fake percentage. *@
             <p class="gt-data mt-1 mb-0">
                 Transfer complete — the server is saving
-                @(SelectedRawgGame is null ? "the game" : "the game and fetching artwork from RAWG").
+                @(SelectedMetadata is null ? "the game" : "the game and fetching its artwork").
                 @FormatElapsed(ProcessingSeconds) elapsed.
             </p>
             @if (ProcessingSeconds >= 20)
@@ -200,7 +200,7 @@
 
     private InputFile? fileInput;
     private IBrowserFile? SelectedFile;
-    private RawgGameContract? SelectedRawgGame;
+    private GameMetadataContract? SelectedMetadata;
     private DotNetObjectReference<AddGame>? selfRef;
 
     private bool Busy;
@@ -254,16 +254,16 @@
         if (!CanBakeGuide) BakeGuide = false;
     }
 
-    private void OnRawgGameSelected(RawgGameContract? game)
+    private void OnMetadataSelected(GameMetadataContract? game)
     {
-        SelectedRawgGame = game;
-        Request.RawgGameId = game?.Id?.ToString();
+        SelectedMetadata = game;
+        Request.ProviderGameId = game?.ExternalId.ToString();
     }
 
-    private void ClearRawgGame()
+    private void ClearMetadata()
     {
-        SelectedRawgGame = null;
-        Request.RawgGameId = null;
+        SelectedMetadata = null;
+        Request.ProviderGameId = null;
     }
 
     /// <summary>Called from upload.js as the transfer advances.</summary>
@@ -399,7 +399,7 @@
 
             Request = new AddGameRequest();
             SelectedFile = null;
-            SelectedRawgGame = null;
+            SelectedMetadata = null;
             Tags = [];
             BakeGuide = false;
         }

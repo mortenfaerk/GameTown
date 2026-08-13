@@ -1,0 +1,259 @@
+@page "/metadata-relink"
+@attribute [Authorize(Roles = "Admin")]
+@inject MetadataRelinkService Relink
+@inject GamesService GamesService
+
+@*
+    Moves library entries from a retired metadata provider to the configured one.
+
+    NOTHING ON THIS PAGE RUNS BY ITSELF, and that is the whole design. There is no startup hook and no
+    background sweep: an administrator opens this, presses things, and reviews what happened. A library
+    that never opens it stays on its old metadata indefinitely — a supported state, not a pending task,
+    because migration 007 carried every row across with its images already on this server.
+
+    The two-step shape (propose, then apply) exists because the failure that matters here is not a
+    crash — it is a plausible wrong match applied silently to someone's library. A remake and its
+    original share a name; the proposal step is where a human gets to notice.
+*@
+
+<PageTitle>Re-link metadata</PageTitle>
+
+<h1>Re-link metadata</h1>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="alert alert-danger alert-dismissible">
+        @Error
+        <button type="button" class="btn-close" @onclick="() => Error = null"></button>
+    </div>
+}
+@if (!string.IsNullOrEmpty(Notice))
+{
+    <div class="alert alert-success alert-dismissible">
+        @Notice
+        <button type="button" class="btn-close" @onclick="() => Notice = null"></button>
+    </div>
+}
+
+@if (Loading)
+{
+    <p><em>Loading…</em></p>
+}
+else if (Candidates.Count == 0)
+{
+    <div class="alert alert-success">
+        <strong>Nothing to re-link.</strong> Every game with metadata is already on the current
+        provider.
+    </div>
+}
+else
+{
+    <p class="gt-muted">
+        @Candidates.Count game@(Candidates.Count == 1 ? "" : "s") still carry metadata from a retired
+        provider. They render correctly as they are — everything was downloaded onto this server when
+        it was imported — so this is optional. Re-linking gets them fresh data and future updates.
+    </p>
+    <p class="gt-muted small">
+        Box art, tags and instructions are never touched by this. Only which catalogue record a game
+        points at changes.
+    </p>
+
+    @if (Proposals.Count == 0)
+    {
+        <div class="mb-3">
+            <button class="btn btn-primary" disabled="@Busy" @onclick="() => Propose(Candidates.Select(c => c.GameId))">
+                @(Busy ? "Searching…" : $"Find matches for all {Candidates.Count}")
+            </button>
+            <span class="gt-muted small ms-2">
+                One search per game, paced to stay inside the provider's rate limit — allow roughly
+                @EstimatedSeconds second@(EstimatedSeconds == 1 ? "" : "s").
+            </span>
+        </div>
+
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr><th>Game</th><th>Metadata name</th><th>Released</th><th class="text-end">Action</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var candidate in Candidates)
+                {
+                    <tr>
+                        <td>@candidate.Title</td>
+                        @* Shown because the search runs against THIS, not the library title. When a
+                           match looks surprising, the difference between the two columns is usually
+                           the explanation. *@
+                        <td class="gt-muted">@candidate.MetadataName</td>
+                        <td class="gt-data">@(candidate.Released?.ToString("yyyy") ?? "—")</td>
+                        <td class="text-end">
+                            <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
+                                    @onclick="() => Propose([candidate.GameId])">Find match</button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <h5>Proposed matches</h5>
+        <p class="gt-muted small">
+            Confident matches — an exact name <em>and</em> a matching release year — are ticked. Every
+            other row is deliberately left unticked: a remake and its original share a name, and that
+            is the mistake this list exists to catch.
+        </p>
+
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th style="width:3rem"></th>
+                    <th>Game</th><th>Proposed match</th><th>Released</th><th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var proposal in Proposals)
+                {
+                    <tr>
+                        <td>
+                            @if (proposal.MatchExternalId is not null)
+                            {
+                                <input type="checkbox" class="form-check-input"
+                                       checked="@Selected.Contains(proposal.GameId)"
+                                       @onchange="e => Toggle(proposal.GameId, e)" />
+                            }
+                        </td>
+                        <td>@proposal.Title</td>
+                        <td>
+                            @if (proposal.MatchThumbnailUrl is not null)
+                            {
+                                <img src="@GamesService.ResolveMedia(proposal.MatchThumbnailUrl)"
+                                     alt="" style="height:2.5rem" class="me-2 rounded" />
+                            }
+                            @(proposal.MatchName ?? "—")
+                        </td>
+                        <td class="gt-data">@(proposal.MatchReleased?.ToString("yyyy") ?? "—")</td>
+                        <td>
+                            @if (proposal.IsConfident)
+                            {
+                                <span class="badge bg-success">Confident</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary">@DescribeReason(proposal.Reason)</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        <button class="btn btn-primary" disabled="@(Busy || Selected.Count == 0)" @onclick="Apply">
+            @(Busy ? "Applying…" : $"Apply {Selected.Count} selected")
+        </button>
+        <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="Reset">Start over</button>
+    }
+}
+
+@code {
+    private bool Loading = true;
+    private bool Busy;
+    private string? Error;
+    private string? Notice;
+
+    private List<RelinkCandidateContract> Candidates = [];
+    private List<RelinkProposalContract> Proposals = [];
+    private readonly HashSet<Guid> Selected = [];
+
+    /// <summary>Matches the server's 300ms pacing between searches, rounded up.</summary>
+    private int EstimatedSeconds => Math.Max(1, (int)Math.Ceiling(Candidates.Count * 0.3));
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        Loading = true;
+        try
+        {
+            Candidates = await Relink.GetCandidates();
+        }
+        catch (Exception)
+        {
+            Error = "The list of games could not be loaded.";
+        }
+        Loading = false;
+    }
+
+    private async Task Propose(IEnumerable<Guid> gameIds)
+    {
+        Busy = true;
+        Error = null;
+        try
+        {
+            Proposals = await Relink.Propose(gameIds.ToList());
+            Selected.Clear();
+
+            // Only confident rows start ticked. Everything else has to be chosen deliberately —
+            // pre-ticking a plausible-but-unverified match and relying on the admin to untick it is
+            // exactly backwards for an action that rewrites their library.
+            foreach (var proposal in Proposals.Where(p => p.IsConfident && p.MatchExternalId is not null))
+                Selected.Add(proposal.GameId);
+
+            if (Proposals.Any(p => p.Reason == "rate-limited"))
+                Error = "The provider rate-limited us, so the list stops early. Apply what is here, then run it again for the rest.";
+        }
+        catch (Exception)
+        {
+            Error = "Matches could not be fetched.";
+        }
+        Busy = false;
+    }
+
+    private void Toggle(Guid gameId, ChangeEventArgs e)
+    {
+        if (e.Value is true) Selected.Add(gameId);
+        else Selected.Remove(gameId);
+    }
+
+    private async Task Apply()
+    {
+        Busy = true;
+        Error = null;
+        try
+        {
+            var pairings = Proposals
+                .Where(p => Selected.Contains(p.GameId) && p.MatchExternalId is not null)
+                .Select(p => new RelinkPairing { GameId = p.GameId, ExternalId = p.MatchExternalId!.Value })
+                .ToList();
+
+            var result = await Relink.Apply(pairings);
+
+            Notice = $"Re-linked {result.Applied.Count} game{(result.Applied.Count == 1 ? "" : "s")}.";
+            if (result.Failed.Count > 0)
+                Error = $"{result.Failed.Count} could not be re-linked and were left exactly as they were.";
+
+            Reset();
+            await Load();
+        }
+        catch (Exception)
+        {
+            Error = "The changes could not be applied.";
+        }
+        Busy = false;
+    }
+
+    private void Reset()
+    {
+        Proposals = [];
+        Selected.Clear();
+    }
+
+    private static string DescribeReason(string reason) => reason switch
+    {
+        "ok" => "Check this one",
+        "no-match" => "No match found",
+        "not-configured" => "No credentials",
+        "rejected" => "Credentials rejected",
+        "rate-limited" => "Rate-limited",
+        "unreachable" => "Provider unreachable",
+        _ => reason,
+    };
+}

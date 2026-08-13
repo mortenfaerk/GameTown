@@ -8,8 +8,8 @@ public class AddGameWithFileForm
     [FromForm(Name = "howTo")]
     public string HowTo { get; set; } = default!;
 
-    [FromForm(Name = "rawgGameId")]
-    public string? RAWGGameId { get; set; }
+    [FromForm(Name = "providerGameId")]
+    public string? ProviderGameId { get; set; }
 
     [FromForm(Name = "file")]
     public IFormFile File { get; set; } = default!;

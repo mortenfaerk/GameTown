@@ -2,7 +2,7 @@
 
 Working notes for GameTown's security posture: what has been accepted knowingly, and the invariants
 that are easy to break by accident. Read this before changing authorization, middleware order, file
-handling, or the RAWG metadata path.
+handling, or the metadata provider path.
 
 Threat model in one line: **a private server on a home LAN.** Browsing and downloading are open to
 anyone who can reach the host; contributing and administering require an account. It is not intended
@@ -232,13 +232,16 @@ hole, and removing any one restores a working attack:
 
 Two consequences worth knowing:
 
-- **`RAWGService.RehostImageAsync` now goes through the same fetcher**, and must stay that way. RAWG
-  is community-editable, so its image URLs are attacker-influenced too — by a longer route, not a
-  weaker one. It previously used a per-call `new HttpClient()`, followed redirects, read an unbounded
-  body and took the extension from the URL.
+- **`GameMetadataService.RehostAsync` goes through the same fetcher**, and must stay that way. This
+  was written when the URLs came from RAWG, which was community-editable and so attacker-influenced
+  by a longer route rather than a weaker one. IGDB changes the shape of that argument without changing
+  the conclusion: image URLs are now *built by us* from a template against a fixed host
+  (`images.igdb.com`), which says something about where the request goes and nothing whatever about
+  what answers it. The checks that matter here — magic-byte sniffing, the body cap, no redirects —
+  are all about the response. Do not let "we built the URL ourselves" become a reason to bypass it.
 - **Failures are reported as fixed reason codes, never exception text.** The caller chose the
   destination, so the message can carry DNS state, proxy names and internal addresses back to them —
-  the same rule `TestRawgKey` already followed.
+  the same rule the credential tests follow.
 
 `Tests/GameTown.Tests/BoxArtTests.cs` pins the refusals, including that nothing is written to the
 media directory on a rejected request.
@@ -303,7 +306,7 @@ before anything else.
 ### The settings endpoints are more sensitive than they look
 
 `POST /settings/check-path` takes an arbitrary server path from the client and reports whether it
-exists and is writable — a filesystem-probing primitive. `POST /settings/test-rawg-key` makes the
+exists and is writable — a filesystem-probing primitive. `POST /settings/test-igdb-credentials` makes the
 server issue an outbound request. Both are `Admin`-only, and both must stay that way.
 
 Neither returns exception text. `check-path` answers with a fixed reason code
@@ -324,7 +327,7 @@ operational rather than sensitive — it is the only way an operator can see tha
 they configured is not actually mounted, which otherwise presents as uploads silently filling the
 container's root disk under a directory the share hides when it returns.
 
-`GET /settings` returns the RAWG key **masked** (last four characters) plus an `IsSet` flag, never the
+`GET /settings` returns the IGDB client **secret** masked (last four characters) plus an `IsSet` flag, never the
 value. A blank key on `PATCH` therefore means "unchanged", not "clear" — clearing is a separate
 explicit flag. This is what keeps a secret from being round-tripped through the browser just so an
 untouched form can post it back.
@@ -347,16 +350,25 @@ deletes it. Use it — do not act on `game.Url` directly. The containment check 
 > what turned it into a working arbitrary-delete primitive**, because the path was attacker-controlled.
 > Fixing a broken file operation is a security change when the path comes from user input.
 
-### RAWG HTML is untrusted
+### Provider descriptions are untrusted
 
-RAWG is community-editable, and its game descriptions are rendered with Blazor's `MarkupString`
-(the `dangerouslySetInnerHTML` equivalent) on a **public** page. `GameMappings.ToContract` sanitises
-`Description` on the **read** path — deliberately, so rows stored before sanitisation existed are
-cleaned without a migration.
+Game catalogues are community-editable, and their descriptions are rendered with Blazor's
+`MarkupString` (the `dangerouslySetInnerHTML` equivalent) on a **public** page.
+`GameMappings.ToContract` sanitises `Description` on the **read** path — deliberately, so rows stored
+before sanitisation existed are cleaned without a migration.
 
-`MetaDataEndpoints.GetGame` must keep returning `game.ToContract()` and not the raw EF entity. It used
-to return the entity, which bypassed the mapping layer entirely and would be a second, unsanitised
-feed straight past the sanitiser.
+The move off RAWG made that read-path choice more load-bearing, not less. The `description` column now
+holds two different things: HTML that RAWG served, carried across unchanged by migration 007 and
+including rows written before this sanitiser existed, and IGDB summaries, which arrive as **plain
+text** and are HTML-encoded at ingest by `IgdbProvider.ToHtml`. Sanitising on the way out is what lets
+those share a column safely, and the encode-at-ingest step is what stops a summary containing `<3`
+from being silently eaten — or something sharper from not being.
+
+`MetaDataEndpoints.GetGame` is the one path that maps a provider record to a contract **without going
+through the database**, so it does not pass through `ToContract(MetadataGame)`. It calls
+`GameMappings.SanitizeDescription` explicitly for that reason. If that call is ever removed, the
+preview endpoint becomes an unsanitised feed straight past the sanitiser — which is exactly what this
+endpoint used to be when it returned the raw EF entity.
 
 ### Nothing served from `/media` may be a script host
 
@@ -390,6 +402,51 @@ The entry name is a constant (`GameTownGuide.txt`), never anything derived from 
 containing `../` would be written into the archive's index verbatim, and some extractors act on it.
 If that ever becomes configurable, it needs the same treatment as an uploaded filename.
 
+### Search terms reach IGDB's query language, and must be escaped
+
+**A vulnerability class this codebase did not have before the move off RAWG.** RAWG took its search
+term as a query-string parameter, which RestSharp encoded; the worst a contributor could do by typing
+punctuation was get no results.
+
+IGDB uses Apicalypse, where the query is a **string body, not parameters**, and the search term is
+interpolated between quotes into a body that also carries `fields`, `where` and `limit`:
+
+```
+fields name, slug; search "QUERY"; where game_type = 0; limit 20;
+```
+
+An unescaped `"` in QUERY closes the string, and everything after it parses as query language — a
+replaced `where`, a different `fields` list, a second statement. Confirmed against the live API while
+this was written: **IGDB does not reject a broken-out query, it answers it.** There is no error to
+notice and nothing in a log to look wrong.
+
+`ApicalypseQuery.Quote` is the only sanctioned way to put user-typed text into a query, and
+`ApicalypseTests` pins it — including the ordering trap (escape backslashes *before* quotes, or `"`
+becomes `\"` whose backslash is itself escaped, leaving the quote live) and that legitimate titles
+like `Tom Clancy's` and `S.T.A.L.K.E.R.` survive intact.
+
+The blast radius is smaller than SQL injection — IGDB is a read-only public catalogue, reached with
+our credentials, and nothing it returns is trusted downstream (images still go through `ImageFetcher`,
+descriptions still through the sanitiser). It is not nothing: `/meta/searchMetadata` is a
+Contributor-authenticated proxy that would be executing caller-authored queries against our rate
+limit, and every clause added to that body in future is equally rewritable.
+
+### The IGDB client secret is a stored credential, not a key
+
+Two properties worth keeping:
+
+- **The client id and the client secret are treated differently on purpose.** The id is sent as a
+  header on every request and is not a secret, so `GET /settings` returns it in full — an admin needs
+  to be able to confirm which Twitch application an install points at. The secret is returned masked
+  (last four characters) with a flag, exactly as the box-art key is, and is never round-tripped
+  through the browser.
+- **The token cache is keyed on a hash of the credentials**, not on nothing. `IgdbTokenProvider`
+  caches the ~60-day bearer token — it has to, or every keystroke in the picker would cost a Twitch
+  round trip — but a token minted from credentials that have since been edited is a *stale secret*,
+  not a cache hit. Keying on the hash means editing them in the admin UI misses the cache on the next
+  call, with nothing to invalidate. The fingerprint is a hash rather than the values so a memory dump
+  of the singleton is not a copy of the secret.
+
 ### Tag names reach the query, but never as SQL
 
 `TagService.Slugify` normalises a hand-typed name before it is stored or matched. That is a
@@ -417,7 +474,7 @@ user-supplied text on an anonymous route. It is compared, never interpolated. Ke
 - **The connection string is the only secret outside the database now.** It comes from user-secrets
   in development and from `Environment=` in the systemd unit on the appliance;
   `appsettings.json` ships a `SetInSecrets` placeholder. It is also the *only* configuration that
-  throws at startup when missing — everything else, the RAWG key included, lives in the `Settings`
+  throws at startup when missing — everything else, the IGDB credentials included, lives in the `Settings`
   table, because an unconfigured install has to boot far enough to serve its own setup page.
 - After re-scaffolding EFModel, delete the generated `OnConfiguring` override — it hardcodes the
   connection string into source.

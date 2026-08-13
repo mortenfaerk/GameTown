@@ -129,9 +129,9 @@ else
                     {
                         @string.Join(" · ", game.Tags.Take(3).Select(t => t.Name))
                     }
-                    else if (game.RawgGame?.Genres.Count > 0)
+                    else if (game.Metadata?.Genres.Count > 0)
                     {
-                        @string.Join(" · ", game.RawgGame.Genres.Take(3).Select(g => g.Name))
+                        @string.Join(" · ", game.Metadata.Genres.Take(3).Select(g => g.Name))
                     }
                     else
                     {

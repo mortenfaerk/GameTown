@@ -5,10 +5,10 @@
 
 <h3 class="mb-4">Search Games</h3>
 
-<RawgGamePicker SelectedGameChanged="game => SelectedGame = game" />
+<MetadataPicker SelectedGameChanged="game => SelectedGame = game" />
 
-<RawgGameCard Game="SelectedGame" ShowScreenshots="true" />
+<MetadataCard Game="SelectedGame" ShowScreenshots="true" />
 
 @code {
-    private RawgGameContract? SelectedGame;
+    private GameMetadataContract? SelectedGame;
 }

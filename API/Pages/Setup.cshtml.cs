@@ -41,8 +41,17 @@ public class SetupModel(DatabaseContext dbContext, SettingsService settings) : P
     [BindProperty]
     public string? GameFilesPath { get; set; }
 
+    /// <summary>
+    /// IGDB authenticates with a Twitch application, so the optional credential collected here is a
+    /// PAIR rather than a key. Both halves are needed for it to be worth storing either — see
+    /// SettingsService.GetIgdbCredentialsAsync on why a half-configured provider reports itself as
+    /// unconfigured.
+    /// </summary>
     [BindProperty]
-    public string? RawgApiKey { get; set; }
+    public string? IgdbClientId { get; set; }
+
+    [BindProperty]
+    public string? IgdbClientSecret { get; set; }
 
     public string DataDirectory => settings.DataDirectory;
 
@@ -127,8 +136,13 @@ public class SetupModel(DatabaseContext dbContext, SettingsService settings) : P
 
             if (!string.IsNullOrWhiteSpace(GameFilesPath))
                 await settings.SetAsync(SettingsService.GameFilesPathKey, GameFilesPath.Trim());
-            if (!string.IsNullOrWhiteSpace(RawgApiKey))
-                await settings.SetAsync(SettingsService.RawgApiKeyKey, RawgApiKey.Trim());
+            // Both or neither. Storing an id with no secret would leave a fresh install in a state
+            // that looks configured on the settings page and is not usable by the provider.
+            if (!string.IsNullOrWhiteSpace(IgdbClientId) && !string.IsNullOrWhiteSpace(IgdbClientSecret))
+            {
+                await settings.SetAsync(SettingsService.IgdbClientIdKey, IgdbClientId.Trim());
+                await settings.SetAsync(SettingsService.IgdbClientSecretKey, IgdbClientSecret.Trim());
+            }
 
             await transaction.CommitAsync();
         }

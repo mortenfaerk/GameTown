@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 namespace GameTownApp.Services;
 
 /// <summary>
-/// Client for the GameTown game endpoints and the RAWG metadata proxy.
+/// Client for the GameTown game endpoints and the metadata proxy.
 ///
 /// Everything goes through System.Net.Http.Json, which uses JsonSerializerDefaults.Web
 /// (camelCase, case-insensitive) and therefore lines up with ASP.NET Core's output without any
@@ -13,16 +13,32 @@ public class GamesService(HttpClient http)
 {
     private readonly HttpClient _http = http;
 
-    // ---------------------------------------------------------------- RAWG metadata (proxied)
+    // ---------------------------------------------------------------- provider metadata (proxied)
 
-    public async Task<List<RawgGameContract>> SearchGamesMetadata(string query, int page = 1, int pageSize = 20)
+    /// <summary>
+    /// Searches the configured metadata provider.
+    ///
+    /// Returns the wrapper rather than a bare list so the picker can tell "no such game" from "no
+    /// credentials are configured" — which, after the move off RAWG, is the state every upgraded
+    /// install starts in and therefore the one most in need of saying out loud.
+    /// </summary>
+    public async Task<MetadataSearchResponse> SearchGamesMetadata(string query, int page = 1, int pageSize = 20)
     {
         var url = $"/meta/searchMetadata?query={Uri.EscapeDataString(query)}&page={page}&pageSize={pageSize}";
-        return await _http.GetFromJsonAsync<List<RawgGameContract>>(url) ?? [];
+        return await _http.GetFromJsonAsync<MetadataSearchResponse>(url) ?? new MetadataSearchResponse();
     }
 
-    public async Task<RawgGameContract?> GetRawgGameById(string rawgGameId)
-        => await _http.GetFromJsonAsync<RawgGameContract>($"/meta/getGame/{Uri.EscapeDataString(rawgGameId)}");
+    /// <summary>
+    /// One full record from the provider, by the PROVIDER's id — not a local metadata id. Nothing
+    /// about a candidate exists in this database until the game is added.
+    /// </summary>
+    public async Task<GameMetadataContract?> GetMetadataByProviderId(int externalId)
+    {
+        var response = await _http.GetAsync($"/meta/getGame/{externalId}");
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<GameMetadataContract>();
+    }
 
     // ---------------------------------------------------------------- GameTown library (public)
 
@@ -79,7 +95,8 @@ public class GamesService(HttpClient http)
         if (string.IsNullOrWhiteSpace(storedPath))
             return null;
 
-        // Already absolute (e.g. a RAWG CDN URL left in place because re-hosting failed).
+        // Already absolute — a provider CDN URL, either from a live preview in the picker (nothing is
+        // downloaded until a game is added) or left in place because re-hosting failed.
         // Deliberately a scheme check and not Uri.TryCreate(UriKind.Absolute): on Linux that
         // treats a leading-slash path as a valid absolute file:// URI, so "/media/x.jpg" would
         // come back as "file:///media/x.jpg".
@@ -93,7 +110,7 @@ public class GamesService(HttpClient http)
     }
 
     /// <summary>
-    /// The image a game is shelved under: its box art, then RAWG's background image, then the first
+    /// The image a game is shelved under: its box art, then the provider's image, then the first
     /// screenshot, then null — at which point the caller draws the title's initials.
     ///
     /// One implementation rather than one per page. The shelf and the detail page each had their own
@@ -107,13 +124,13 @@ public class GamesService(HttpClient http)
         if (!string.IsNullOrWhiteSpace(game.BoxArtUrl))
             return ResolveMedia(game.BoxArtUrl);
 
-        var rawg = game.RawgGame;
-        if (rawg is null) return null;
+        var metadata = game.Metadata;
+        if (metadata is null) return null;
 
-        // The screenshot step matters because RAWG does not always supply a background image.
-        var path = !string.IsNullOrWhiteSpace(rawg.BackgroundImage)
-            ? rawg.BackgroundImage
-            : rawg.Screenshots.FirstOrDefault(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image))?.Image;
+        // The screenshot step matters because a provider does not always supply a main image.
+        var path = !string.IsNullOrWhiteSpace(metadata.Image)
+            ? metadata.Image
+            : metadata.Screenshots.FirstOrDefault(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image))?.Image;
 
         return ResolveMedia(path);
     }

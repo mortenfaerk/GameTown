@@ -39,6 +39,7 @@ builder.Services.AddScoped<GamesService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<UploadService>();
 builder.Services.AddScoped<SettingsService>();
+builder.Services.AddScoped<MetadataRelinkService>();
 
 var host = builder.Build();
 

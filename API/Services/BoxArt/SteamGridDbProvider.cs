@@ -17,7 +17,7 @@ namespace API.Services.BoxArt;
 /// resolved first (<c>search/autocomplete</c>) and the grids fetched for the best match.
 ///
 /// The key is read from settings on every call, never captured in the constructor. That is the
-/// documented failure mode in this codebase: RAWGService and FileService both used to take their
+/// documented failure mode in this codebase: the old RAWGService and FileService both used to take their
 /// configuration as constructor arguments resolved once at startup, which is what made the settings
 /// page appear to save and change nothing.
 /// </summary>
@@ -92,7 +92,7 @@ public class SteamGridDbProvider(SettingsService settings, IHttpClientFactory ht
         }
         catch (Exception)
         {
-            // No exception detail to the caller — see SettingsEndpoints.TestRawgKey for the reasoning.
+            // No exception detail to the caller — see SettingsEndpoints.TestIgdbCredentials for the reasoning.
             return new BoxArtSearchResult { Reason = "unreachable" };
         }
     }

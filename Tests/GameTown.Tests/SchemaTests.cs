@@ -90,7 +90,7 @@ public class SchemaTests
         using (var client = app.CreateBrowser()) await client.GetAsync("/");
 
         // Every migration ran, not just the next one. An install can be several releases behind.
-        Assert.Equal("6", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+        Assert.Equal("7", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
 
         // The row is untouched, and each new column is present with its "nobody asked for this"
         // value rather than being backfilled with a guess.
@@ -111,6 +111,145 @@ public class SchemaTests
         // And nothing else was rebuilt on the way past.
         Assert.Equal("1", app.QueryScalar(@"SELECT COUNT(*) FROM ""GameTownGame"""));
         Assert.Equal("2", app.QueryScalar(@"SELECT COUNT(*) FROM ""GameTownRoles"""));
+    }
+
+    /// <summary>
+    /// The RAWG-to-neutral-tables move, against a library that actually has RAWG metadata in it.
+    ///
+    /// This is the test the whole migration rests on. An installed library is the ONLY copy of its own
+    /// metadata now — RAWG cannot be asked for it again — so if migration 007 drops a field, that
+    /// field is gone from that install permanently. "The migration runs" is not the claim being
+    /// checked here; "the migration runs without losing anything" is, which is why every column is
+    /// asserted by value rather than the rows being counted.
+    ///
+    /// Note the two games sharing one metadata record. That is the normal case (two uploads of the
+    /// same title) and it is where a re-pointing bug would show as one game silently adopting
+    /// another's metadata.
+    /// </summary>
+    [Fact]
+    public async Task A_library_with_rawg_metadata_keeps_every_field_across_the_move_to_neutral_tables()
+    {
+        using var app = new GameTownApp();
+
+        // Version 6 — an install on the release immediately before this one, which is the state every
+        // upgrading appliance is actually in.
+        foreach (var migration in new[]
+                 {
+                     "002_game_title_index", "003_game_archive_hash", "004_game_box_art",
+                     "005_game_tags", "006_game_guide"
+                 })
+        {
+            app.RunSql(GameTownApp.SchemaFile(Path.Combine("migrations", $"{migration}.sql")));
+        }
+        app.QueryScalar(@"INSERT INTO ""SchemaVersion"" (""Version"") VALUES (2),(3),(4),(5),(6)");
+
+        // A RAWG game with the full graph hanging off it, and images ALREADY re-hosted as local
+        // /media paths — which is what makes the migration a pure local move and is the property the
+        // last assertion here pins.
+        app.QueryScalar("""
+            INSERT INTO "RAWGGames" ("id","slug","name","description","website","metacritic","rating",
+                                     "background_image","released","updated")
+            VALUES (3498,'gta-v','Grand Theft Auto V','<p>An <b>open world</b> game.</p>',
+                    'https://rockstargames.com',92,4.47,'/media/aaaa-1111.jpg','2013-09-17',
+                    '2024-01-01 00:00:00');
+            INSERT INTO "RAWGDevelopers" ("id","name","slug") VALUES (10,'Rockstar North','rockstar-north');
+            INSERT INTO "RAWGGenres" ("id","name","slug") VALUES (4,'Action','action');
+            INSERT INTO "RAWGScreenshots" ("Id","image","width","height","is_deleted")
+            VALUES (1234,'/media/shot-1.jpg',1920,1080,0);
+            INSERT INTO "RAWGGames_Developers" VALUES (3498,10);
+            INSERT INTO "RAWGGames_Genres" VALUES (3498,4);
+            INSERT INTO "RAWGGames_Screenshots" VALUES (3498,1234);
+
+            INSERT INTO "GameTownGame" ("Id","Title","HowTo","RAWGGameId","URL","Size","BoxArtUrl","GuideBaked")
+            VALUES ('AAAAAAAA-1111-1111-1111-111111111111','GTA V','Run setup.exe',3498,
+                    '/var/lib/gametown/games/gta.zip',60000.0,'/media/box.jpg',1);
+            INSERT INTO "GameTownGame" ("Id","Title","HowTo","RAWGGameId","URL","Size")
+            VALUES ('BBBBBBBB-2222-2222-2222-222222222222','GTA V (LAN)','Use hamachi',3498,
+                    '/var/lib/gametown/games/gta2.zip',60000.0);
+            INSERT INTO "GameTownGame" ("Id","Title","HowTo","URL","Size")
+            VALUES ('CCCCCCCC-3333-3333-3333-333333333333','No Metadata','Just run it',
+                    '/var/lib/gametown/games/x.zip',10.0);
+
+            INSERT INTO "Settings" ("Key","Value") VALUES ('RAWGApiKey','deadbeef'),('GameFilesPath','/mnt/games');
+            """);
+
+        // Booting the new build is the upgrade.
+        using (var client = app.CreateBrowser()) await client.GetAsync("/");
+
+        Assert.Equal("7", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+
+        // Field by field. The image path especially: it is a local file this server is still serving,
+        // and carrying the row across without it would blank the cover on a game nobody touched.
+        Assert.Equal("rawg|3498|gta-v|Grand Theft Auto V|<p>An <b>open world</b> game.</p>|"
+                     + "2013-09-17|92.0|4.47|/media/aaaa-1111.jpg|https://rockstargames.com",
+            app.QueryScalar("""
+                SELECT "provider"||'|'||"external_id"||'|'||"slug"||'|'||"name"||'|'||"description"||'|'
+                       ||"released"||'|'||"critic_score"||'|'||"rating"||'|'||"image"||'|'||"website"
+                FROM "MetadataGames" WHERE "external_id" = 3498
+                """));
+
+        // The related rows and their joins came too — a game with no genres or screenshots renders as
+        // a stub, which is a data loss that looks like a UI bug.
+        Assert.Equal("Rockstar North|Action|/media/shot-1.jpg|1920",
+            app.QueryScalar("""
+                SELECT d."name"||'|'||ge."name"||'|'||s."image"||'|'||s."width"
+                FROM "MetadataGames" g
+                JOIN "MetadataGames_Developers" md ON md."metadata_id" = g."id"
+                JOIN "MetadataDevelopers" d ON d."id" = md."developer_id"
+                JOIN "MetadataGames_Genres" mg ON mg."metadata_id" = g."id"
+                JOIN "MetadataGenres" ge ON ge."id" = mg."genre_id"
+                JOIN "MetadataGames_Screenshots" ms ON ms."metadata_id" = g."id"
+                JOIN "MetadataScreenshots" s ON s."id" = ms."screenshot_id"
+                """));
+
+        // Both games re-pointed at the SAME record, and the third — which never had metadata — was
+        // left null rather than being given someone else's.
+        Assert.Equal("GTA V|3498", app.QueryScalar(
+            @"SELECT ""Title""||'|'||""MetadataId"" FROM ""GameTownGame"" WHERE ""Id"" = 'AAAAAAAA-1111-1111-1111-111111111111'"));
+        Assert.Equal("GTA V (LAN)|3498", app.QueryScalar(
+            @"SELECT ""Title""||'|'||""MetadataId"" FROM ""GameTownGame"" WHERE ""Id"" = 'BBBBBBBB-2222-2222-2222-222222222222'"));
+        Assert.Equal("0", app.QueryScalar(
+            @"SELECT COUNT(*) FROM ""GameTownGame"" WHERE ""Id"" = 'CCCCCCCC-3333-3333-3333-333333333333' AND ""MetadataId"" IS NOT NULL"));
+
+        // Curated work is untouched. Box art and the baked-guide flag belong to the contributor and no
+        // migration has any business rewriting them.
+        Assert.Equal("/media/box.jpg|1", app.QueryScalar(
+            @"SELECT ""BoxArtUrl""||'|'||""GuideBaked"" FROM ""GameTownGame"" WHERE ""Id"" = 'AAAAAAAA-1111-1111-1111-111111111111'"));
+
+        // The dead credential is gone and the unrelated setting is not.
+        Assert.Equal("0", app.QueryScalar(@"SELECT COUNT(*) FROM ""Settings"" WHERE ""Key"" = 'RAWGApiKey'"));
+        Assert.Equal("/mnt/games", app.QueryScalar(@"SELECT ""Value"" FROM ""Settings"" WHERE ""Key"" = 'GameFilesPath'"));
+
+        // The old tables are still there, holding the same rows. 007 is additive on purpose: it keeps
+        // the release reversible, and "RAWGGameId" cannot be dropped anyway because a table-level FK
+        // constraint names it.
+        Assert.Equal("1", app.QueryScalar(@"SELECT COUNT(*) FROM ""RAWGGames"""));
+        Assert.Equal("3498", app.QueryScalar(
+            @"SELECT ""RAWGGameId"" FROM ""GameTownGame"" WHERE ""Id"" = 'AAAAAAAA-1111-1111-1111-111111111111'"));
+    }
+
+    /// <summary>
+    /// The other side of the same migration: a fresh install must reach exactly the state an upgraded
+    /// one does. The INSERT ... SELECTs in 007 copy zero rows here, which is what makes the two paths
+    /// the same sequence rather than two sequences that happen to agree today.
+    /// </summary>
+    [Fact]
+    public async Task A_fresh_install_gets_the_metadata_tables_and_copies_nothing_into_them()
+    {
+        using var app = new GameTownApp();
+        using (var client = app.CreateBrowser()) await client.GetAsync("/");
+
+        Assert.Equal("7", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+        Assert.Equal("0", app.QueryScalar(@"SELECT COUNT(*) FROM ""MetadataGames"""));
+
+        // Present and usable, not merely present: a surrogate the database assigns, which is the
+        // behaviour DatabaseContextConfiguration has to restore because the scaffolder marks these
+        // keys ValueGeneratedNever.
+        app.QueryScalar("""
+            INSERT INTO "MetadataGames" ("provider","external_id","slug","name","description","website")
+            VALUES ('igdb',1009,'the-last-of-us','The Last of Us','x','');
+            """);
+        Assert.Equal("1", app.QueryScalar(@"SELECT ""id"" FROM ""MetadataGames"" WHERE ""external_id"" = 1009"));
     }
 
     /// <summary>

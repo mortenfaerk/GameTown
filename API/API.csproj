@@ -47,8 +47,13 @@
          an mXSS flaw in the parser this sanitiser trusts. 9.1.x depends on AngleSharp 1.6.0, where
          it is fixed. See SECURITY-NOTES.md. -->
     <PackageReference Include="HtmlSanitizer" Version="9.1.974" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="RestSharp" Version="114.0.0" />
+    <!-- RestSharp and Newtonsoft.Json are deliberately absent. They existed for RAWGService, which
+         needed Newtonsoft's SnakeCaseNamingStrategy to bind RAWG's snake_case fields. IGDB is read
+         with System.Text.Json straight off the JsonDocument — the response shape is small, mostly
+         optional, and reading it explicitly is what makes the "field absent" cases obvious rather
+         than silently null. Nothing else used either package once RAWGService was deleted, and an
+         appliance that ships as one self-contained tarball should not carry dependencies nothing
+         calls. -->
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.16" />
   </ItemGroup>
 

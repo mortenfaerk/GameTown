@@ -1,4 +1,5 @@
 ﻿using API.Models.Games;
+using API.Services.Metadata;
 using EFModel.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -10,15 +11,15 @@ namespace API.Services
     public class GTGamesService
     {
         readonly DatabaseContext _context;
-        readonly RAWGService _rawgService;
+        readonly GameMetadataService _metadata;
         readonly FileService _fileService;
         readonly MediaStore _media;
 
         public GTGamesService(
-            DatabaseContext context, RAWGService rawgService, FileService fileService, MediaStore media)
+            DatabaseContext context, GameMetadataService metadata, FileService fileService, MediaStore media)
         {
             _context = context;
-            _rawgService = rawgService;
+            _metadata = metadata;
             _fileService = fileService;
             _media = media;
         }
@@ -37,15 +38,15 @@ namespace API.Services
         private IQueryable<GameTownGame> WithContractIncludes()
             => _context.GameTownGames
                 .Include(g => g.Tags)
-                .Include(g => g.Rawggame).ThenInclude(r => r!.Developers)
-                .Include(g => g.Rawggame).ThenInclude(r => r!.Genres)
-                .Include(g => g.Rawggame).ThenInclude(r => r!.Screenshots)
+                .Include(g => g.Metadata).ThenInclude(m => m!.Developers)
+                .Include(g => g.Metadata).ThenInclude(m => m!.Genres)
+                .Include(g => g.Metadata).ThenInclude(m => m!.Screenshots)
                 .AsSplitQuery();
 
         public async Task<GameContract?> GetGameById(Guid id)
         {
             var game = await WithContractIncludes().SingleOrDefaultAsync(g => g.Id == id);
-            return game?.ToContract();
+            return game?.ToContract(_metadata.Provider.Id);
         }
         /// <summary>
         /// Stored path plus title for a game. The title is what the browser should see as the
@@ -60,29 +61,33 @@ namespace API.Services
         }
         public async Task RemoveGameById(Guid id)
         {
-            var game = await _context.GameTownGames.Include(g=>g.Rawggame).ThenInclude(rg => rg!.Screenshots).FirstOrDefaultAsync(g=>g.Id == id) ?? throw new KeyNotFoundException($"Game with ID {id} not found.");
+            var game = await _context.GameTownGames.Include(g=>g.Metadata).ThenInclude(m => m!.Screenshots).FirstOrDefaultAsync(g=>g.Id == id) ?? throw new KeyNotFoundException($"Game with ID {id} not found.");
 
-            // Rawggame is null for games uploaded without RAWG metadata. The screenshots also hang
-            // off the shared RAWG record, so only bin the image files once no other GameTown game
+            // Metadata is null for games uploaded without any. The screenshots also hang off the
+            // shared metadata record, so only bin the image files once no other GameTown game
             // still points at it.
-            if (game.Rawggame is not null)
+            if (game.Metadata is not null)
             {
-                var rawgStillInUse = await _context.GameTownGames
-                    .AnyAsync(g => g.Id != game.Id && g.RawggameId == game.RawggameId);
+                var metadataStillInUse = await _context.GameTownGames
+                    .AnyAsync(g => g.Id != game.Id && g.MetadataId == game.MetadataId);
 
-                if (!rawgStillInUse)
+                if (!metadataStillInUse)
                 {
                     // Through MediaStore, which resolves against the DATA directory. This used to
                     // build its own path from Directory.GetCurrentDirectory() + "wwwroot/media" — the
                     // location re-hosted art was moved out of, precisely because an in-place upgrade
                     // deletes the application folder. Nothing has been written there for some time, so
                     // this quietly matched nothing and orphaned every screenshot it was meant to bin.
-                    foreach (var screenshot in game.Rawggame.Screenshots)
+                    foreach (var screenshot in game.Metadata.Screenshots)
                         _media.Delete(screenshot.Image);
+
+                    // The metadata record's own image, on the same terms. Missed until now: the loop
+                    // above bins every screenshot but the cover outlived the last game that used it.
+                    _media.Delete(game.Metadata.Image);
                 }
             }
 
-            // The override, if this game had one. Unlike the RAWG screenshots above there is no
+            // The override, if this game had one. Unlike the screenshots above there is no
             // shared-use check to make: box art belongs to exactly one game by construction.
             _media.Delete(game.BoxArtUrl);
 
@@ -140,14 +145,18 @@ namespace API.Services
                 Size = fileSize,
                 ArchiveSha256 = string.IsNullOrEmpty(archiveSha256) ? null : archiveSha256
             };
-            if (game.RAWGGameId != null)
+            if (game.ProviderGameId != null)
             {
                 // Resolves against what is already stored, so a second game referencing the same
-                // RAWG title (or a shared studio/genre) does not collide on the primary key.
-                var rawgGame = await _rawgService.EnsureRawgGamePersisted(game.RAWGGameId);
+                // title (or a shared studio/genre) does not collide on the primary key.
+                var metadata = await _metadata.EnsurePersistedAsync(ParseProviderId(game.ProviderGameId));
 
-                newGame.RawggameId = rawgGame.Id;
-                newGame.Rawggame = rawgGame;
+                // The navigation only, never MetadataId alongside it. The old code set both because
+                // a RAWG row's key was RAWG's own id and therefore known before the insert. These
+                // keys are surrogates the database assigns, so on a first-time fetch the id is still
+                // 0 here — copying it would write a foreign key to nothing. EF fills it in from the
+                // navigation once the metadata row has been inserted.
+                newGame.Metadata = metadata;
             }
             _context.GameTownGames.Add(newGame);
             await _context.SaveChangesAsync();
@@ -161,16 +170,29 @@ namespace API.Services
                 existingGame.Title = game.Title;
             if (game.HowTo != null)
                 existingGame.HowTo = game.HowTo;
-            if (game.RawgGameId != null)
+            if (game.ProviderGameId != null)
             {
-                var rawgGame = await _rawgService.EnsureRawgGamePersisted(game.RawgGameId);
+                var metadata = await _metadata.EnsurePersistedAsync(ParseProviderId(game.ProviderGameId));
 
-                existingGame.RawggameId = rawgGame.Id;
-                existingGame.Rawggame = rawgGame;
+                // Navigation only — see AddGame on why the id is not copied alongside it.
+                existingGame.Metadata = metadata;
             }
             // Url is intentionally not patchable — it is the on-disk location, set once at upload.
             await _context.SaveChangesAsync();
         }
+
+        /// <summary>
+        /// Parses a provider game id off the wire.
+        ///
+        /// The ids travel as strings because RAWG's did and the form field is still a string, but they
+        /// are integers at both ends. Rejecting a non-numeric one here turns what would otherwise be a
+        /// 500 from deep inside the provider client into a 400 the handler already knows how to
+        /// translate.
+        /// </summary>
+        private static int ParseProviderId(string value)
+            => int.TryParse(value, out var parsed) && parsed > 0
+                ? parsed
+                : throw new ArgumentException($"'{value}' is not a valid provider game id.", nameof(value));
         public Task<List<GameContract>> GetGamePaged(int page, int page_size, IEnumerable<string>? tagSlugs = null)
         {
             if (page < 1 || page_size < 1)
@@ -240,7 +262,7 @@ namespace API.Services
                 .Take(pageSize)
                 .ToListAsync();
 
-            return [.. page_of_games.Select(g => g.ToContract())];
+            return [.. page_of_games.Select(g => g.ToContract(_metadata.Provider.Id))];
         }
     }
 }

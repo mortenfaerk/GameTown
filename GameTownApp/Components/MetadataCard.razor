@@ -1,11 +1,10 @@
 @inject GamesService GamesService
 
 @*
-    Presentation of a single RAWG game. Genres and Developers render for real now — the old
-    ResponseRAWGGameDTO never serialised them, so these lists were always empty.
+    Presentation of a single game's imported metadata.
 
-    Images go through ResolveMedia: metadata straight from RAWG carries absolute CDN URLs (passed
-    through untouched), while anything already re-hosted is a /media path that has to be resolved
+    Images go through ResolveMedia: a record fetched live from the provider carries absolute CDN URLs
+    (passed through untouched), while anything already stored is a /media path that has to be resolved
     against the API rather than this app.
 *@
 
@@ -14,9 +13,9 @@
     <div class="card mb-4 shadow-sm">
         <div class="row g-0">
             <div class="col-md-4">
-                @if (!string.IsNullOrEmpty(Game.BackgroundImage))
+                @if (!string.IsNullOrEmpty(Game.Image))
                 {
-                    <img src="@GamesService.ResolveMedia(Game.BackgroundImage)" class="img-fluid rounded-start" alt="@Game.Name" />
+                    <img src="@GamesService.ResolveMedia(Game.Image)" class="img-fluid rounded-start" alt="@Game.Name" />
                 }
                 else
                 {
@@ -34,9 +33,13 @@
 
                     <ul class="list-group list-group-flush mb-3">
                         <li class="list-group-item"><strong>Released:</strong> @(Game.Released?.ToString("yyyy-MM-dd") ?? "—")</li>
-                        <li class="list-group-item"><strong>Metacritic:</strong> @(Game.Metacritic?.ToString() ?? "—")</li>
+                        @*
+                            "Critic score", not "Metacritic". On a row carried over from RAWG it IS a
+                            Metacritic score; on anything fetched since it is IGDB's own aggregate.
+                            Labelling both as Metacritic would be a small lie that gets believed.
+                        *@
+                        <li class="list-group-item"><strong>Critic score:</strong> @(Game.CriticScore is null ? "—" : Math.Round(Game.CriticScore.Value).ToString("0"))</li>
                         <li class="list-group-item"><strong>Rating:</strong> @(Game.Rating?.ToString("0.0") ?? "—")</li>
-                        <li class="list-group-item"><strong>Playtime:</strong> @(Game.Playtime is null ? "—" : $"{Game.Playtime} hours")</li>
                         <li class="list-group-item">
                             <strong>Genres:</strong>
                             @(Game.Genres.Count == 0 ? "—" : string.Join(", ", Game.Genres.Select(g => g.Name)))
@@ -49,7 +52,7 @@
 
                     @if (!string.IsNullOrEmpty(Game.Website))
                     {
-                        <a href="@Game.Website" class="btn btn-primary" target="_blank" rel="noopener">Official Website</a>
+                        <a href="@Game.Website" class="btn btn-primary" target="_blank" rel="noopener">More about this game</a>
                     }
                 </div>
             </div>
@@ -68,6 +71,6 @@
 }
 
 @code {
-    [Parameter] public RawgGameContract? Game { get; set; }
+    [Parameter] public GameMetadataContract? Game { get; set; }
     [Parameter] public bool ShowScreenshots { get; set; }
 }

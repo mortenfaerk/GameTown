@@ -1,0 +1,86 @@
+@using GameTownApp.Services
+@inject GamesService GamesService
+
+@*
+    Autocomplete over the metadata proxy. Emits the *full* record for the chosen game: the search
+    endpoint only returns a summary (no description or screenshots), so the selection is re-fetched
+    via /meta/getGame before being handed to the parent.
+
+    Search results are addressed by the PROVIDER's id, not a local one — nothing about a candidate
+    exists in this database until the game is actually added.
+*@
+
+<AutoComplete TItem="MetadataSearchResultContract"
+              DataProvider="GamesDataProvider"
+              @bind-Value="SearchQuery"
+              Placeholder="@Placeholder"
+              PropertyName="Name"
+              OnChanged="OnGameSelected"
+              Class="@Class" />
+
+@if (Unavailable is not null)
+{
+    <div class="form-text text-warning">@Unavailable</div>
+}
+
+@code {
+    /// <summary>Fires with the fully-populated game, or null when the selection is cleared.</summary>
+    [Parameter] public EventCallback<GameMetadataContract?> SelectedGameChanged { get; set; }
+
+    [Parameter] public string Placeholder { get; set; } = "Type to search games...";
+    [Parameter] public string? Class { get; set; } = "mb-3";
+
+    private string? SearchQuery;
+
+    /// <summary>
+    /// Why the search came back empty, when it was not simply "no such game".
+    ///
+    /// An empty dropdown is indistinguishable from an unconfigured provider, and after the move off
+    /// RAWG that is the state every upgraded install starts in — so the one case that most needs
+    /// explaining is the one the UI would otherwise stay silent about.
+    /// </summary>
+    private string? Unavailable;
+
+    private async Task<AutoCompleteDataProviderResult<MetadataSearchResultContract>> GamesDataProvider(
+        AutoCompleteDataProviderRequest<MetadataSearchResultContract> request)
+    {
+        var response = await GamesService.SearchGamesMetadata(request.Filter?.Value ?? string.Empty, 1, 20);
+
+        Unavailable = response.Reason switch
+        {
+            "ok" => null,
+            "not-configured" => $"{Describe(response)} is not configured — an administrator can add credentials under Administer → Settings. You can still add this game by hand.",
+            "rejected" => $"{Describe(response)} refused our credentials. An administrator should re-check them under Administer → Settings.",
+            "rate-limited" => $"{Describe(response)} is rate-limiting us. Try again in a moment.",
+            "unreachable" => $"Could not reach {Describe(response)}.",
+            _ => null
+        };
+
+        return new AutoCompleteDataProviderResult<MetadataSearchResultContract>
+        {
+            Data = response.Results,
+            TotalCount = response.Results.Count
+        };
+    }
+
+    private static string Describe(MetadataSearchResponse response)
+        => string.IsNullOrWhiteSpace(response.ProviderName) ? "The metadata provider" : response.ProviderName;
+
+    private async Task OnGameSelected(MetadataSearchResultContract? selected)
+    {
+        if (selected is null)
+        {
+            await SelectedGameChanged.InvokeAsync(null);
+            return;
+        }
+
+        SearchQuery = selected.Name;
+
+        // The full record, by the provider's id. A search result carries no description, screenshots,
+        // genres or developers — everything the card renders — so handing it straight on would show
+        // an almost-empty preview of a game that does have all of it.
+        var full = await GamesService.GetMetadataByProviderId(selected.ExternalId);
+
+        await SelectedGameChanged.InvokeAsync(full);
+    }
+}

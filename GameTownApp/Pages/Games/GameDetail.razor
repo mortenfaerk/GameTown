@@ -59,23 +59,28 @@ else
             <h1 class="mb-1">@Game.Title</h1>
             <p class="gt-data mb-3">
                 @FormatSize(Game.Size)
-                @if (Game.RawgGame?.Released is not null)
+                @if (Game.Metadata?.Released is not null)
                 {
-                    <span> · released @Game.RawgGame.Released.Value.ToString("yyyy-MM-dd")</span>
+                    <span> · released @Game.Metadata.Released.Value.ToString("yyyy-MM-dd")</span>
                 }
-                @if (Game.RawgGame?.Metacritic is not null)
+                @*
+                    "critic score", not "metacritic". It IS Metacritic on a row carried over from
+                    RAWG and IGDB's own aggregate on anything since, and the page cannot tell the
+                    reader which without saying something false about the other.
+                *@
+                @if (Game.Metadata?.CriticScore is not null)
                 {
-                    <span> · metacritic @Game.RawgGame.Metacritic</span>
+                    <span> · critic score @Math.Round(Game.Metadata.CriticScore.Value)</span>
                 }
             </p>
 
-            @if (Game.RawgGame is not null)
+            @if (Game.Metadata is not null)
             {
                 <p class="mb-1"><span class="gt-muted">Genres:</span>
-                    @(Game.RawgGame.Genres.Count == 0 ? "—" : string.Join(", ", Game.RawgGame.Genres.Select(g => g.Name)))
+                    @(Game.Metadata.Genres.Count == 0 ? "—" : string.Join(", ", Game.Metadata.Genres.Select(g => g.Name)))
                 </p>
                 <p class="mb-3"><span class="gt-muted">Developers:</span>
-                    @(Game.RawgGame.Developers.Count == 0 ? "—" : string.Join(", ", Game.RawgGame.Developers.Select(d => d.Name)))
+                    @(Game.Metadata.Developers.Count == 0 ? "—" : string.Join(", ", Game.Metadata.Developers.Select(d => d.Name)))
                 </p>
             }
 
@@ -100,7 +105,13 @@ else
                         {
                             <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="StartEdit">Edit</button>
                         }
-                        @if (Game.RawgGame?.Id is not null)
+                        @*
+                            Only for metadata from the CURRENT provider. A game still carrying
+                            RAWG data has nothing to refresh from — the service is gone — so the
+                            button would fail every time it was pressed. Re-matching such a game is
+                            what the admin re-link tool is for.
+                        *@
+                        @if (CanRefreshMetadata)
                         {
                             <button class="btn btn-outline-secondary" disabled="@Busy" @onclick="RefreshMetadata">
                                 @(Busy ? "Refreshing…" : "Refresh metadata")
@@ -142,19 +153,19 @@ else
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">RAWG match</label>
+                        <label class="form-label">Metadata match</label>
                         <p class="gt-data mb-2">
-                            @if (EditRawgName is not null)
+                            @if (EditMetadataName is not null)
                             {
-                                @($"Currently: {EditRawgName} (id {Edit.RawgGameId})")
+                                @($"Currently: {EditMetadataName} ({Game.Metadata?.Provider} {Edit.ProviderGameId})")
                             }
                             else
                             {
                                 @("No metadata attached")
                             }
                         </p>
-                        <RawgGamePicker SelectedGameChanged="OnEditRawgSelected"
-                                        Placeholder="Search RAWG to re-match this game…" />
+                        <MetadataPicker SelectedGameChanged="OnEditMetadataSelected"
+                                        Placeholder="Search to re-match this game…" />
                     </div>
 
                     <button type="submit" class="btn btn-primary" disabled="@Busy">
@@ -212,11 +223,11 @@ else
                         <span>This game has its own cover. </span>
                         <button type="button" class="btn btn-sm btn-link p-0 align-baseline"
                                 disabled="@Busy" @onclick="ClearBoxArt">Remove it</button>
-                        <span> to fall back to the RAWG image.</span>
+                        <span> to fall back to the provider's image.</span>
                     }
                     else
                     {
-                        <span>Using the RAWG image. Pick a cover to replace it — this saves immediately.</span>
+                        <span>Using the provider's image. Pick a cover to replace it — this saves immediately.</span>
                     }
                 </p>
                 <BoxArtPicker GameId="Game.Id" Title="@Game.Title"
@@ -232,12 +243,12 @@ else
         </div>
     </div>
 
-    @if (Game.RawgGame is not null && !string.IsNullOrWhiteSpace(Game.RawgGame.Description))
+    @if (Game.Metadata is not null && !string.IsNullOrWhiteSpace(Game.Metadata.Description))
     {
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">About</h5>
-                <div class="card-text">@((MarkupString)Game.RawgGame.Description)</div>
+                <div class="card-text">@((MarkupString)Game.Metadata.Description)</div>
             </div>
         </div>
     }
@@ -269,6 +280,13 @@ else
     [Parameter] public string Id { get; set; } = string.Empty;
 
     private GameContract? Game;
+
+    /// <summary>
+    /// Whether "Refresh metadata" is worth offering. The server decides — see
+    /// GameContract.CanRefreshMetadata — because a game carrying metadata from a retired provider has
+    /// nothing to refresh from, and only the server knows which provider is configured.
+    /// </summary>
+    private bool CanRefreshMetadata => Game?.CanRefreshMetadata == true;
     private bool Loading = true;
     private bool Busy;
     private bool ConfirmDelete;
@@ -278,7 +296,7 @@ else
     private int? lightboxIndex;
 
     private GameTownGamePatchRequest? Edit;
-    private string? EditRawgName;
+    private string? EditMetadataName;
     private List<string> EditTags = [];
 
     /// <summary>
@@ -294,9 +312,9 @@ else
             Id = Game.Id.ToString(),
             Title = Game.Title,
             HowTo = Game.HowTo,
-            RawgGameId = Game.RawgGame?.Id?.ToString()
+            ProviderGameId = Game.Metadata?.ExternalId.ToString()
         };
-        EditRawgName = Game.RawgGame?.Name;
+        EditMetadataName = Game.Metadata?.Name;
         EditTags = [.. Game.Tags.Select(t => t.Name)];
         Error = null;
         Notice = null;
@@ -381,11 +399,11 @@ else
         Busy = false;
     }
 
-    private void OnEditRawgSelected(RawgGameContract? game)
+    private void OnEditMetadataSelected(GameMetadataContract? game)
     {
         if (Edit is null || game?.Id is null) return;
-        Edit.RawgGameId = game.Id.Value.ToString();
-        EditRawgName = game.Name;
+        Edit.ProviderGameId = game.ExternalId.ToString();
+        EditMetadataName = game.Name;
     }
 
     private async Task SaveEdit()
@@ -429,7 +447,7 @@ else
     }
 
     private List<ScreenshotContract> Screenshots =>
-        Game?.RawgGame?.Screenshots.Where(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image)).ToList() ?? [];
+        Game?.Metadata?.Screenshots.Where(s => !s.IsDeleted && !string.IsNullOrWhiteSpace(s.Image)).ToList() ?? [];
 
     /// <summary>Screenshot URLs already resolved against the API, shared by the strip and the viewer.</summary>
     private List<string> ShotUrls =>
@@ -439,7 +457,7 @@ else
                    .ToList();
 
     /// <summary>
-    /// Box art, then RAWG's image, then a screenshot. The precedence lives in GamesService so the
+    /// Box art, then the provider's image, then a screenshot. The precedence lives in GamesService so the
     /// shelf and this page cannot disagree about what a game looks like.
     /// </summary>
     private string? Cover => Game is null ? null : GamesService.CoverFor(Game);
@@ -478,13 +496,13 @@ else
     }
 
     /// <summary>
-    /// Re-sends the game's existing RAWG id, which routes through EnsureRawgGamePersisted and
+    /// Re-sends the game's existing provider id, which routes through EnsurePersistedAsync and
     /// refreshes every stored field. Repairs rows written before the snake_case deserialisation
     /// fix — those have no cover art — and picks up later changes on RAWG's side.
     /// </summary>
     private async Task RefreshMetadata()
     {
-        if (Game?.RawgGame?.Id is null) return;
+        if (!CanRefreshMetadata) return;
 
         Busy = true;
         Error = null;
@@ -493,13 +511,13 @@ else
         var result = await GamesService.UpdateGame(new GameTownGamePatchRequest
         {
             Id = Game.Id.ToString(),
-            RawgGameId = Game.RawgGame.Id.Value.ToString()
+            ProviderGameId = Game!.Metadata!.ExternalId.ToString()
         });
 
         if (result.Success)
         {
             await LoadGame();
-            Notice = "Metadata refreshed from RAWG.";
+            Notice = "Metadata refreshed.";
         }
         else
         {

@@ -42,23 +42,29 @@ public class SettingsService(HttpClient http)
         return await response.Content.ReadFromJsonAsync<PathCheckResult>();
     }
 
-    public async Task<RawgKeyCheckResult?> TestRawgKey()
+    /// <summary>
+    /// One live IGDB call with the stored credentials — the only way to tell "saved" from "works".
+    ///
+    /// Worth more here than the RAWG key check it replaces: authenticating with IGDB is two calls
+    /// against two hosts, and credentials copied out of the Twitch console are easy to transpose.
+    /// </summary>
+    public async Task<ProviderCredentialCheckResult?> TestIgdbCredentials()
     {
-        var response = await _http.PostAsync("/settings/test-rawg-key", null);
+        var response = await _http.PostAsync("/settings/test-igdb-credentials", null);
         if (!response.IsSuccessStatusCode)
             return null;
-        return await response.Content.ReadFromJsonAsync<RawgKeyCheckResult>();
+        return await response.Content.ReadFromJsonAsync<ProviderCredentialCheckResult>();
     }
 
     /// <summary>
-    /// One live artwork-provider call with the stored key. Shares RawgKeyCheckResult: the shape is
-    /// "did the key work, and if not why", which is the same question for both providers.
+    /// One live artwork-provider call with the stored key. Shares the result shape: "did it work, and
+    /// if not why" is the same question for both providers.
     /// </summary>
-    public async Task<RawgKeyCheckResult?> TestBoxArtKey()
+    public async Task<ProviderCredentialCheckResult?> TestBoxArtKey()
     {
         var response = await _http.PostAsync("/settings/test-boxart-key", null);
         if (!response.IsSuccessStatusCode)
             return null;
-        return await response.Content.ReadFromJsonAsync<RawgKeyCheckResult>();
+        return await response.Content.ReadFromJsonAsync<ProviderCredentialCheckResult>();
     }
 }

@@ -1,4 +1,5 @@
 using API.Services.Archives;
+using API.Services.Metadata;
 using EFModel.Models;
 using Ganss.Xss;
 using GameTown.Contracts.Games;
@@ -13,12 +14,17 @@ namespace API.Mapping;
 public static class GameMappings
 {
     /// <summary>
-    /// RAWG descriptions are HTML by design, and the client renders them with MarkupString, which
-    /// bypasses Blazor's encoding. RAWG is a community-editable database, so that string is
-    /// untrusted: without this an entry could carry script into the public game page.
+    /// Descriptions are HTML, and the client renders them with MarkupString, which bypasses Blazor's
+    /// encoding. They come from a community-editable catalogue, so the string is untrusted: without
+    /// this an entry could carry script into the public game page.
     ///
-    /// Sanitising here rather than on ingest means rows already stored unsanitised are cleaned on
-    /// the way out, with no migration. Configure once — Sanitize() is safe to call concurrently.
+    /// Still required after the move off RAWG, and arguably more so. The column now holds two things:
+    /// HTML that RAWG served and migration 007 carried across unchanged — including anything stored
+    /// before this sanitiser existed — and IGDB summaries, which arrive as plain text and are encoded
+    /// into HTML at ingest. Sanitising on the way OUT rather than on ingest is what cleans the first
+    /// category with no migration, and it is why the two can share a column safely.
+    ///
+    /// Configure once — Sanitize() is safe to call concurrently.
     /// </summary>
     private static readonly HtmlSanitizer DescriptionSanitizer = CreateSanitizer();
 
@@ -26,7 +32,7 @@ public static class GameMappings
     {
         var sanitizer = new HtmlSanitizer();
 
-        // Formatting tags only. No <a>: RAWG descriptions gain little from links here, and dropping
+        // Formatting tags only. No <a>: descriptions gain little from links here, and dropping
         // them lets the attribute allowlist be empty (see below), which matters for the known issue
         // in this version's parser.
         sanitizer.AllowedTags.Clear();
@@ -52,7 +58,23 @@ public static class GameMappings
     private static string Sanitize(string? html)
         => string.IsNullOrEmpty(html) ? string.Empty : DescriptionSanitizer.Sanitize(html);
 
-    public static GameContract ToContract(this GameTownGame game) => new()
+    /// <summary>
+    /// The same sanitiser, for a description that never came from the database.
+    ///
+    /// The metadata preview endpoint maps a provider record straight to a contract without storing it,
+    /// so it does not pass through <see cref="ToContract(MetadataGame)"/> — and would otherwise be the
+    /// one path serving an unsanitised description to a MarkupString.
+    /// </summary>
+    public static string SanitizeDescription(string? html) => Sanitize(html);
+
+    /// <summary>
+    /// <paramref name="currentProviderId"/> is what decides <see cref="GameContract.CanRefreshMetadata"/>.
+    ///
+    /// It has to be passed in rather than read here: this class is static and deliberately free of DI,
+    /// and the alternative — letting the browser compare the row's provider against a hardcoded
+    /// "igdb" — would put the name of the current provider in two places that could disagree.
+    /// </summary>
+    public static GameContract ToContract(this GameTownGame game, string? currentProviderId = null) => new()
     {
         Id = game.Id,
         Title = game.Title,
@@ -71,7 +93,12 @@ public static class GameMappings
             .ThenBy(t => t.SortOrder)
             .ThenBy(t => t.Name)
             .Select(t => t.ToContract())],
-        RawgGame = game.Rawggame?.ToContract()
+        Metadata = game.Metadata?.ToContract(),
+        // False for a game still carrying RAWG metadata: there is nothing to refresh from, because
+        // the service is gone. Computed here rather than in the browser for the reason above.
+        CanRefreshMetadata = game.Metadata is not null
+                             && currentProviderId is not null
+                             && game.Metadata.Provider == currentProviderId
     };
 
     public static TagContract ToContract(this Tag tag) => new()
@@ -84,52 +111,25 @@ public static class GameMappings
         // per game per page; the tag list endpoint is where a caller that needs counts gets them.
     };
 
-    public static RawgGameContract ToContract(this Rawggame g) => new()
+    public static GameMetadataContract ToContract(this MetadataGame m) => new()
     {
-        Id = g.Id,
-        Slug = g.Slug,
-        Name = g.Name,
-        NameOriginal = g.NameOriginal,
-        Description = Sanitize(g.Description),
-        Metacritic = g.Metacritic,
-        // Npgsql maps the `date` column to DateOnly; the contract keeps DateTime? so the
-        // JSON shape is unchanged for existing clients.
-        // SQLite scaffolds `date` to DateTime?, where Npgsql gave DateOnly?. The contract
-        // has always been DateTime?, so this is now a straight copy.
-        Released = g.Released,
-        Tba = g.Tba,
-        Updated = g.Updated,
-        BackgroundImage = g.BackgroundImage,
-        BackgroundImageAdditional = g.BackgroundImageAdditional,
-        Website = g.Website,
-        Rating = g.Rating,
-        RatingTop = g.RatingTop,
-        Playtime = g.Playtime,
-        ScreenshotsCount = g.ScreenshotsCount,
-        MoviesCount = g.MoviesCount,
-        CreatorsCount = g.CreatorsCount,
-        AchievementsCount = g.AchievementsCount,
-        ParentAchievementsCount = g.ParentAchievementsCount,
-        RedditUrl = g.RedditUrl,
-        RedditCount = g.RedditCount,
-        TwitchCount = g.TwitchCount,
-        YoutubeCount = g.YoutubeCount,
-        ReviewsTextCount = g.ReviewsTextCount,
-        RatingsCount = g.RatingsCount,
-        SuggestionsCount = g.SuggestionsCount,
-        MetacriticUrl = g.MetacriticUrl,
-        ParentsCount = g.ParentsCount,
-        AdditionsCount = g.AdditionsCount,
-        GameSeriesCount = g.GameSeriesCount,
-        ReviewsCount = g.ReviewsCount,
-        SaturatedColor = g.SaturatedColor,
-        DominantColor = g.DominantColor,
-        Screenshots = g.Screenshots.Select(s => s.ToContract()).ToList(),
-        Developers = g.Developers.Select(d => d.ToContract()).ToList(),
-        Genres = g.Genres.Select(x => x.ToContract()).ToList()
+        Id = m.Id,
+        Provider = m.Provider,
+        ExternalId = m.ExternalId,
+        Slug = m.Slug,
+        Name = m.Name,
+        Description = Sanitize(m.Description),
+        Released = m.Released,
+        CriticScore = m.CriticScore,
+        Rating = m.Rating,
+        Image = m.Image,
+        Website = m.Website,
+        Screenshots = m.Screenshots.Select(s => s.ToContract()).ToList(),
+        Developers = m.Developers.Select(d => d.ToContract()).ToList(),
+        Genres = m.Genres.Select(x => x.ToContract()).ToList()
     };
 
-    public static ScreenshotContract ToContract(this Rawgscreenshot s) => new()
+    public static ScreenshotContract ToContract(this MetadataScreenshot s) => new()
     {
         Id = s.Id,
         Image = s.Image,
@@ -138,20 +138,27 @@ public static class GameMappings
         IsDeleted = s.IsDeleted
     };
 
-    public static DeveloperContract ToContract(this Rawgdeveloper d) => new()
+    public static DeveloperContract ToContract(this MetadataDeveloper d) => new()
     {
         Id = d.Id,
         Name = d.Name,
-        Slug = d.Slug,
-        GamesCount = d.GamesCount,
-        ImageBackground = d.ImageBackground
+        Slug = d.Slug
     };
 
-    public static GenreContract ToContract(this Rawggenre g) => new()
+    public static GenreContract ToContract(this MetadataGenre g) => new()
     {
         Id = g.Id,
         Name = g.Name,
-        Slug = g.Slug,
-        ImageBackground = g.ImageBackground
+        Slug = g.Slug
+    };
+
+    public static MetadataSearchResultContract ToContract(this ProviderSearchResult r) => new()
+    {
+        Provider = r.Provider,
+        ExternalId = r.ExternalId,
+        Name = r.Name,
+        Slug = r.Slug,
+        Released = r.Released,
+        ThumbnailUrl = r.ThumbnailUrl
     };
 }

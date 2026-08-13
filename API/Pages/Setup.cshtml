@@ -91,11 +91,19 @@
                     <em>Storing the archives on a network share</em>.
                 </div>
 
-                <label for="RawgApiKey">RAWG API key</label>
-                <input id="RawgApiKey" name="RawgApiKey" value="" autocomplete="off" />
+                <label for="IgdbClientId">IGDB Client ID</label>
+                <input id="IgdbClientId" name="IgdbClientId" value="" autocomplete="off" />
+
+                <label for="IgdbClientSecret">IGDB Client Secret</label>
+                <input id="IgdbClientSecret" name="IgdbClientSecret" type="password" value="" autocomplete="off" />
                 <div class="hint">
-                    Used to fetch cover art and descriptions automatically. Leave blank to skip —
-                    GameTown works without it, you just enter metadata by hand.
+                    Used to fetch cover art and descriptions automatically. Leave both blank to skip —
+                    GameTown works without them, you just enter metadata by hand, and they can be
+                    added later under <em>Administer &rarr; Settings</em>.
+                    <br />
+                    IGDB has no API key: register a Twitch application at
+                    <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener">dev.twitch.tv/console/apps</a>
+                    and copy the Client ID and Client Secret it gives you.
                 </div>
             </fieldset>
 

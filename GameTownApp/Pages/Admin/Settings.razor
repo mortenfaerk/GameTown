@@ -99,41 +99,90 @@ else if (Tab == "storage")
 }
 else if (Tab == "metadata")
 {
+    @*
+        The upgrade banner. Shown only when this library still holds metadata from a retired provider
+        AND no IGDB credentials have been entered — that is, on an install that has just taken the
+        upgrade and has not been set up yet.
+
+        Without it the symptom an operator meets is a metadata picker that silently refuses to search,
+        with nothing on screen connecting that to a provider that no longer exists. The first sentence
+        is the one that matters most: their library is fine.
+    *@
+    @if (Current.HasRetiredProviderMetadata)
+    {
+        <div class="alert alert-info">
+            <h6 class="alert-heading">Metadata now comes from IGDB</h6>
+            <p class="mb-2">
+                RAWG, which this library's existing metadata came from, is no longer available.
+                <strong>Your library is unaffected</strong> — every game keeps its description,
+                screenshots, genres and artwork, because all of it was downloaded onto this server
+                when it was first imported.
+            </p>
+            <p class="mb-0">
+                Adding credentials below restores <em>searching</em> for new games. Once they are in,
+                <a href="metadata-relink">Re-link metadata</a> can move existing games over to
+                IGDB, a few at a time or all at once — entirely optional, and nothing happens until
+                you ask it to.
+            </p>
+        </div>
+    }
+
     <div class="card">
         <div class="card-body">
-            <h5 class="card-title">RAWG</h5>
+            <h5 class="card-title">IGDB</h5>
             <p class="text-secondary small">
                 Used to fetch cover art, screenshots and descriptions.
-                <strong>Optional</strong> — without a key GameTown works exactly as it does now, you
-                just fill metadata in by hand instead of importing it.
+                <strong>Optional</strong> — without credentials GameTown works exactly as it does now,
+                you just fill metadata in by hand instead of importing it.
+            </p>
+            <p class="text-secondary small">
+                IGDB has no API key. It authenticates through a <strong>Twitch application</strong>:
+                register one at
+                <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener">dev.twitch.tv/console/apps</a>
+                (the account needs two-factor authentication) and copy the Client ID and Client Secret
+                it gives you. The redirect URL it asks for is not used and can be anything.
             </p>
 
             <div class="row g-2 align-items-end">
-                <div class="col-md-8">
+                <div class="col-md-6">
+                    <label class="form-label">Client ID</label>
+                    @*
+                        Not a password field, and shown in full. The client id is sent as a header on
+                        every request and is not a secret — masking it would only stop an admin
+                        checking which application this install is pointed at.
+                    *@
+                    <input class="form-control" type="text"
+                           placeholder="@(string.IsNullOrEmpty(Current.IgdbClientId) ? "Not set" : Current.IgdbClientId)"
+                           @bind="IgdbClientId" />
+                </div>
+                <div class="col-md-6">
                     <label class="form-label">
-                        API key
-                        @if (Current.RawgApiKeyIsSet)
+                        Client Secret
+                        @if (Current.IgdbClientSecretMasked is not null)
                         {
-                            <span class="text-secondary">(currently @Current.RawgApiKeyMasked)</span>
+                            <span class="text-secondary">(currently @Current.IgdbClientSecretMasked)</span>
                         }
                     </label>
-                    <input class="form-control" type="password" placeholder="@(Current.RawgApiKeyIsSet ? "Leave blank to keep the current key" : "Not set")" @bind="RawgApiKey" />
-                </div>
-                <div class="col-md-4">
-                    <button class="btn btn-outline-secondary" @onclick="TestKey" disabled="@Busy">Test key</button>
-                    <button class="btn btn-primary" @onclick="SaveRawg" disabled="@Busy">Save</button>
+                    <input class="form-control" type="password"
+                           placeholder="@(Current.IgdbCredentialsAreSet ? "Leave blank to keep the current secret" : "Not set")"
+                           @bind="IgdbClientSecret" />
                 </div>
             </div>
 
-            @if (Current.RawgApiKeyIsSet)
+            <div class="mt-3">
+                <button class="btn btn-primary" @onclick="SaveIgdb" disabled="@Busy">Save</button>
+                <button class="btn btn-outline-secondary" @onclick="TestKey" disabled="@Busy">Test credentials</button>
+            </div>
+
+            @if (Current.IgdbCredentialsAreSet || !string.IsNullOrEmpty(Current.IgdbClientId))
             {
-                <button class="btn btn-link text-danger px-0 mt-2" @onclick="ClearKey" disabled="@Busy">Remove the stored key</button>
+                <button class="btn btn-link text-danger px-0 mt-2" @onclick="ClearKey" disabled="@Busy">Remove the stored credentials</button>
             }
 
             @if (KeyCheck is not null)
             {
                 <div class="alert @(KeyCheck.Ok ? "alert-success" : "alert-warning") mt-3 mb-0">
-                    @DescribeKeyCheck(KeyCheck)
+                    @DescribeKeyCheck(KeyCheck, "IGDB")
                 </div>
             }
         </div>
@@ -264,15 +313,16 @@ else if (Tab == "uploads")
 
     private SettingsContract? Current;
     private string GameFilesPath = string.Empty;
-    private string RawgApiKey = string.Empty;
+    private string IgdbClientId = string.Empty;
+    private string IgdbClientSecret = string.Empty;
     private string BoxArtApiKey = string.Empty;
     private List<string> AllowedFileTypes = [];
     private string NewType = string.Empty;
     private long MaxUploadSizeMb;
 
     private PathCheckResult? PathCheck;
-    private RawgKeyCheckResult? KeyCheck;
-    private RawgKeyCheckResult? BoxArtKeyCheck;
+    private ProviderCredentialCheckResult? KeyCheck;
+    private ProviderCredentialCheckResult? BoxArtKeyCheck;
 
     protected override async Task OnInitializedAsync() => await Load();
 
@@ -294,27 +344,44 @@ else if (Tab == "uploads")
         GameFilesPath = settings.GameFilesPath;
         AllowedFileTypes = [.. settings.AllowedFileTypes];
         MaxUploadSizeMb = settings.MaxUploadSizeMb;
-        // Both key boxes are emptied rather than repopulated: the browser is never given a stored
-        // key, so there is nothing to put back, and a blank box is what "unchanged" looks like.
-        RawgApiKey = string.Empty;
+        // The secret boxes are emptied rather than repopulated: the browser is never given a stored
+        // secret, so there is nothing to put back, and a blank box is what "unchanged" looks like.
+        // The client id is NOT a secret and is shown as the field's placeholder, so it needs no
+        // special handling here.
+        IgdbClientId = string.Empty;
+        IgdbClientSecret = string.Empty;
         BoxArtApiKey = string.Empty;
     }
 
     private async Task SaveStorage()
         => await Save(new SettingsUpdateRequest { GameFilesPath = GameFilesPath }, "Archive directory saved.");
 
-    private async Task SaveRawg()
+    private async Task SaveIgdb()
     {
-        if (string.IsNullOrWhiteSpace(RawgApiKey))
+        if (string.IsNullOrWhiteSpace(IgdbClientId) && string.IsNullOrWhiteSpace(IgdbClientSecret))
         {
-            Error = "Enter a key, or use \"Remove the stored key\" to clear it.";
+            Error = "Enter a Client ID and Client Secret, or use \"Remove the stored credentials\" to clear them.";
             return;
         }
-        await Save(new SettingsUpdateRequest { RawgApiKey = RawgApiKey }, "RAWG key saved.");
+
+        // Requiring both on a FIRST save, but not on a later one. Saving a secret alone is how an
+        // admin rotates it after regenerating it in the Twitch console — the client id does not
+        // change — while saving an id alone before either exists just leaves the install
+        // half-configured and reporting itself as unset.
+        if (!Current!.IgdbCredentialsAreSet
+            && (string.IsNullOrWhiteSpace(IgdbClientId) || string.IsNullOrWhiteSpace(IgdbClientSecret)))
+        {
+            Error = "Both the Client ID and the Client Secret are needed.";
+            return;
+        }
+
+        await Save(
+            new SettingsUpdateRequest { IgdbClientId = IgdbClientId, IgdbClientSecret = IgdbClientSecret },
+            "IGDB credentials saved.");
     }
 
     private async Task ClearKey()
-        => await Save(new SettingsUpdateRequest { ClearRawgApiKey = true }, "RAWG key removed.");
+        => await Save(new SettingsUpdateRequest { ClearIgdbCredentials = true }, "IGDB credentials removed.");
 
     private async Task SaveBoxArt()
     {
@@ -374,7 +441,7 @@ else if (Tab == "uploads")
     private async Task TestKey()
     {
         Busy = true;
-        KeyCheck = await SettingsService.TestRawgKey();
+        KeyCheck = await SettingsService.TestIgdbCredentials();
         Busy = false;
     }
 
@@ -427,17 +494,22 @@ else if (Tab == "uploads")
     };
 
     /// <summary>
-    /// Both key tests answer in the same reason codes, so they share the wording — only the provider's
-    /// name changes. "no-match" is a SteamGridDB-only outcome and counts as working: the key was
-    /// accepted and the provider answered, it simply had no art for the title used as the probe.
+    /// Both credential tests answer in the same reason codes, so they share the wording — only the
+    /// provider's name changes. "no-match" is a SteamGridDB-only outcome and counts as working: the key
+    /// was accepted and the provider answered, it simply had no art for the title used as the probe.
+    ///
+    /// "rate-limited" is IGDB-only and also counts as reaching the provider, which is why it says so
+    /// rather than being folded into the generic failure — credentials that work but are momentarily
+    /// throttled must not read as credentials that are wrong.
     /// </summary>
-    private static string DescribeKeyCheck(RawgKeyCheckResult check, string provider = "RAWG") => check.Reason switch
+    private static string DescribeKeyCheck(ProviderCredentialCheckResult check, string provider) => check.Reason switch
     {
-        "ok" => $"{provider} accepted the key.",
-        "no-match" => $"{provider} accepted the key.",
-        "rejected" => $"{provider} rejected the key.",
+        "ok" => $"{provider} accepted the credentials.",
+        "no-match" => $"{provider} accepted the credentials.",
+        "rejected" => $"{provider} rejected the credentials.",
+        "rate-limited" => $"{provider} accepted the credentials but is rate-limiting us. Try again in a moment.",
         "unreachable" => $"{provider} could not be reached — check the server's internet connection.",
-        "not-configured" => "No key is stored yet.",
-        _ => "The key could not be checked.",
+        "not-configured" => "Nothing is stored yet.",
+        _ => "The credentials could not be checked.",
     };
 }

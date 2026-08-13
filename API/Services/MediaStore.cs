@@ -3,7 +3,7 @@ namespace API.Services;
 /// <summary>
 /// The one place that knows where re-hosted images live and what their stored paths look like.
 ///
-/// Three features write here — RAWG cover art, RAWG screenshots and box art — and before this each
+/// Three features write here — provider cover art, provider screenshots and box art — and before this each
 /// carried its own copy of "combine the media directory with the file name, generate a GUID, write
 /// the bytes, prefix the result with /media/". Two of those copies had already drifted: one wrote into
 /// the application's own wwwroot (which an in-place upgrade deletes) and one deleted superseded files

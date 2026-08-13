@@ -21,6 +21,14 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<GameTownUser> GameTownUsers { get; set; }
 
+    public virtual DbSet<MetadataDeveloper> MetadataDevelopers { get; set; }
+
+    public virtual DbSet<MetadataGame> MetadataGames { get; set; }
+
+    public virtual DbSet<MetadataGenre> MetadataGenres { get; set; }
+
+    public virtual DbSet<MetadataScreenshot> MetadataScreenshots { get; set; }
+
     public virtual DbSet<Rawgdeveloper> Rawgdevelopers { get; set; }
 
     public virtual DbSet<Rawggame> Rawggames { get; set; }
@@ -43,6 +51,8 @@ public partial class DatabaseContext : DbContext
 
             entity.HasIndex(e => e.ArchiveSha256, "IX_GameTownGame_ArchiveSha256");
 
+            entity.HasIndex(e => e.MetadataId, "IX_GameTownGame_MetadataId");
+
             entity.HasIndex(e => e.Title, "IX_GameTownGame_Title");
 
             entity.Property(e => e.Id)
@@ -52,6 +62,8 @@ public partial class DatabaseContext : DbContext
             entity.Property(e => e.RawggameId).HasColumnName("RAWGGameId");
             entity.Property(e => e.Title).UseCollation("NOCASE");
             entity.Property(e => e.Url).HasColumnName("URL");
+
+            entity.HasOne(d => d.Metadata).WithMany(p => p.GameTownGames).HasForeignKey(d => d.MetadataId);
 
             entity.HasOne(d => d.Rawggame).WithMany(p => p.GameTownGames).HasForeignKey(d => d.RawggameId);
 
@@ -123,6 +135,116 @@ public partial class DatabaseContext : DbContext
                             .HasColumnType("uniqueidentifier")
                             .HasColumnName("APIRoleId");
                     });
+        });
+
+        modelBuilder.Entity<MetadataDeveloper>(entity =>
+        {
+            entity.HasIndex(e => new { e.Provider, e.ExternalId }, "IX_MetadataDevelopers_provider_external_id").IsUnique();
+
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnName("id");
+            entity.Property(e => e.ExternalId).HasColumnName("external_id");
+            entity.Property(e => e.Name).HasColumnName("name");
+            entity.Property(e => e.Provider).HasColumnName("provider");
+            entity.Property(e => e.Slug).HasColumnName("slug");
+        });
+
+        modelBuilder.Entity<MetadataGame>(entity =>
+        {
+            entity.HasIndex(e => new { e.Provider, e.ExternalId }, "IX_MetadataGames_provider_external_id").IsUnique();
+
+            entity.HasIndex(e => e.Provider, "IX_MetadataGames_Provider");
+
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnName("id");
+            entity.Property(e => e.CriticScore).HasColumnName("critic_score");
+            entity.Property(e => e.Description).HasColumnName("description");
+            entity.Property(e => e.ExternalId).HasColumnName("external_id");
+            entity.Property(e => e.Image).HasColumnName("image");
+            entity.Property(e => e.Name).HasColumnName("name");
+            entity.Property(e => e.Provider).HasColumnName("provider");
+            entity.Property(e => e.Rating).HasColumnName("rating");
+            entity.Property(e => e.Released)
+                .HasColumnType("date")
+                .HasColumnName("released");
+            entity.Property(e => e.Slug).HasColumnName("slug");
+            entity.Property(e => e.Updated)
+                .HasColumnType("datetime")
+                .HasColumnName("updated");
+            entity.Property(e => e.Website)
+                .HasDefaultValue("")
+                .HasColumnName("website");
+
+            entity.HasMany(d => d.Developers).WithMany(p => p.Metadata)
+                .UsingEntity<Dictionary<string, object>>(
+                    "MetadataGamesDeveloper",
+                    r => r.HasOne<MetadataDeveloper>().WithMany().HasForeignKey("DeveloperId"),
+                    l => l.HasOne<MetadataGame>().WithMany().HasForeignKey("MetadataId"),
+                    j =>
+                    {
+                        j.HasKey("MetadataId", "DeveloperId");
+                        j.ToTable("MetadataGames_Developers");
+                        j.IndexerProperty<int>("MetadataId").HasColumnName("metadata_id");
+                        j.IndexerProperty<int>("DeveloperId").HasColumnName("developer_id");
+                    });
+
+            entity.HasMany(d => d.Genres).WithMany(p => p.Metadata)
+                .UsingEntity<Dictionary<string, object>>(
+                    "MetadataGamesGenre",
+                    r => r.HasOne<MetadataGenre>().WithMany().HasForeignKey("GenreId"),
+                    l => l.HasOne<MetadataGame>().WithMany().HasForeignKey("MetadataId"),
+                    j =>
+                    {
+                        j.HasKey("MetadataId", "GenreId");
+                        j.ToTable("MetadataGames_Genres");
+                        j.IndexerProperty<int>("MetadataId").HasColumnName("metadata_id");
+                        j.IndexerProperty<int>("GenreId").HasColumnName("genre_id");
+                    });
+
+            entity.HasMany(d => d.Screenshots).WithMany(p => p.Metadata)
+                .UsingEntity<Dictionary<string, object>>(
+                    "MetadataGamesScreenshot",
+                    r => r.HasOne<MetadataScreenshot>().WithMany().HasForeignKey("ScreenshotId"),
+                    l => l.HasOne<MetadataGame>().WithMany().HasForeignKey("MetadataId"),
+                    j =>
+                    {
+                        j.HasKey("MetadataId", "ScreenshotId");
+                        j.ToTable("MetadataGames_Screenshots");
+                        j.IndexerProperty<int>("MetadataId").HasColumnName("metadata_id");
+                        j.IndexerProperty<int>("ScreenshotId").HasColumnName("screenshot_id");
+                    });
+        });
+
+        modelBuilder.Entity<MetadataGenre>(entity =>
+        {
+            entity.HasIndex(e => new { e.Provider, e.ExternalId }, "IX_MetadataGenres_provider_external_id").IsUnique();
+
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnName("id");
+            entity.Property(e => e.ExternalId).HasColumnName("external_id");
+            entity.Property(e => e.Name).HasColumnName("name");
+            entity.Property(e => e.Provider).HasColumnName("provider");
+            entity.Property(e => e.Slug).HasColumnName("slug");
+        });
+
+        modelBuilder.Entity<MetadataScreenshot>(entity =>
+        {
+            entity.HasIndex(e => new { e.Provider, e.ExternalId }, "IX_MetadataScreenshots_provider_external_id").IsUnique();
+
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnName("id");
+            entity.Property(e => e.ExternalId).HasColumnName("external_id");
+            entity.Property(e => e.Height).HasColumnName("height");
+            entity.Property(e => e.Image).HasColumnName("image");
+            entity.Property(e => e.IsDeleted)
+                .HasColumnType("boolean")
+                .HasColumnName("is_deleted");
+            entity.Property(e => e.Provider).HasColumnName("provider");
+            entity.Property(e => e.Width).HasColumnName("width");
         });
 
         modelBuilder.Entity<Rawgdeveloper>(entity =>

@@ -32,7 +32,7 @@ namespace API.Services;
 public static class ArchiveUpload
 {
     /// <summary>
-    /// A title or a RAWG id longer than this is a bug or an attack, not a form field. Bounded because
+    /// A title or a provider id longer than this is a bug or an attack, not a form field. Bounded because
     /// unlike the archive, these ARE read into memory.
     /// </summary>
     private const int MaxFieldLength = 64 * 1024;
