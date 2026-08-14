@@ -103,6 +103,6 @@ jobs:
           set -euo pipefail
           gh release create "$TAG" \
             --title "$TAG" \
-            --generate-notes \
+            --notes-file CHANGELOG.md \
             "gametown-$TAG-linux-x64.tar.gz" \
             SHA256SUMS
