@@ -12,7 +12,3 @@ All notable changes to this project will be documented in this file.
   - Database migrations: added safeguards and replayable scripts guidance.
   - Tests: ensured cross-platform CI compatibility; 203 tests remain the canonical suite.
   - General: documentation updates and small bug fixes across API and frontend.
-
-### Notes
-- Developers: ensure `ConnectionStrings:DefaultConnection` user-secret is set per README before running.
-- If you publish a package or create a release, ensure tags match the new `0.5.0` version.
