@@ -1,4 +1,5 @@
 using API.Services;
+using GameTown.Contracts.Games;
 using System.Net;
 using System.Net.Http.Json;
 
@@ -190,10 +191,55 @@ public class SettingsTests
         Assert.True(result.Writable);
     }
 
+    /// <summary>
+    /// The number that decides whether this install ever hears about the provider swap: the settings
+    /// banner and the sidebar link both appear only while it is above zero.
+    ///
+    /// The third case is the one worth having. Migration 007 copied every RAWGGames row into
+    /// MetadataGames, including rows no game pointed at, so "does any metadata row carry a foreign
+    /// provider" — which is what this used to ask — is true on libraries whose games have all moved,
+    /// and on libraries that imported a game and deleted it. Those operators were shown an upgrade
+    /// notice and a link to a screen that could only tell them there was nothing to do. Counting GAMES
+    /// is the fix, and only the orphan case can tell the two questions apart.
+    /// </summary>
+    [Fact]
+    public async Task Only_games_on_a_retired_provider_count_as_relinkable()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+
+        Assert.Equal(0, (await client.GetFromJsonAsync<SettingsDto>("/settings"))!.RelinkCandidateCount);
+
+        // An orphan record from the old provider — carried across by 007, pointed at by nothing.
+        app.QueryScalar(
+            """
+            INSERT INTO "MetadataGames" ("id", "provider", "external_id", "slug", "name", "description")
+            VALUES (900, 'rawg', 900, 'orphan', 'Orphaned Record', '');
+            """);
+
+        Assert.Equal(0, (await client.GetFromJsonAsync<SettingsDto>("/settings"))!.RelinkCandidateCount);
+
+        // A game actually pointing at old metadata. Uppercase GUID literal: EF writes uppercase 'D'
+        // format and SQLite compares TEXT binary, so a lowercase one would not match rows EF inserts.
+        app.QueryScalar(
+            """
+            INSERT INTO "MetadataGames" ("id", "provider", "external_id", "slug", "name", "description")
+            VALUES (901, 'rawg', 901, 'linked', 'Linked Record', '');
+            INSERT INTO "GameTownGame" ("Id", "Title", "HowTo", "URL", "Size", "MetadataId")
+            VALUES ('2B1D5C6E-9F3A-4A21-9C7E-0D8B6F4A1E33', 'Old Game', 'Unzip', '/games/old.zip', 1.0, 901);
+            """);
+
+        Assert.Equal(1, (await client.GetFromJsonAsync<SettingsDto>("/settings"))!.RelinkCandidateCount);
+
+        // And it is the same number the re-link screen itself works from.
+        var candidates = await client.GetFromJsonAsync<List<RelinkCandidateContract>>("/metadata-relink/candidates");
+        Assert.Single(candidates!);
+    }
+
     private sealed record SettingsDto(
         string GameFilesPath, string MediaDirectory, string DataDirectory,
         bool IgdbCredentialsAreSet, string? IgdbClientId, string? IgdbClientSecretMasked,
-        List<string> AllowedFileTypes);
+        List<string> AllowedFileTypes, int RelinkCandidateCount);
 
     private sealed record PathCheck(
         bool Exists, bool Writable, string Reason, long? FreeBytes, string? FileSystem);
@@ -349,7 +395,15 @@ public class SetupPathTests
         using var app = new GameTownApp();
         using var client = app.CreateBrowser();
 
-        var response = await PostSetupAsync(client, "/proc/gametown/nope");
+        // A directory under an existing FILE, which no filesystem will create. It replaces
+        // "/proc/gametown/nope", which is unusable on Linux and merely unusual on Windows — there it
+        // resolves to C:\proc\gametown\nope, gets created, and the wizard rightly accepted it, so the
+        // test failed on the developer machine while passing on the appliance. This one is refused by
+        // both, and for the same reason on both.
+        var blocker = Path.Combine(app.DataDirectory, "not-a-directory");
+        File.WriteAllText(blocker, string.Empty);
+
+        var response = await PostSetupAsync(client, Path.Combine(blocker, "games"));
 
         // 200 is the form re-rendered with an error; success would have been a 302 to /login.
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);

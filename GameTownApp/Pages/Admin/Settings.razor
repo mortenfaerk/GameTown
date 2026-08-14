@@ -100,15 +100,17 @@ else if (Tab == "storage")
 else if (Tab == "metadata")
 {
     @*
-        The upgrade banner. Shown only when this library still holds metadata from a retired provider
-        AND no IGDB credentials have been entered — that is, on an install that has just taken the
-        upgrade and has not been set up yet.
+        The upgrade banner. Shown only when games are actually still on the retired provider AND no
+        IGDB credentials have been entered — that is, on an install that has just taken the upgrade
+        and has not been set up yet. An install with nothing to re-link never hears about the swap:
+        it is history, not news, and announcing it invites an operator to go looking for a problem
+        they do not have.
 
         Without it the symptom an operator meets is a metadata picker that silently refuses to search,
         with nothing on screen connecting that to a provider that no longer exists. The first sentence
         is the one that matters most: their library is fine.
     *@
-    @if (Current.HasRetiredProviderMetadata)
+    @if (Current.RelinkCandidateCount > 0 && !Current.IgdbCredentialsAreSet)
     {
         <div class="alert alert-info">
             <h6 class="alert-heading">Metadata now comes from IGDB</h6>
@@ -192,9 +194,10 @@ else if (Tab == "metadata")
         <div class="card-body">
             <h5 class="card-title">SteamGridDB (cover art)</h5>
             <p class="text-secondary small">
-                Used to search for the portrait box art games are shelved under. RAWG has no such
-                field — what it supplies is a wide promotional still, which is why this is a separate
-                source. A free key comes with a SteamGridDB account.
+                Used to search for the portrait box art games are shelved under. A separate source
+                because the cover is a choice: a contributor picking the art a game sits behind on the
+                shelf beats whatever the metadata catalogue happens to supply. A free key comes with a
+                SteamGridDB account.
                 <strong>Optional</strong> — without one, contributors can still upload a cover file or
                 paste an image link; only the search is unavailable.
             </p>

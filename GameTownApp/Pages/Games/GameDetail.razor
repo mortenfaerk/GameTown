@@ -132,106 +132,137 @@ else
         </div>
     </div>
 
+    @*
+        Five things are edited here and two of them save themselves, so each section says which it is
+        and the commit sits at the end of what it commits — the argument written above the add-game
+        button, applied to the page that needed it more. It used to be a stack of <hr>s with Save in
+        the middle, above three sections that looked like they arrived too late to be included.
+    *@
     @if (Edit is not null)
     {
-        <div class="card mb-4">
+        <div class="card gt-edit mb-4">
             <div class="card-body">
-                <h5 class="card-title">Edit game</h5>
+                <h5 class="card-title mb-4">Edit game</h5>
 
-                <EditForm Model="Edit" OnValidSubmit="SaveEdit">
+                @*
+                    id + the buttons' form="edit-game" in the footer. Only the two text fields are in
+                    the form: everything below handles Enter itself or saves on its own.
+                *@
+                <EditForm id="edit-game" Model="Edit" OnValidSubmit="SaveEdit">
                     <DataAnnotationsValidator />
                     <ValidationSummary />
 
-                    <div class="mb-3">
-                        <label class="form-label" for="edit-title">Title</label>
-                        <InputText id="edit-title" class="form-control" @bind-Value="Edit.Title" disabled="@Busy" />
-                    </div>
+                    <div class="gt-edit__section gt-edit__section--first">
+                        <div class="gt-edit__head"><span class="gt-eyebrow">Details</span></div>
 
-                    <div class="mb-3">
-                        <label class="form-label" for="edit-howto">How to play / install</label>
-                        <InputTextArea id="edit-howto" class="form-control" rows="4" @bind-Value="Edit.HowTo" disabled="@Busy" />
-                    </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="edit-title">Title</label>
+                            <InputText id="edit-title" class="form-control" @bind-Value="Edit.Title" disabled="@Busy" />
+                        </div>
 
-                    <div class="mb-3">
-                        <label class="form-label">Metadata match</label>
-                        <p class="gt-data mb-2">
-                            @if (EditMetadataName is not null)
-                            {
-                                @($"Currently: {EditMetadataName} ({Game.Metadata?.Provider} {Edit.ProviderGameId})")
-                            }
-                            else
-                            {
-                                @("No metadata attached")
-                            }
-                        </p>
-                        <MetadataPicker SelectedGameChanged="OnEditMetadataSelected"
-                                        Placeholder="Search to re-match this game…" />
+                        <div class="mb-0">
+                            <label class="form-label" for="edit-howto">How to play / install</label>
+                            <InputTextArea id="edit-howto" class="form-control" rows="4" @bind-Value="Edit.HowTo" disabled="@Busy" />
+                        </div>
                     </div>
-
-                    <button type="submit" class="btn btn-primary" disabled="@Busy">
-                        @(Busy ? "Saving…" : "Save changes")
-                    </button>
-                    <button type="button" class="btn btn-outline-secondary" disabled="@Busy" @onclick="CancelEdit">Cancel</button>
                 </EditForm>
 
-                @* Outside the EditForm above, deliberately — see the comment in TagEditor: its name
-                   box handles Enter, and a text input nested in a form submits that form on Enter. *@
-                <hr class="my-4" />
+                @* Outside the EditForm above — see MetadataPicker and TagEditor: both take Enter, and
+                   a text input nested in a form submits that form on Enter. *@
+                <div class="gt-edit__section">
+                    <div class="gt-edit__head"><span class="gt-eyebrow">Metadata match</span></div>
+                    <p class="gt-data mb-2">
+                        Where the description, genres and provider artwork come from.
+                        @if (EditMetadata is null)
+                        {
+                            <span>Nothing is attached yet.</span>
+                        }
+                    </p>
+                    @*
+                        Seeded with the game's current match, so the panel opens showing what this game
+                        is already linked to — cover and all — rather than one line of grey text.
 
-                <label class="form-label">Tags</label>
-                <p class="gt-data mb-2">Saved with the rest of the changes.</p>
-                <TagEditor Names="EditTags" NamesChanged="names => EditTags = names" Disabled="@Busy" />
-
-                <hr class="my-4" />
-
-                @* Also outside the EditForm: this saves on its own, because it writes to a file on
-                   disk and can fail in ways that must not retract a save that already worked. *@
-                <label class="form-label">Instructions in the download</label>
-                <div class="form-check">
-                    <input class="form-check-input" type="checkbox" id="bake-guide"
-                           checked="@Game.GuideBaked"
-                           disabled="@(Busy || !Game.CanBakeGuide)"
-                           @onchange="OnGuideToggled" />
-                    <label class="form-check-label" for="bake-guide">
-                        Include a <code>GameTownGuide.txt</code> inside the archive
-                    </label>
+                        AllowClear only when there is nothing to lose: the patch endpoint reads a null
+                        provider id as "leave this alone", so Remove on a matched game would empty the
+                        panel and then save the old match anyway.
+                    *@
+                    <MetadataPicker Selected="EditMetadata" SelectedChanged="OnEditMetadataSelected"
+                                    Placeholder="Search to re-match this game…"
+                                    AllowClear="@(Game.Metadata is null)"
+                                    ShowDetails="true" Disabled="@Busy" />
                 </div>
-                <p class="gt-data mb-0 mt-1">
-                    @if (!Game.CanBakeGuide)
-                    {
-                        <span>
-                            Only ZIP archives can carry one. A ZIP keeps its index at the end, so a file
-                            can be added without repacking; RAR and 7z would have to be rebuilt.
-                        </span>
-                    }
-                    else if (Game.GuideBaked)
-                    {
-                        <span>The archive carries a copy of the instructions above. Saving changes rewrites it.</span>
-                    }
-                    else
-                    {
-                        <span>Adds the instructions to the archive so they are there after extracting. The archive is not repacked.</span>
-                    }
-                </p>
 
-                <hr class="my-4" />
+                <div class="gt-edit__section">
+                    <div class="gt-edit__head"><span class="gt-eyebrow">Tags</span></div>
+                    <p class="gt-data mb-2">How it gets played. Saved with the rest of the changes.</p>
+                    <TagEditor Names="EditTags" NamesChanged="names => EditTags = names" Disabled="@Busy" />
+                </div>
 
-                <label class="form-label">Cover art</label>
-                <p class="gt-data mb-2">
-                    @if (Game.BoxArtUrl is not null)
-                    {
-                        <span>This game has its own cover. </span>
-                        <button type="button" class="btn btn-sm btn-link p-0 align-baseline"
-                                disabled="@Busy" @onclick="ClearBoxArt">Remove it</button>
-                        <span> to fall back to the provider's image.</span>
-                    }
-                    else
-                    {
-                        <span>Using the provider's image. Pick a cover to replace it — this saves immediately.</span>
-                    }
-                </p>
-                <BoxArtPicker GameId="Game.Id" Title="@Game.Title"
-                              Changed="OnBoxArtChanged" Failed="message => Error = message" />
+                @* Saves on its own, because it writes to a file on disk and can fail in ways that
+                   must not retract a save that already worked. *@
+                <div class="gt-edit__section">
+                    <div class="gt-edit__head">
+                        <span class="gt-eyebrow">Instructions in the download</span>
+                        <span class="gt-edit__now">saves immediately</span>
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="bake-guide"
+                               checked="@Game.GuideBaked"
+                               disabled="@(Busy || !Game.CanBakeGuide)"
+                               @onchange="OnGuideToggled" />
+                        <label class="form-check-label" for="bake-guide">
+                            Include a <code>GameTownGuide.txt</code> inside the archive
+                        </label>
+                    </div>
+                    <p class="gt-data mb-0 mt-1">
+                        @if (!Game.CanBakeGuide)
+                        {
+                            <span>
+                                Only ZIP archives can carry one. A ZIP keeps its index at the end, so a file
+                                can be added without repacking; RAR and 7z would have to be rebuilt.
+                            </span>
+                        }
+                        else if (Game.GuideBaked)
+                        {
+                            <span>The archive carries a copy of the instructions above. Saving changes rewrites it.</span>
+                        }
+                        else
+                        {
+                            <span>Adds the instructions to the archive so they are there after extracting. The archive is not repacked.</span>
+                        }
+                    </p>
+                </div>
+
+                <div class="gt-edit__section">
+                    <div class="gt-edit__head">
+                        <span class="gt-eyebrow">Cover art</span>
+                        <span class="gt-edit__now">saves immediately</span>
+                    </div>
+                    <p class="gt-data mb-2">
+                        @if (Game.BoxArtUrl is not null)
+                        {
+                            <span>This game has its own cover. </span>
+                            <button type="button" class="btn btn-sm btn-link p-0 align-baseline"
+                                    disabled="@Busy" @onclick="ClearBoxArt">Remove it</button>
+                            <span> to fall back to the provider's image.</span>
+                        }
+                        else
+                        {
+                            <span>Using the provider's image. Pick a cover to replace it.</span>
+                        }
+                    </p>
+                    <BoxArtPicker GameId="Game.Id" Title="@Game.Title"
+                                  Changed="OnBoxArtChanged" Failed="message => Error = message" />
+                </div>
+
+                @* The commit, at the end of what it commits. form="edit-game" rather than nesting;
+                   see the comment on the EditForm above. *@
+                <div class="gt-edit__footer">
+                    <button type="button" class="btn btn-outline-secondary" disabled="@Busy" @onclick="CancelEdit">Cancel</button>
+                    <button type="submit" form="edit-game" class="btn btn-primary" disabled="@Busy">
+                        @(Busy ? "Saving…" : "Save changes")
+                    </button>
+                </div>
             </div>
         </div>
     }
@@ -296,12 +327,31 @@ else
     private int? lightboxIndex;
 
     private GameTownGamePatchRequest? Edit;
-    private string? EditMetadataName;
+
+    /// <summary>
+    /// What the picker shows while editing: the game's current match, then whatever replaces it.
+    ///
+    /// Seeded from the loaded game rather than starting empty — an edit panel that shows no match on
+    /// a game that has one reads as "this game has no metadata", and re-matching then looks like the
+    /// only thing on offer.
+    /// </summary>
+    private GameMetadataContract? EditMetadata;
+
     private List<string> EditTags = [];
 
     /// <summary>
-    /// Pre-populated from the loaded game on purpose: the patch request treats null as "leave
-    /// unchanged", so a blank model would look like an edit that silently did nothing.
+    /// Title and HowTo are pre-populated from the loaded game on purpose: the patch request treats
+    /// null as "leave unchanged", so a blank model would look like an edit that silently did nothing.
+    ///
+    /// ProviderGameId is deliberately NOT pre-populated, and the same rule is the reason. The server
+    /// re-fetches from the provider for any non-null value, so seeding it made every save — a title
+    /// typo, a line added to the instructions — a round trip to the metadata provider. On a game
+    /// carrying RAWG data that fails outright (there is nothing to fetch from), and once IGDB
+    /// credentials exist it is worse than failing: a RAWG id is a perfectly valid IGDB id belonging
+    /// to some other game, so the save would quietly re-link the game to it. That is the same
+    /// mistake the re-link screen exists to prevent and that CanRefreshMetadata already guards the
+    /// refresh button against. Left null, the metadata is only touched when a match is actually
+    /// picked — see OnEditMetadataSelected.
     /// </summary>
     private void StartEdit()
     {
@@ -311,10 +361,9 @@ else
         {
             Id = Game.Id.ToString(),
             Title = Game.Title,
-            HowTo = Game.HowTo,
-            ProviderGameId = Game.Metadata?.ExternalId.ToString()
+            HowTo = Game.HowTo
         };
-        EditMetadataName = Game.Metadata?.Name;
+        EditMetadata = Game.Metadata;
         EditTags = [.. Game.Tags.Select(t => t.Name)];
         Error = null;
         Notice = null;
@@ -323,6 +372,7 @@ else
     private void CancelEdit()
     {
         Edit = null;
+        EditMetadata = null;
         EditTags = [];
     }
 
@@ -399,11 +449,17 @@ else
         Busy = false;
     }
 
+    /// <summary>
+    /// Takes null as well as a match: on a game with no metadata the picker offers Remove, and a null
+    /// provider id is what the patch endpoint reads as "leave this alone" — which for that game means
+    /// leaving it unmatched. On a game that already has metadata the picker does not offer Remove at
+    /// all, because there the same null would silently keep the old match.
+    /// </summary>
     private void OnEditMetadataSelected(GameMetadataContract? game)
     {
-        if (Edit is null || game?.Id is null) return;
-        Edit.ProviderGameId = game.ExternalId.ToString();
-        EditMetadataName = game.Name;
+        if (Edit is null) return;
+        EditMetadata = game;
+        Edit.ProviderGameId = game?.ExternalId.ToString();
     }
 
     private async Task SaveEdit()

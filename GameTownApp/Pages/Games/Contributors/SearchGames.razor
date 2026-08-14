@@ -3,11 +3,15 @@
 
 @* Thin wrapper now: the picker and the card are shared with AddGame. *@
 
-<h3 class="mb-4">Search Games</h3>
+@* Named for the sidebar link that leads here — one name for one place. *@
+<h3 class="mb-1">Browse metadata</h3>
+<p class="gt-muted mb-4">Look a game up in the provider's catalogue. Nothing here is saved.</p>
 
-<MetadataPicker SelectedGameChanged="game => SelectedGame = game" />
+<MetadataPicker Selected="SelectedGame" SelectedChanged="game => SelectedGame = game" />
 
-<MetadataCard Game="SelectedGame" ShowScreenshots="true" />
+<div class="mt-4">
+    <MetadataCard Game="SelectedGame" ShowScreenshots="true" />
+</div>
 
 @code {
     private GameMetadataContract? SelectedGame;

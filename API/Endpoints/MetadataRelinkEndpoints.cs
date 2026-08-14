@@ -20,6 +20,14 @@ public static class MetadataRelinkEndpoints
              .WithName("GetRelinkCandidates")
              .WithDescription("Games whose metadata came from a provider other than the configured one.");
 
+        // The same question as /candidates, answered as a number. Both places that offer this feature
+        // — the sidebar link and the settings banner — only need to know whether it is zero, and they
+        // ask on every page load; sending the whole list to decide that would grow with the library.
+        group.MapGet("/count", GetCandidateCount)
+             .Produces<RelinkStatusContract>(StatusCodes.Status200OK)
+             .WithName("GetRelinkCandidateCount")
+             .WithDescription("How many games are still on a retired provider.");
+
         group.MapPost("/propose", Propose)
              .Accepts<RelinkProposeRequest>("application/json")
              .Produces<List<RelinkProposalContract>>(StatusCodes.Status200OK)
@@ -48,6 +56,13 @@ public static class MetadataRelinkEndpoints
             Released = c.Released
         }).ToList());
     }
+
+    private static async Task<IResult> GetCandidateCount(
+        MetadataRelinkService relink, CancellationToken cancellationToken)
+        => Results.Ok(new RelinkStatusContract
+        {
+            Candidates = await relink.CountCandidatesAsync(cancellationToken)
+        });
 
     private static async Task<IResult> Propose(
         RelinkProposeRequest request, MetadataRelinkService relink, CancellationToken cancellationToken)

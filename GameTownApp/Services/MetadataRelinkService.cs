@@ -16,6 +16,16 @@ public class MetadataRelinkService(HttpClient http)
         => await _http.GetFromJsonAsync<List<RelinkCandidateContract>>("/metadata-relink/candidates") ?? [];
 
     /// <summary>
+    /// How many games are still on a retired provider — the same question as
+    /// <see cref="GetCandidates"/>, for callers that only need to know whether the answer is zero.
+    ///
+    /// The sidebar asks this on every app load to decide whether the re-link link belongs there at
+    /// all, so it must stay the cheap call: no list, no growth with the library.
+    /// </summary>
+    public async Task<int> GetCandidateCount()
+        => (await _http.GetFromJsonAsync<RelinkStatusContract>("/metadata-relink/count"))?.Candidates ?? 0;
+
+    /// <summary>
     /// Asks the server to search for a match per game. Writes nothing — the response is a set of
     /// proposals for an administrator to confirm.
     ///

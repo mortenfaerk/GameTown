@@ -200,6 +200,15 @@ a, .btn-link {
     color: #F4635A;
 }
 
+/* ValidationSummary's list, which is a bare <ul> and was arriving with browser bullets and
+   indentation in the middle of otherwise styled forms. */
+.validation-errors {
+    margin: 0 0 1rem;
+    padding: 0;
+    list-style: none;
+    font-size: 0.875rem;
+}
+
 /* ---------------------------------------------------------------- blazor chrome */
 #blazor-error-ui {
     background: var(--gt-shelf);
@@ -588,7 +597,8 @@ code {
 
 @media (prefers-reduced-motion: reduce) {
     .gt-art__option,
-    .gt-tag {
+    .gt-tag,
+    .gt-meta__option {
         transition: none;
     }
 
@@ -596,4 +606,333 @@ code {
     .gt-art__option:focus-visible {
         transform: none;
     }
+}
+
+/* ============================================================================
+   The metadata picker — matching a game on the shelf to a card in the catalogue.
+
+   A catalogue entry is a cover plus a year plus an id, and all three are needed
+   to tell one "Doom" from the other. So a result is never a line of text: it is
+   a spine of box art, the title, and the year, in the shape the shelf uses.
+
+   The chosen entry keeps that shape and gains a phosphor rule down its left
+   edge — the one mark on the page that means "this one is filed". Nothing else
+   here is loud, because the covers already are.
+   ========================================================================= */
+/* The search box, its list and the chosen row share one width; the full record
+   below them does not — see the comment in MetadataPicker. */
+.gt-meta__box {
+    position: relative;
+    max-width: 40rem;
+}
+
+/* The screenshots that come with a record follow the card's measure, unlike the
+   page-level strip on a game, which is allowed the full width. */
+.gt-meta__record .shots {
+    max-width: 56rem;
+}
+
+.gt-meta__field {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+    .gt-meta__field .form-control {
+        flex: 1 1 auto;
+    }
+
+/* Catches the click that dismisses the list. A real button so Escape is not the
+   only way out for a keyboard, and transparent so it never appears. */
+.gt-meta__backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: default;
+}
+
+.gt-meta__results {
+    position: absolute;
+    z-index: 21;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    right: 0;
+    max-height: 22rem;
+    overflow-y: auto;
+    padding: 0.25rem;
+    background: var(--gt-shelf);
+    border: 1px solid var(--gt-edge);
+    border-radius: 8px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.gt-meta__option {
+    display: grid;
+    grid-template-columns: 2.25rem 1fr auto;
+    gap: 0.7rem;
+    align-items: center;
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    text-align: left;
+    background: none;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-radius: 6px;
+    color: var(--gt-mist);
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+    /* One highlight for hover and for the keyboard cursor: they mean the same
+       thing here, and two treatments would read as two different states. */
+    .gt-meta__option:hover,
+    .gt-meta__option.is-active {
+        background: rgba(0, 180, 143, 0.10);
+        border-left-color: var(--gt-phosphor);
+    }
+
+.gt-meta__name {
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.gt-meta__thumb,
+.gt-meta__cover {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 2 / 3;
+    overflow: hidden;
+    background: var(--gt-void);
+    border: 1px solid var(--gt-edge);
+    border-radius: 3px;
+}
+
+.gt-meta__thumb {
+    width: 2.25rem;
+}
+
+.gt-meta__cover {
+    width: 3.5rem;
+    border-radius: 4px;
+}
+
+    .gt-meta__thumb img,
+    .gt-meta__cover img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+    /* The shelf's initials fallback, at picker scale. */
+    .gt-meta__thumb span,
+    .gt-meta__cover span {
+        font-weight: 800;
+        font-stretch: 125%;
+        color: var(--gt-phosphor);
+    }
+
+.gt-meta__thumb span {
+    font-size: 0.75rem;
+}
+
+.gt-meta__cover span {
+    font-size: 1.1rem;
+}
+
+.gt-meta__hint {
+    padding: 0.55rem 0.6rem;
+    font-size: 0.8125rem;
+    color: var(--gt-dim);
+}
+
+.gt-meta__foot {
+    padding: 0.4rem 0.6rem 0.2rem;
+    border-top: 1px solid var(--gt-edge);
+}
+
+.gt-meta__chosen {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 0.9rem;
+    align-items: center;
+    padding: 0.7rem 0.9rem;
+    background: var(--gt-shelf);
+    border: 1px solid var(--gt-edge);
+    border-left: 2px solid var(--gt-phosphor);
+    border-radius: 8px;
+}
+
+    /* While the full record is still being fetched. The row is already correct —
+       name, year and cover come from the result that was clicked — so it dims
+       rather than disappearing. */
+    .gt-meta__chosen.is-pending {
+        opacity: 0.65;
+    }
+
+.gt-meta__title {
+    font-weight: 700;
+    font-stretch: 105%;
+    line-height: 1.25;
+}
+
+.gt-meta__facts {
+    font-size: 0.8125rem;
+    color: var(--gt-dim);
+    line-height: 1.4;
+}
+
+.gt-meta__actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+@media (max-width: 575.98px) {
+    .gt-meta__chosen {
+        grid-template-columns: auto 1fr;
+    }
+
+    .gt-meta__actions {
+        grid-column: 1 / -1;
+    }
+}
+
+/* ============================================================================
+   The catalogue card — one provider record, shown in full.
+
+   Facts are set as an eyebrow over a mono value rather than as sentences: they
+   are fields of a record, and a reader scans them for the one they came for.
+   ========================================================================= */
+.gt-card {
+    display: grid;
+    grid-template-columns: 168px 1fr;
+    gap: 1.25rem;
+    align-items: start;
+    /* Wider than the search box above it, narrower than the page: a description
+       set across 1600px is unreadable. */
+    max-width: 56rem;
+    padding: 1rem;
+    background: var(--gt-shelf);
+    border: 1px solid var(--gt-edge);
+    border-radius: 8px;
+}
+
+.gt-card__art {
+    /* The shelf's frame, so a cover is previewed in the shape it will be shelved in. */
+    aspect-ratio: 2 / 3;
+    overflow: hidden;
+    border-radius: 6px;
+    border: 1px solid var(--gt-edge);
+    background: var(--gt-void);
+}
+
+    .gt-card__art img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+
+.gt-card__title {
+    margin: 0 0 0.75rem;
+    font-size: 1.25rem;
+}
+
+.gt-card__facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 0.7rem 1.25rem;
+    margin: 0 0 1rem;
+}
+
+    .gt-card__facts dt {
+        margin-bottom: 0.15rem;
+    }
+
+    /* A list of studios reads across, not down a 9rem column. */
+    .gt-card__facts .is-wide {
+        grid-column: 1 / -1;
+    }
+
+    .gt-card__facts dd {
+        margin: 0;
+        font-family: var(--gt-mono);
+        font-size: 0.8125rem;
+        letter-spacing: -0.02em;
+        color: var(--gt-mist);
+        overflow-wrap: anywhere;
+    }
+
+.gt-card__blurb {
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    color: var(--gt-mist);
+}
+
+    /* Clamped by default. An IGDB summary runs long enough to become the page,
+       and inside a form it is context, not the content. */
+    .gt-card__blurb.is-clamped {
+        display: -webkit-box;
+        -webkit-line-clamp: 5;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+@media (max-width: 575.98px) {
+    .gt-card {
+        grid-template-columns: 1fr;
+    }
+
+    .gt-card__art {
+        max-width: 168px;
+    }
+}
+
+/* ============================================================================
+   The edit panel on a game.
+
+   Five things are edited here and two of them save themselves, so the sections
+   are ruled apart and the two immediate ones say so. The commit sits at the end
+   of what it commits — the same argument written above the add-game button.
+   ========================================================================= */
+.gt-edit__section {
+    padding: 1.25rem 0;
+    border-top: 1px solid var(--gt-edge);
+}
+
+    .gt-edit__section--first {
+        padding-top: 0;
+        border-top: 0;
+    }
+
+.gt-edit__head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 0.35rem;
+}
+
+/* Marks a section that does not wait for Save. */
+.gt-edit__now {
+    font-family: var(--gt-mono);
+    font-size: 0.6875rem;
+    letter-spacing: -0.02em;
+    color: var(--gt-phosphor);
+    border: 1px solid var(--gt-edge);
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+    white-space: nowrap;
+}
+
+.gt-edit__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--gt-edge);
 }

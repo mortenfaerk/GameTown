@@ -67,21 +67,20 @@
         </div>
     </div>
 
-    <div class="mb-3">
-        <label class="form-label">Game metadata (optional)</label>
-        <MetadataPicker SelectedGameChanged="OnMetadataSelected"
-                        Placeholder="Search for this game…" />
-        @if (SelectedMetadata is not null)
-        {
-            <div class="d-flex align-items-center gap-2 mb-2">
-                <span class="badge bg-success">Attached: @SelectedMetadata.Name (@SelectedMetadata.Provider @SelectedMetadata.ExternalId)</span>
-                <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="ClearMetadata" disabled="@Busy">Clear</button>
-            </div>
-        }
-    </div>
-
-    <MetadataCard Game="SelectedMetadata" />
 </EditForm>
+
+@*
+    Outside the EditForm above, for the reason written in TagEditor and in MetadataPicker itself: the
+    search box takes Enter to accept the highlighted result, and a text input inside a form submits
+    that form — which here would start the upload. The provider id is assigned in code, so the field
+    has nothing to gain by being nested in the form.
+*@
+<div class="mt-4">
+    <label class="form-label">Game metadata (optional)</label>
+    <p class="gt-data mb-2">Cover art, genres and the description come from the match you pick.</p>
+    <MetadataPicker Selected="SelectedMetadata" SelectedChanged="OnMetadataSelected"
+                    Placeholder="Search for this game…" ShowDetails="true" Disabled="@Busy" />
+</div>
 
 @*
     Outside the EditForm above — see the comment in TagEditor. Chosen before the upload starts and
@@ -254,16 +253,14 @@
         if (!CanBakeGuide) BakeGuide = false;
     }
 
+    /// <summary>
+    /// The picker is controlled — it holds nothing itself — so this is both the "attached" and the
+    /// "removed" path, and clearing SelectedMetadata after a successful upload empties it for free.
+    /// </summary>
     private void OnMetadataSelected(GameMetadataContract? game)
     {
         SelectedMetadata = game;
         Request.ProviderGameId = game?.ExternalId.ToString();
-    }
-
-    private void ClearMetadata()
-    {
-        SelectedMetadata = null;
-        Request.ProviderGameId = null;
     }
 
     /// <summary>Called from upload.js as the transfer advances.</summary>

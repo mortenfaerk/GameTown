@@ -47,21 +47,11 @@ public static class SettingsEndpoints
     }
 
     private static async Task<IResult> GetSettings(
-        SettingsService settings, DatabaseContext context, IGameMetadataProvider provider)
-        => Results.Ok(await BuildContract(settings, context, provider));
-
-    /// <summary>
-    /// Whether this library still carries metadata from a provider that no longer answers.
-    ///
-    /// Only asked when there are no IGDB credentials, and only to decide whether to show the upgrade
-    /// banner. Any provider other than the current one counts, so this does not need editing the next
-    /// time a source is retired.
-    /// </summary>
-    private static Task<bool> HasRetiredMetadata(DatabaseContext context, IGameMetadataProvider provider)
-        => context.MetadataGames.AsNoTracking().AnyAsync(m => m.Provider != provider.Id);
+        SettingsService settings, MetadataRelinkService relink)
+        => Results.Ok(await BuildContract(settings, relink));
 
     private static async Task<SettingsContract> BuildContract(
-        SettingsService settings, DatabaseContext context, IGameMetadataProvider provider)
+        SettingsService settings, MetadataRelinkService relink)
     {
         var (clientId, clientSecret) = await settings.GetIgdbCredentialsAsync();
         var boxArtKey = await settings.GetBoxArtApiKeyAsync();
@@ -75,7 +65,10 @@ public static class SettingsEndpoints
             // admin who saved an id but no secret can see what happened.
             IgdbClientId = await settings.GetIgdbClientIdAsync(),
             IgdbClientSecretMasked = Mask(clientSecret),
-            HasRetiredProviderMetadata = clientSecret is null && await HasRetiredMetadata(context, provider),
+            // Asked unconditionally, and left as a plain count: whether it is worth SAYING anything
+            // about is the settings page's decision, made there against the credential state, rather
+            // than folded into this number where it cannot be seen.
+            RelinkCandidateCount = await relink.CountCandidatesAsync(),
             BoxArtApiKeyIsSet = boxArtKey is not null,
             BoxArtApiKeyMasked = Mask(boxArtKey),
             AllowedFileTypes = [.. await settings.GetAllowedFileTypesAsync()],
@@ -88,8 +81,7 @@ public static class SettingsEndpoints
         => secret is null ? null : "\u2022\u2022\u2022\u2022" + (secret.Length <= 4 ? secret : secret[^4..]);
 
     private static async Task<IResult> UpdateSettings(
-        SettingsUpdateRequest request, SettingsService settings, DatabaseContext context,
-        IGameMetadataProvider provider)
+        SettingsUpdateRequest request, SettingsService settings, MetadataRelinkService relink)
     {
         if (request.GameFilesPath is not null)
         {
@@ -161,7 +153,7 @@ public static class SettingsEndpoints
                 maxUploadSizeMb.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
-        return Results.Ok(await BuildContract(settings, context, provider));
+        return Results.Ok(await BuildContract(settings, relink));
     }
 
     private static IResult CheckPath(PathCheckRequest request)

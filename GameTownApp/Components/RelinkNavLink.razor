@@ -1,0 +1,47 @@
+@using GameTownApp.Services
+@inject MetadataRelinkService Relink
+
+@*
+    The sidebar's re-link entry, shown only when there is something to re-link.
+
+    Re-linking is optional by design — migration 007 carried every game across with its images already
+    local, so a library that never opens the tool renders correctly forever — and on an install created
+    after the move to IGDB there is nothing it could possibly do. A permanent link to a screen whose
+    only answer is "Nothing to re-link" reads as an unfinished chore, so the link is absent until the
+    count says otherwise.
+
+    A COMPONENT rather than a few lines in NavMenu, and specifically so that it can sit inside the
+    Admin branch of AuthorizeView: nothing here is instantiated until authorization has resolved, so an
+    anonymous visitor never fires an admin-only request that would come back 401. The route itself is
+    untouched — /metadata-relink still loads if it is typed or bookmarked.
+
+    The count is read once, when the sidebar is built. After the last pairing is applied the link
+    lingers until the next page load; the page it leads to says "Nothing to re-link" by then, which is
+    a better price than a shared-state service for a moment that happens once per install. NavMenu
+    makes the same trade for its search box.
+*@
+
+@if (candidates > 0)
+{
+    <NavLink class="gt-nav__link" href="metadata-relink">
+        <span class="bi bi-arrow-repeat" aria-hidden="true"></span> Re-link metadata
+    </NavLink>
+}
+
+@code {
+    private int candidates;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            candidates = await Relink.GetCandidateCount();
+        }
+        catch (Exception)
+        {
+            // Nothing renders, and that is the right failure: this link is an offer, not a control
+            // anyone is waiting on, and an error message in the sidebar would be louder than the
+            // link it replaced. The page remains reachable by URL.
+        }
+    }
+}

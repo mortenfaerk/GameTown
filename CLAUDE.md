@@ -55,6 +55,8 @@ dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 
 Requires the `sqlite3` CLI on the machine running the tests: the harness shells out to it so its view of the database stays independent of the EF model under test. The shipped application does not need it.
 
+**They pass on Windows as well as Linux, and that is maintained deliberately** — the appliance is Linux, but development happens on both. Three things make the difference and are easy to undo by accident: SQL is fed to `sqlite3` on **stdin** (an argument beginning with `-` is read as an option, and `01_schema.sql` opens with a comment; a `.read` path would be re-parsed by the shell's own quoting rules); carriage returns are stripped from its output (the app applies its embedded DDL with the CRLFs of the checkout while the CLI strips them, so the same schema comes back differing by a byte per line); and tests that assert on paths build them for the running platform rather than writing POSIX literals, since `Path.GetFullPath("/srv/games")` is `C:\srv\games` on Windows. A test that needs an unusable directory asks for one **under an existing file**, which no filesystem will create — `/proc/...` is unusable only on Linux.
+
 They are written against the bug classes this codebase has actually produced, all of which compiled and ran:
 
 - **`ApiRoutingTests` asserts on `Content-Type`, not just status.** Under SPA-fallback hosting an unmatched route returns `200 text/html`, so a status-only assertion passes while the caller parses a web page as JSON. This is how `.Accepts<T>()` on GET routes went unnoticed.

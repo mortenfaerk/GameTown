@@ -131,20 +131,40 @@ public sealed class GameTownApp : WebApplicationFactory<Program>
         return output.Trim();
     }
 
-    public void RunSql(string file) => RunSqlite(DatabasePath, $".read {file}");
+    /// <summary>
+    /// The script's contents, rather than a <c>.read</c> pointing at it.
+    ///
+    /// A dot-command is parsed by the sqlite3 shell, which applies its own quoting rules to the
+    /// argument: a Windows path arrives full of backslashes to be interpreted, and any path
+    /// containing a space splits in two. The SQL goes down stdin instead and is never parsed as a
+    /// path or an argument by anything.
+    /// </summary>
+    public void RunSql(string file) => RunSqlite(DatabasePath, File.ReadAllText(file));
 
     /// <summary>
     /// Shelling out to sqlite3 rather than opening a connection from the test process: it keeps the
     /// test's view of the database completely independent of the EF model under test, so a broken
     /// mapping cannot make a test pass by being broken consistently on both sides.
+    ///
+    /// The SQL goes in on stdin rather than as an argument, which is not merely tidier: sqlite3 reads
+    /// any argv element beginning with "-" as an option, and 01_schema.sql opens with a comment — so
+    /// passing a script that way makes the shell reject "--" as an unknown option and then sit waiting
+    /// on an inherited stdin that never closes. <c>-bail</c> keeps the exit code meaningful, because a
+    /// script fed through stdin otherwise runs past its own errors and still exits 0.
     /// </summary>
-    private static string RunSqlite(string database, string command)
+    private static string RunSqlite(string database, string sql)
     {
-        var process = Process.Start(new ProcessStartInfo("sqlite3", [database, command])
+        var process = Process.Start(new ProcessStartInfo("sqlite3", ["-bail", "-batch", database])
         {
+            RedirectStandardInput = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         }) ?? throw new InvalidOperationException("Could not start sqlite3.");
+
+        process.StandardInput.Write(sql);
+        // Closed rather than left open: EOF is what tells the shell the script has ended, and without
+        // it an incomplete statement would hang the test run instead of failing it.
+        process.StandardInput.Close();
 
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
@@ -153,7 +173,16 @@ public sealed class GameTownApp : WebApplicationFactory<Program>
         if (process.ExitCode != 0)
             throw new InvalidOperationException($"sqlite3 failed: {stderr}");
 
-        return stdout;
+        // Carriage returns are dropped, and on Windows there are two unrelated sources of them.
+        //
+        // The shell translates LF to CRLF on its way out, which alone would only break comparisons
+        // against literals in a test file. The subtler one is that sqlite_master stores the exact text
+        // of each CREATE statement: the application applies its embedded copy of the DDL, carriage
+        // returns and all, while the sqlite3 shell strips them as it reads the same file — so the two
+        // databases the schema tests compare hold the same objects described in text that differs by
+        // a byte per line. That is a line-ending convention, not schema drift, and a comparison that
+        // failed on it would fail only on Windows and only for a reason nobody could act on.
+        return stdout.Replace("\r", string.Empty);
     }
 
     public static string SchemaFile(string name) => Path.Combine(RepositoryRoot(), "Database", "sqlite", name);

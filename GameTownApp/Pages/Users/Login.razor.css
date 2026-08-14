@@ -1,7 +1,56 @@
-.login-form
-{
+/* The log-in card.
 
+   Scoped rather than added to app.css: nothing here is a shared piece of vocabulary, it is the
+   arrangement of one screen. The pieces that ARE shared — .form-control, .btn-primary, the focus
+   ring — come from app.css and are deliberately not restyled here.
+
+   Note what scoped CSS cannot reach: anything rendered by a child component, which includes the
+   <input> inside <InputText> and the list inside <ValidationSummary>. Both are styled globally
+   already, which is why this file needs no ::deep. */
+
+.login {
+    display: flex;
+    justify-content: center;
+    /* Above centre rather than at it — a card in the exact middle of a tall window reads as adrift. */
+    padding: clamp(1.5rem, 10vh, 5rem) 0;
 }
-.login-container{
 
+.login__card {
+    width: 100%;
+    max-width: 23rem;
+    padding: 1.75rem;
+    border: 1px solid var(--gt-edge);
+    border-radius: 8px;
+    /* The glow the shelf gives a game with no cover art. This card is that: an empty slot, until
+       someone signs in. Copied from .tile__fallback rather than invented, so the two stay one idea. */
+    background: radial-gradient(120% 100% at 50% 0%, rgba(0, 180, 143, 0.16), transparent 70%),
+                var(--gt-shelf);
+}
+
+.login__title {
+    margin: 0 0 0.4rem;
+    /* Fixed, unlike the global h1 clamp: this one sits in a 23rem card and has no room to grow. */
+    font-size: 1.5rem;
+}
+
+.login__lede {
+    margin: 0 0 1.5rem;
+    color: var(--gt-dim);
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+.login__field {
+    margin-bottom: 1rem;
+}
+
+.login__error {
+    margin: 0 0 1rem;
+    font-size: 0.875rem;
+    color: #F4635A; /* the same red as .validation-message */
+}
+
+.login__submit {
+    width: 100%;
+    margin-top: 0.5rem;
 }

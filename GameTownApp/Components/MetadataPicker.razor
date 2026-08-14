@@ -1,52 +1,374 @@
 @using GameTownApp.Services
 @inject GamesService GamesService
+@implements IDisposable
 
 @*
-    Autocomplete over the metadata proxy. Emits the *full* record for the chosen game: the search
-    endpoint only returns a summary (no description or screenshots), so the selection is re-fetched
-    via /meta/getGame before being handed to the parent.
+    Matching a game to a record in the provider's catalogue.
 
-    Search results are addressed by the PROVIDER's id, not a local one — nothing about a candidate
-    exists in this database until the game is actually added.
+    Two things about this are worth stating, because both were learned the expensive way.
+
+    IT SHOWS THE COVER AND THE YEAR, NOT JUST THE NAME. A search for "Doom" comes back with the 1993
+    one, the 2016 one and a dozen mods, all spelled identically; a list of names makes that a coin
+    flip, and a wrong match is only noticed later, on the shelf. The search endpoint already returns a
+    thumbnail and a release date for exactly this reason — see MetadataSearchResultContract.
+
+    IT IS CONTROLLED. The chosen record lives in the parent (Selected/SelectedChanged) and never in a
+    private copy here, because both callers need to set it from outside: AddGame clears it after a
+    successful upload, and the detail page opens its edit panel with the game's CURRENT match already
+    showing. An internal copy would ignore both.
+
+    KEEP THIS OUTSIDE <EditForm> — the same rule as TagEditor, for the same reason. The search box
+    handles Enter to take the highlighted result, and a text input nested in a form submits that form
+    on Enter; on the add-game page that would start the upload. Neither caller binds anything here to
+    the form model — the provider id is assigned in code — so there is nothing to gain by nesting it.
+
+    Search results are addressed by the PROVIDER's id, not a local one: nothing about a candidate
+    exists in this database until the game is actually added. The full record is fetched on selection
+    because a search result carries no description, screenshots, genres or developers.
 *@
 
-<AutoComplete TItem="MetadataSearchResultContract"
-              DataProvider="GamesDataProvider"
-              @bind-Value="SearchQuery"
-              Placeholder="@Placeholder"
-              PropertyName="Name"
-              OnChanged="OnGameSelected"
-              Class="@Class" />
+@*
+    The field, the list and the chosen row share one width and one positioning context — the list is
+    anchored to the field. The full record is a second root element, outside that box: it is a page of
+    reading, and holding it to the width of a search box wastes both.
+*@
+<div class="gt-meta__box">
+    @*
+        The current match stays on screen while a replacement is searched for. Hiding it was the
+        obvious thing and the wrong one: choosing between what you have and what you found is the
+        whole job, and it cannot be done from memory.
+    *@
+    @if (Chosen is not null)
+    {
+        <div class="gt-meta__chosen @(pending is not null ? "is-pending" : null)">
+            <span class="gt-meta__cover">
+                @if (!string.IsNullOrWhiteSpace(Chosen.Image))
+                {
+                    <img src="@GamesService.ResolveMedia(Chosen.Image)" alt="" />
+                }
+                else
+                {
+                    <span>@GamesService.InitialsFor(Chosen.Name)</span>
+                }
+            </span>
 
-@if (Unavailable is not null)
+            <span>
+                <span class="gt-meta__title d-block">@Chosen.Name</span>
+                <span class="gt-meta__facts d-block">@Chosen.Facts</span>
+                <span class="gt-data d-block">
+                    @(pending is not null ? "fetching details…" : Chosen.Reference)
+                </span>
+            </span>
+
+            @* While re-matching the field below carries its own Cancel, and these two would be a
+               second way to do the same thing next to a search that is already open. *@
+            @if (!changing)
+            {
+                <span class="gt-meta__actions">
+                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                            disabled="@(Disabled || pending is not null)" @onclick="StartChange">Change</button>
+                    @if (AllowClear)
+                    {
+                        <button type="button" class="btn btn-sm btn-outline-secondary"
+                                disabled="@(Disabled || pending is not null)" @onclick="Clear">Remove</button>
+                    }
+                </span>
+            }
+        </div>
+    }
+
+    @if (ShowField)
+    {
+        <div class="gt-meta__field @(Chosen is not null ? "mt-2" : null)">
+            <input @ref="searchInput"
+                   type="text"
+                   class="form-control"
+                   role="combobox"
+                   aria-expanded="@(open ? "true" : "false")"
+                   aria-controls="@ListId"
+                   aria-autocomplete="list"
+                   aria-activedescendant="@(open && active >= 0 ? OptionId(active) : null)"
+                   placeholder="@Placeholder"
+                   value="@query"
+                   disabled="@Disabled"
+                   autocomplete="off"
+                   @oninput="OnInput"
+                   @onkeydown="OnKeyDown"
+                   @onfocus="OnFocus" />
+
+            @* Only while re-matching: there is something to go back to. *@
+            @if (changing)
+            {
+                <button type="button" class="btn btn-outline-secondary" disabled="@Disabled"
+                        @onclick="CancelChange">Cancel</button>
+            }
+        </div>
+
+        @if (open)
+        {
+            <button type="button" class="gt-meta__backdrop" tabindex="-1" aria-hidden="true"
+                    @onclick="Close"></button>
+
+            <div class="gt-meta__results" id="@ListId" role="listbox" aria-label="Search results">
+                @if (searching)
+                {
+                    <p class="gt-meta__hint mb-0">Searching…</p>
+                }
+                else if (results.Count == 0)
+                {
+                    @* The reason line below says more when there is one; this covers the ordinary
+                       case, where the catalogue simply has no such game. *@
+                    <p class="gt-meta__hint mb-0">
+                        @(unavailable is null
+                            ? $"Nothing found for “{query.Trim()}”. Try a shorter title, or add the game by hand."
+                            : "No results.")
+                    </p>
+                }
+                else
+                {
+                    @for (var i = 0; i < results.Count; i++)
+                    {
+                        var index = i; // captured per iteration, or every row would choose the last one
+                        var result = results[index];
+
+                        <button type="button"
+                                id="@OptionId(index)"
+                                role="option"
+                                aria-selected="@(index == active ? "true" : "false")"
+                                class="gt-meta__option @(index == active ? "is-active" : null)"
+                                @onmouseover="() => active = index"
+                                @onclick="() => Choose(result)">
+                            <span class="gt-meta__thumb">
+                                @if (!string.IsNullOrWhiteSpace(result.ThumbnailUrl))
+                                {
+                                    <img src="@GamesService.ResolveMedia(result.ThumbnailUrl)" alt="" loading="lazy" />
+                                }
+                                else
+                                {
+                                    <span>@GamesService.InitialsFor(result.Name)</span>
+                                }
+                            </span>
+                            <span class="gt-meta__name">@result.Name</span>
+                            <span class="gt-data">@(result.Released?.ToString("yyyy") ?? "—")</span>
+                        </button>
+                    }
+
+                    @if (providerName is not null)
+                    {
+                        <p class="gt-meta__foot gt-data mb-0">
+                            @results.Count result@(results.Count == 1 ? "" : "s") from @providerName
+                        </p>
+                    }
+                }
+            </div>
+        }
+    }
+
+    @if (fetchError is not null)
+    {
+        <p class="validation-message mb-0 mt-2">@fetchError</p>
+    }
+
+    @if (unavailable is not null)
+    {
+        <p class="form-text text-warning mb-0 mt-2">@unavailable</p>
+    }
+</div>
+
+@if (ShowDetails && !ShowField && pending is null && Selected is not null)
 {
-    <div class="form-text text-warning">@Unavailable</div>
+    <div class="gt-meta__record">
+        <button type="button" class="btn btn-sm btn-link p-0 mt-2" @onclick="() => detailsOpen = !detailsOpen">
+            @(detailsOpen ? "Hide the full record" : "Show the full record")
+        </button>
+
+        @if (detailsOpen)
+        {
+            <div class="mt-2">
+                <MetadataCard Game="Selected" ShowScreenshots="true" />
+            </div>
+        }
+    </div>
 }
 
 @code {
-    /// <summary>Fires with the fully-populated game, or null when the selection is cleared.</summary>
-    [Parameter] public EventCallback<GameMetadataContract?> SelectedGameChanged { get; set; }
+    /// <summary>The record currently attached. Owned by the parent — this never keeps its own copy.</summary>
+    [Parameter] public GameMetadataContract? Selected { get; set; }
 
-    [Parameter] public string Placeholder { get; set; } = "Type to search games...";
-    [Parameter] public string? Class { get; set; } = "mb-3";
+    /// <summary>Fires with the fully-populated record, or null when the selection is removed.</summary>
+    [Parameter] public EventCallback<GameMetadataContract?> SelectedChanged { get; set; }
 
-    private string? SearchQuery;
+    [Parameter] public string Placeholder { get; set; } = "Search the catalogue…";
+
+    [Parameter] public bool Disabled { get; set; }
 
     /// <summary>
-    /// Why the search came back empty, when it was not simply "no such game".
+    /// Whether "Remove" is offered.
     ///
-    /// An empty dropdown is indistinguishable from an unconfigured provider, and after the move off
-    /// RAWG that is the state every upgraded install starts in — so the one case that most needs
-    /// explaining is the one the UI would otherwise stay silent about.
+    /// The detail page passes false for a game that already has metadata: the patch endpoint reads a
+    /// null provider id as "leave this alone", so a Remove there would empty the panel and then save
+    /// the old match anyway. Better not to offer what cannot be honoured.
     /// </summary>
-    private string? Unavailable;
+    [Parameter] public bool AllowClear { get; set; } = true;
 
-    private async Task<AutoCompleteDataProviderResult<MetadataSearchResultContract>> GamesDataProvider(
-        AutoCompleteDataProviderRequest<MetadataSearchResultContract> request)
+    /// <summary>Offers the full record — description and screenshots — behind a disclosure.</summary>
+    [Parameter] public bool ShowDetails { get; set; }
+
+    private string query = string.Empty;
+    private List<MetadataSearchResultContract> results = [];
+
+    /// <summary>
+    /// The clicked search result, held only until the full record arrives.
+    ///
+    /// It carries the name, year and thumbnail already, so the chosen row can be drawn the instant
+    /// something is picked rather than after a round trip to the provider. Without it the page sits
+    /// unchanged for about a second and the click reads as having missed.
+    /// </summary>
+    private MetadataSearchResultContract? pending;
+
+    private int active = -1;
+    private bool open;
+    private bool searching;
+
+    /// <summary>Set while re-matching, so the field is shown over an existing selection.</summary>
+    private bool changing;
+
+    private bool detailsOpen;
+    private string? unavailable;
+    private string? providerName;
+    private string? fetchError;
+
+    private CancellationTokenSource? debounce;
+    private ElementReference searchInput;
+    private bool focusWanted;
+
+    private readonly string instance = Guid.NewGuid().ToString("N")[..8];
+    private string ListId => $"gt-meta-{instance}";
+    private string OptionId(int index) => $"gt-meta-{instance}-{index}";
+
+    private bool ShowField => changing || (Selected is null && pending is null);
+
+    /// <summary>What the chosen row draws: the pending search result if there is one, else the record.</summary>
+    private ChosenView? Chosen => pending is not null
+        ? new ChosenView(pending.Name, pending.ThumbnailUrl, Year(pending.Released), Reference(pending.Provider, pending.ExternalId))
+        : Selected is not null
+            ? new ChosenView(Selected.Name, Selected.Image, Describe(Selected), Reference(Selected.Provider, Selected.ExternalId))
+            : null;
+
+    private sealed record ChosenView(string Name, string? Image, string Facts, string Reference);
+
+    private static string Year(DateTime? released) => released?.ToString("yyyy") ?? "Year unknown";
+
+    /// <summary>Year and genres — enough to tell two records with the same name apart at a glance.</summary>
+    private static string Describe(GameMetadataContract game)
     {
-        var response = await GamesService.SearchGamesMetadata(request.Filter?.Value ?? string.Empty, 1, 20);
+        var genres = string.Join(", ", game.Genres.Select(g => g.Name));
+        return genres.Length == 0 ? Year(game.Released) : $"{Year(game.Released)} · {genres}";
+    }
 
-        Unavailable = response.Reason switch
+    /// <summary>
+    /// Provider and id, in mono — this is the only machine value on screen and the only thing that
+    /// identifies the record unambiguously. It used to be set in a green success badge, which said
+    /// "well done" about a number nobody chose.
+    /// </summary>
+    private static string Reference(string provider, int externalId)
+        => string.IsNullOrWhiteSpace(provider) ? $"#{externalId}" : $"{provider} · #{externalId}";
+
+    /// <summary>
+    /// Follows the parent when it changes the selection from outside.
+    ///
+    /// The other half of being controlled. Without this, AddGame's reset after a successful upload
+    /// clears the record but leaves the search text and the old result list sitting in an otherwise
+    /// blank form, as if the next game were already half entered.
+    /// </summary>
+    protected override void OnParametersSet()
+    {
+        if (ReferenceEquals(lastSeen, Selected)) return;
+        lastSeen = Selected;
+
+        detailsOpen = false;
+
+        if (Selected is not null) return;
+
+        query = string.Empty;
+        results = [];
+        active = -1;
+        open = false;
+        changing = false;
+        unavailable = null;
+        fetchError = null;
+    }
+
+    private GameMetadataContract? lastSeen;
+
+    private void OnFocus()
+    {
+        // Coming back to a field that already has results should show them again rather than
+        // requiring a keystroke to re-run a search that has already been paid for.
+        if (results.Count > 0 || unavailable is not null) open = true;
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? string.Empty;
+        fetchError = null;
+
+        debounce?.Cancel();
+        debounce?.Dispose();
+        debounce = null;
+
+        // Two characters, because one matches most of the catalogue and the provider is rate-limited.
+        if (query.Trim().Length < 2)
+        {
+            results = [];
+            unavailable = null;
+            searching = false;
+            open = false;
+            return;
+        }
+
+        open = true;
+        searching = true;
+
+        debounce = new CancellationTokenSource();
+        var token = debounce.Token;
+
+        try
+        {
+            // Not a Timer: on WASM there is one thread, and an awaited delay keeps every mutation on
+            // the context the renderer runs on. Typing used to fire one provider call per keystroke.
+            await Task.Delay(300, token);
+            await Search(token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a later keystroke.
+        }
+    }
+
+    private async Task Search(CancellationToken token)
+    {
+        MetadataSearchResponse response;
+        try
+        {
+            response = await GamesService.SearchGamesMetadata(query.Trim(), 1, 20);
+        }
+        catch (Exception)
+        {
+            response = new MetadataSearchResponse { Reason = "unreachable" };
+        }
+
+        if (token.IsCancellationRequested) return;
+
+        results = response.Results;
+        providerName = string.IsNullOrWhiteSpace(response.ProviderName) ? null : response.ProviderName;
+        active = results.Count > 0 ? 0 : -1;
+
+        // Why the search came back empty, when it was not simply "no such game". An empty dropdown is
+        // indistinguishable from an unconfigured provider, and after the move off RAWG that is the
+        // state every upgraded install starts in — so the one case that most needs explaining is the
+        // one the UI would otherwise stay silent about.
+        unavailable = response.Reason switch
         {
             "ok" => null,
             "not-configured" => $"{Describe(response)} is not configured — an administrator can add credentials under Administer → Settings. You can still add this game by hand.",
@@ -56,31 +378,137 @@
             _ => null
         };
 
-        return new AutoCompleteDataProviderResult<MetadataSearchResultContract>
-        {
-            Data = response.Results,
-            TotalCount = response.Results.Count
-        };
+        searching = false;
+        StateHasChanged();
     }
 
     private static string Describe(MetadataSearchResponse response)
         => string.IsNullOrWhiteSpace(response.ProviderName) ? "The metadata provider" : response.ProviderName;
 
-    private async Task OnGameSelected(MetadataSearchResultContract? selected)
+    private async Task OnKeyDown(KeyboardEventArgs e)
     {
-        if (selected is null)
+        switch (e.Key)
         {
-            await SelectedGameChanged.InvokeAsync(null);
+            case "ArrowDown" when open && results.Count > 0:
+                active = (active + 1) % results.Count;
+                break;
+
+            case "ArrowUp" when open && results.Count > 0:
+                active = (active - 1 + results.Count) % results.Count;
+                break;
+
+            case "Enter" when open && active >= 0 && active < results.Count:
+                await Choose(results[active]);
+                break;
+
+            case "Escape":
+                if (Selected is not null) CancelChange();
+                else Close();
+                break;
+        }
+    }
+
+    private async Task Choose(MetadataSearchResultContract result)
+    {
+        open = false;
+        changing = false;
+        active = -1;
+        fetchError = null;
+        query = result.Name;
+
+        // Drawn from the search result straight away, then replaced. The full record — description,
+        // screenshots, genres, developers — is a second call, and the click has to land before it.
+        pending = result;
+        StateHasChanged();
+
+        GameMetadataContract? full = null;
+        try
+        {
+            full = await GamesService.GetMetadataByProviderId(result.ExternalId);
+        }
+        catch (Exception)
+        {
+            // Reported below, not thrown: the picker is one field on a form the contributor is still
+            // filling in, and a failed lookup must not take the page down with it.
+        }
+
+        pending = null;
+
+        if (full is null)
+        {
+            fetchError = $"“{result.Name}” could not be fetched. Try again, or pick another match.";
+
+            // Back to the field so the retry is one keystroke away. An existing selection is still
+            // whatever it was — nothing was replaced — so backing out costs nothing.
+            changing = Selected is not null;
             return;
         }
 
-        SearchQuery = selected.Name;
+        detailsOpen = false;
+        await SelectedChanged.InvokeAsync(full);
+    }
 
-        // The full record, by the provider's id. A search result carries no description, screenshots,
-        // genres or developers — everything the card renders — so handing it straight on would show
-        // an almost-empty preview of a game that does have all of it.
-        var full = await GamesService.GetMetadataByProviderId(selected.ExternalId);
+    /// <summary>
+    /// Opens the search over an existing match.
+    ///
+    /// The box starts empty rather than pre-filled with the current name: re-matching means looking
+    /// for something else, and a pre-filled box has to be cleared before it can be typed in. The
+    /// match itself stays visible above, which is what the name was there for.
+    /// </summary>
+    private void StartChange()
+    {
+        changing = true;
+        open = false;
+        fetchError = null;
+        query = string.Empty;
+        results = [];
+        active = -1;
+        focusWanted = true;
+    }
 
-        await SelectedGameChanged.InvokeAsync(full);
+    /// <summary>Backs out of a re-match. The existing selection was never touched, so nothing is undone.</summary>
+    private void CancelChange()
+    {
+        changing = false;
+        open = false;
+        searching = false;
+        results = [];
+        unavailable = null;
+        fetchError = null;
+    }
+
+    private void Close() => open = false;
+
+    private async Task Clear()
+    {
+        query = string.Empty;
+        results = [];
+        unavailable = null;
+        fetchError = null;
+        detailsOpen = false;
+        changing = false;
+        open = false;
+        await SelectedChanged.InvokeAsync(null);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!focusWanted) return;
+        focusWanted = false;
+
+        try
+        {
+            await searchInput.FocusAsync();
+        }
+        catch (Exception)
+        {
+            // The field can have been replaced again before this ran; focus is a courtesy.
+        }
+    }
+
+    public void Dispose()
+    {
+        debounce?.Cancel();
+        debounce?.Dispose();
     }
 }

@@ -411,6 +411,20 @@ public class SettingsServiceUnitTests
 /// </summary>
 public class FileContainmentTests
 {
+    /// <summary>
+    /// An absolute directory in the shape of whichever platform is running the tests.
+    ///
+    /// The check resolves both sides with <see cref="Path.GetFullPath(string)"/>, so a POSIX literal
+    /// like "/srv/games" becomes "C:\srv\games" on Windows. The containment answers survive that, but
+    /// any assertion about the resulting path does not — and the appliance is Linux while development
+    /// happens on both, so the tests have to be able to say the same thing on either.
+    ///
+    /// The STORED paths below stay POSIX-shaped deliberately: they stand in for what an attacker
+    /// sends, which is not obliged to look like the server it arrives at.
+    /// </summary>
+    private static string Root(params string[] segments)
+        => Path.GetFullPath(Path.Combine([OperatingSystem.IsWindows() ? @"C:\" : "/", .. segments]));
+
     [Theory]
     [InlineData("game.zip", true)]
     [InlineData("../../../etc/passwd", false)]
@@ -419,7 +433,7 @@ public class FileContainmentTests
     [InlineData(null, false)]
     public void Only_paths_inside_the_archive_directory_resolve(string? stored, bool expected)
     {
-        var (resolved, _) = FileService.TryResolveWithin("/srv/gametown/games", stored);
+        var (resolved, _) = FileService.TryResolveWithin(Root("srv", "gametown", "games"), stored);
         Assert.Equal(expected, resolved);
     }
 
@@ -427,15 +441,22 @@ public class FileContainmentTests
     [Fact]
     public void A_prefix_sibling_is_not_inside_the_directory()
     {
-        var (resolved, _) = FileService.TryResolveWithin("/srv/games", "/srv/games-secret/x.zip");
+        var (resolved, _) = FileService.TryResolveWithin(
+            Root("srv", "games"), Root("srv", "games-secret", "x.zip"));
+
         Assert.False(resolved);
     }
 
     [Fact]
     public void A_trailing_separator_on_the_root_still_matches_children()
     {
-        var (resolved, full) = FileService.TryResolveWithin("/srv/games/", "x.zip");
+        var root = Root("srv", "games");
+
+        var (resolved, full) = FileService.TryResolveWithin(root + Path.DirectorySeparatorChar, "x.zip");
+
         Assert.True(resolved);
-        Assert.Equal("/srv/games/x.zip", full);
+        // Combined rather than concatenated: the failure this guards is the trailing separator
+        // surviving into the result as a doubled one.
+        Assert.Equal(Path.Combine(root, "x.zip"), full);
     }
 }

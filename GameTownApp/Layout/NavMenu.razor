@@ -55,9 +55,9 @@
                 <NavLink class="gt-nav__link" href="settings">
                     <span class="bi bi-sliders" aria-hidden="true"></span> Settings
                 </NavLink>
-                <NavLink class="gt-nav__link" href="metadata-relink">
-                    <span class="bi bi-arrow-repeat" aria-hidden="true"></span> Re-link metadata
-                </NavLink>
+                @* Appears only on a library that still has games on a retired provider — see the
+                   component. Everything else in this group is always applicable; this one is not. *@
+                <RelinkNavLink />
             </Authorized>
         </AuthorizeView>
     </nav>

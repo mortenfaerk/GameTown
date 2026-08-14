@@ -1,50 +1,130 @@
-﻿@using GameTownApp.Services;
+@using GameTownApp.Services;
 @page "/login"
 @inject AuthService AuthService
 @inject NavigationManager NavigationManager
-<div class="login-container">
-    <h3>Login</h3>
-    <div class="login-form">
-        <EditForm Model="@loginModel" OnValidSubmit="HandleLogin">
-            <DataAnnotationsValidator />
-            <ValidationSummary />
-            <div>
-                <label for="username">Username</label>
-                <InputText id="username" @bind-Value="loginModel.Username" class="form-control" />
-            </div>
-            <div>
-                <label for="password">Password</label>
-                <InputText id="password" type="password" @bind-Value="loginModel.Password" class="form-control" />
-            </div>
-            <button type="submit" class="btn btn-primary">Login</button>
-        </EditForm>
-        <div class="login_result">
-            @LoginMsg
+
+@*
+    The one screen in GameTown with no content of its own, which is why it is easy to leave looking
+    like a form on a page. It gets a single card on the void, carrying the same glow the shelf gives a
+    game with no cover — an empty slot until someone signs in.
+
+    No wordmark here: the sidebar is already showing one, and a second would be branding for its own
+    sake.
+
+    The lede is the load-bearing part. Everything a visitor came for — the library, the downloads — is
+    open to them already, so the most useful thing this page can say is that they probably do not need
+    to be on it.
+*@
+
+<PageTitle>Log in</PageTitle>
+
+@if (Checked)
+{
+    <div class="login">
+        <div class="login__card">
+            <h1 class="login__title">Log in</h1>
+            <p class="login__lede">
+                The library and its downloads are open to everyone. Logging in is for adding games,
+                editing them, and running the server.
+            </p>
+
+            <EditForm Model="@loginModel" OnValidSubmit="HandleLogin">
+                <DataAnnotationsValidator />
+                <ValidationSummary />
+
+                <div class="login__field">
+                    <label class="form-label" for="username">Username</label>
+                    @* autocomplete so a password manager fills both boxes rather than guessing. *@
+                    <InputText id="username" class="form-control" autocomplete="username"
+                               @ref="usernameInput" @bind-Value="loginModel.Username" disabled="@Busy" />
+                </div>
+
+                <div class="login__field">
+                    <label class="form-label" for="password">Password</label>
+                    <InputText id="password" type="password" class="form-control"
+                               autocomplete="current-password"
+                               @bind-Value="loginModel.Password" disabled="@Busy" />
+                </div>
+
+                @if (Failed)
+                {
+                    @* What happened, not an apology, and deliberately not which half was wrong —
+                       naming the username as valid would confirm an account exists to anyone asking. *@
+                    <p class="login__error">That username and password did not match.</p>
+                }
+
+                <button type="submit" class="btn btn-primary login__submit" disabled="@Busy">
+                    @(Busy ? "Logging in…" : "Log in")
+                </button>
+            </EditForm>
         </div>
     </div>
-</div>
+}
+
 @code {
-    LoginRequest loginModel = new LoginRequest();
-    private string LoginMsg = string.Empty;
+    private LoginRequest loginModel = new();
+    private InputText? usernameInput;
+
+    private bool Busy;
+    private bool Failed;
+
+    /// <summary>
+    /// Set once the "are you already signed in?" question has been answered.
+    ///
+    /// Nothing renders before then. The check usually redirects, and drawing the form first would
+    /// flash a login screen at someone who is already logged in.
+    /// </summary>
+    private bool Checked;
+
     protected override async Task OnInitializedAsync()
     {
         // Someone arriving at /login with a valid auth cookie is already signed in; send them on
         // rather than making them re-enter credentials they did not need.
-        var refreshed = await AuthService.RefreshUserAsync();
-        if (refreshed)
+        if (await AuthService.RefreshUserAsync())
         {
             NavigationManager.NavigateTo("/");
+            return;
         }
-    }
-    private async Task HandleLogin()
-    {
-        Console.WriteLine("Login clicked");
-        var loginResult = await AuthService.LoginAsync(loginModel);
-        if(loginResult)
-        {
-            NavigationManager.NavigateTo("/");
-        }
-        LoginMsg = loginResult ? "Login successful!" : "Login failed. Please check your credentials.";
+
+        Checked = true;
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Into the first box, once there is one to focus — the only thing anyone opens this page to do.
+        if (!Checked || focused || usernameInput?.Element is null) return;
+        focused = true;
+
+        try
+        {
+            await usernameInput.Element.Value.FocusAsync();
+        }
+        catch (Exception)
+        {
+            // A courtesy, not a requirement.
+        }
+    }
+
+    private bool focused;
+
+    private async Task HandleLogin()
+    {
+        Busy = true;
+        Failed = false;
+
+        var loggedIn = await AuthService.LoginAsync(loginModel);
+
+        Busy = false;
+
+        if (loggedIn)
+        {
+            NavigationManager.NavigateTo("/");
+            return;
+        }
+
+        // The password is cleared, the username is not: a mistyped password is the common case, and
+        // making someone retype a username they got right is a small insult.
+        Failed = true;
+        loginModel.Password = string.Empty;
+    }
 }

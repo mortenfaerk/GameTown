@@ -23,6 +23,18 @@ public class RelinkCandidateContract
     public DateTime? Released { get; set; }
 }
 
+/// <summary>
+/// How much there is to re-link, without listing it.
+///
+/// Exists for the callers that only need to know whether the number is zero — the sidebar link and
+/// the settings banner both appear or disappear on that one fact, and fetching every candidate row to
+/// answer it would grow with the library while the answer stayed one integer.
+/// </summary>
+public class RelinkStatusContract
+{
+    public int Candidates { get; set; }
+}
+
 public class RelinkProposeRequest
 {
     public List<Guid> GameIds { get; set; } = [];

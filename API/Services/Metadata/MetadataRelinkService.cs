@@ -52,6 +52,21 @@ public class MetadataRelinkService(
             .ToListAsync(cancellationToken);
 
     /// <summary>
+    /// How many candidates there are, without materialising them.
+    ///
+    /// The same predicate as <see cref="GetCandidatesAsync"/>, deliberately: both entry points to this
+    /// feature — the sidebar link and the settings banner — are shown or hidden on this number, and if
+    /// it were derived independently the two could disagree with the screen they lead to. That is not
+    /// hypothetical: the settings banner used to ask whether any metadata ROW carried a foreign
+    /// provider, which is true on any library still holding the orphan RAWG records migration 007 left
+    /// behind, even when every game had already moved.
+    /// </summary>
+    public Task<int> CountCandidatesAsync(CancellationToken cancellationToken = default)
+        => context.GameTownGames
+            .AsNoTracking()
+            .CountAsync(g => g.Metadata != null && g.Metadata.Provider != provider.Id, cancellationToken);
+
+    /// <summary>
     /// Searches the current provider for each candidate and returns proposed pairings.
     ///
     /// Proposals, not changes. Nothing is written here — the admin reviews the list and confirms what

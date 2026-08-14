@@ -42,15 +42,21 @@ public class SettingsContract
     public string? IgdbClientSecretMasked { get; set; }
 
     /// <summary>
-    /// True when this install still has metadata carried over from RAWG and no IGDB credentials to
-    /// replace it with.
+    /// How many games still point at a retired provider's metadata — the exact rows the re-link
+    /// screen would list.
     ///
-    /// Drives the one-time banner on the settings page. Without it an operator upgrades, finds the
-    /// metadata picker refusing to search, and has nothing on screen connecting that to a retired
-    /// provider or telling them what to do about it. Their library is fine — that is the other half
-    /// of the message.
+    /// Drives the one-time upgrade banner on the settings page, combined there with whether
+    /// credentials are stored. Without that banner an operator upgrades, finds the metadata picker
+    /// refusing to search, and has nothing on screen connecting that to a retired provider or telling
+    /// them what to do about it. Their library is fine — that is the other half of the message.
+    ///
+    /// A count of GAMES, not of metadata rows. Migration 007 copied every RAWGGames row across,
+    /// including ones no game ever pointed at, so a library entirely on IGDB can still hold orphan
+    /// RAWG records — and counting those announced an upgrade to operators with nothing to re-link.
+    /// The number comes from MetadataRelinkService so it cannot disagree with the screen it sends
+    /// people to.
     /// </summary>
-    public bool HasRetiredProviderMetadata { get; set; }
+    public int RelinkCandidateCount { get; set; }
 
     /// <summary>
     /// Whether a SteamGridDB key is stored. Without one, box-art *search* is unavailable and says so;
