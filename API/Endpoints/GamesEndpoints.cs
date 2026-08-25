@@ -233,8 +233,25 @@ public static class GamesEndpoints
             return Results.Json(ArchiveUpload.TooLargeMessage(limitBytes.Value),
                 statusCode: StatusCodes.Status413PayloadTooLarge);
 
-        var upload = await ArchiveUpload.ReadAsync(
-            context.Request, _fileService, _settings, context.RequestAborted);
+        // The archive directory is server configuration a contributor can neither see nor change, so
+        // its failures have to arrive as words rather than as a status code. Both exceptions below
+        // carry a message written for that reader; letting them escape instead produced a 500 with an
+        // EMPTY body, which the SPA can only render as "Request failed (500)." — see
+        // ApiResult.ExtractError. The real reason was then legible nowhere but the server's journal.
+        //
+        // Caught here rather than inside ArchiveUpload because the archive it half-wrote has already
+        // been cleaned up by that method's own finally block; what is left to decide is purely how to
+        // answer the caller.
+        ArchiveUploadResult upload;
+        try
+        {
+            upload = await ArchiveUpload.ReadAsync(
+                context.Request, _fileService, _settings, context.RequestAborted);
+        }
+        catch (Exception ex) when (ex is ArchiveDirectoryException or ArchiveStorageException)
+        {
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+        }
 
         if (!upload.Success)
             return Results.Json(upload.Error, statusCode: upload.StatusCode);

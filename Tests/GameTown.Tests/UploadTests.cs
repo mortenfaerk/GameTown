@@ -1,7 +1,10 @@
+using API.Services;
 using GameTown.Contracts.Games;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 
 namespace GameTown.Tests;
 
@@ -308,6 +311,153 @@ public class UploadTests
     private sealed record GameDto(Guid Id, string Title, string HowTo, double Size);
 
     private sealed record UploadLimitsDto(long MaxUploadSizeMb, string[] AllowedFileTypes);
+}
+
+/// <summary>
+/// What a contributor is told when the archive directory itself is the problem.
+///
+/// This is the failure the appliance actually produced in the field: a mountpoint added over
+/// /var/lib/gametown/games after installation, owned by a uid with no mapping into the container, so
+/// the service could read the directory and not write in it. Every layer behaved "correctly" and the
+/// result was a 500 with an EMPTY body — Directory.CreateDirectory is a no-op on a directory that
+/// already exists, so nothing noticed until the copy, and nothing caught it there.
+///
+/// The tests below are about the body, not the status. A 500 was always returned; what was missing
+/// was any way for the person hitting it to know their file was fine and the server was not.
+/// </summary>
+public class ArchiveDirectoryFailureTests
+{
+    /// <summary>
+    /// Set directly through the service rather than through PATCH /settings, which validates with
+    /// DirectoryProbe and would rightly refuse every path this class needs to test.
+    /// </summary>
+    private static async Task SetArchiveDirectoryAsync(GameTownApp app, string path)
+    {
+        using var scope = app.Services.CreateScope();
+        var settings = scope.ServiceProvider.GetRequiredService<SettingsService>();
+        await settings.SetAsync(SettingsService.GameFilesPathKey, path);
+    }
+
+    /// <summary>
+    /// A directory under an existing FILE, which no filesystem will create. Borrowed from
+    /// SetupPathTests for the reason it was chosen there: it is refused by Windows and Linux alike,
+    /// and for the same underlying reason on both — unlike a /proc path, which is unusable on Linux
+    /// and merely unusual on Windows.
+    /// </summary>
+    private static string UnusablePath(GameTownApp app)
+    {
+        var blocker = Path.Combine(app.DataDirectory, "not-a-directory");
+        File.WriteAllText(blocker, string.Empty);
+        return Path.Combine(blocker, "games");
+    }
+
+    private static MultipartFormDataContent Archive()
+        => new()
+        {
+            { new StringContent("Test game"), "title" },
+            { new StringContent("Unzip and run"), "howTo" },
+            { new ByteArrayContent("not really an archive"u8.ToArray()), "file", "game.zip" },
+        };
+
+    /// <summary>
+    /// The regression that matters: the response must carry a message, not just a status.
+    ///
+    /// The assertion is on the shape the SPA depends on. ApiResult.ExtractError reads "detail" out of
+    /// a ProblemDetails body and falls back to the useless "Request failed (500)." when there is
+    /// nothing there — so an empty body here is indistinguishable, to the user, from the bug this
+    /// fixes.
+    /// </summary>
+    [Fact]
+    public async Task An_unusable_archive_directory_is_explained_rather_than_returned_blank()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+        await SetArchiveDirectoryAsync(app, UnusablePath(app));
+
+        var response = await client.PostAsync("/GTGames/Add", Archive());
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.InternalServerError, response.StatusCode);
+        Assert.False(string.IsNullOrWhiteSpace(body), "A 500 with no body is the bug being fixed.");
+
+        using var problem = JsonDocument.Parse(body);
+        var detail = problem.RootElement.GetProperty("detail").GetString();
+
+        Assert.False(string.IsNullOrWhiteSpace(detail));
+        // The three things the message exists to convey: what is broken, that retrying is pointless,
+        // and who can fix it. A contributor can act on none of it without all three.
+        Assert.Contains("archive directory", detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("administrator", detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not saved", detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The message goes to a contributor, who is not an administrator and is shown the archive
+    /// directory nowhere else in the application. Naming it here would leak server layout into an
+    /// error banner — the same reason DirectoryProbe answers in fixed reason codes rather than in raw
+    /// exception text.
+    /// </summary>
+    [Fact]
+    public async Task The_explanation_does_not_leak_the_configured_path()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+        var unusable = UnusablePath(app);
+        await SetArchiveDirectoryAsync(app, unusable);
+
+        var response = await client.PostAsync("/GTGames/Add", Archive());
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.DoesNotContain(unusable, body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(app.DataDirectory, body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Both halves of the decision that the probe belongs on the write path only.
+    ///
+    /// An archive directory that has gone read-only is a broken upload path and a perfectly good
+    /// library: every game already in it is still readable. Probing in GetGameDirectoryAsync would
+    /// have been the obvious place and would have taken the downloads out too — turning a degraded
+    /// install into a dead one, and costing a file create per download to do it.
+    ///
+    /// Linux-only and non-root by necessity: Windows has no equivalent of the mode being set here and
+    /// root ignores it. Skipped rather than faked, matching DirectoryProbeTests.
+    /// </summary>
+    [Fact]
+    public async Task A_read_only_archive_directory_stops_uploads_and_still_serves_downloads()
+    {
+        if (OperatingSystem.IsWindows() || Environment.UserName == "root") return;
+
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+
+        var created = await client.PostAsync("/GTGames/Add", Archive());
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var id = (await created.Content.ReadFromJsonAsync<AddGameResponse>())!.Id;
+
+        var games = Path.Combine(app.DataDirectory, "games");
+        File.SetUnixFileMode(games, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        try
+        {
+            var download = await client.GetAsync($"/GTGames/download/{id}");
+            Assert.Equal(HttpStatusCode.OK, download.StatusCode);
+
+            var upload = await client.PostAsync("/GTGames/Add", Archive());
+            Assert.Equal(HttpStatusCode.InternalServerError, upload.StatusCode);
+
+            using var problem = JsonDocument.Parse(await upload.Content.ReadAsStringAsync());
+            var detail = problem.RootElement.GetProperty("detail").GetString();
+
+            // The specific reason, not the generic fallback: this is the exact shape of the failure
+            // the appliance hit, and "not usable" would have told nobody anything.
+            Assert.Contains("permission", detail!, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.SetUnixFileMode(games,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
 }
 
 /// <summary>

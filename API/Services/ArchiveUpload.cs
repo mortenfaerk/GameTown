@@ -107,7 +107,30 @@ public static class ArchiveUpload
                     // that looks like a complete one.
                     partPath = finalPath + PartSuffix;
 
-                    var (written, exceeded, hash) = await CopyAsync(section.Body, partPath, limitBytes, cancellationToken);
+                    long written;
+                    bool exceeded;
+                    string hash;
+                    try
+                    {
+                        (written, exceeded, hash) = await CopyAsync(
+                            section.Body, partPath, limitBytes, cancellationToken);
+                    }
+                    // The directory was proven writable moments ago by GetGameFilePathAsync, so what
+                    // is left here is storage failing DURING the transfer: the disk filling up, or a
+                    // mount going away under a multi-gigabyte copy. Both used to surface as a
+                    // body-less 500 that said nothing to the contributor whose upload just died.
+                    //
+                    // The cancellation guard is what keeps this honest. A client that disconnects
+                    // mid-upload also surfaces as an IOException from the copy, and reporting that as
+                    // a server storage fault would blame the appliance for someone pressing Cancel.
+                    // Kestrel trips RequestAborted in that case, so the guard sends it back to the
+                    // ordinary cancellation path instead.
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                               && !cancellationToken.IsCancellationRequested)
+                    {
+                        throw new ArchiveStorageException(ex);
+                    }
+
                     bytes = written;
                     sha256 = hash;
 
@@ -332,3 +355,19 @@ public sealed class ArchiveUploadResult
 
     public string? Field(string name) => Fields.TryGetValue(name, out var value) ? value : null;
 }
+
+/// <summary>
+/// Writing the archive failed part-way through, after the directory had already been proven writable.
+///
+/// Distinct from <see cref="ArchiveDirectoryException"/> because the advice differs: the directory is
+/// configured correctly and an administrator is being told to look at capacity and mounts rather than
+/// at the path. The inner exception carries the detail for the log; the message does not, because it
+/// is rendered in a contributor's error banner and would carry server paths into it.
+/// </summary>
+public sealed class ArchiveStorageException(Exception inner)
+    : IOException(
+        "The server could not finish writing the archive to disk — it may be out of space, or the "
+        + "storage it writes to may have become unavailable. Your upload was not saved. This is a "
+        + "problem with the server rather than with your file; an administrator needs to check the "
+        + "archive directory's free space under Administer → Settings.",
+        inner);
