@@ -23,9 +23,27 @@ public sealed class LanSyncState
     private int _lastMatched;
     private int _lastBound;
 
-    public void MarkRunning()
+    /// <summary>
+    /// Claims the right to run a sync, or returns false because one is already in flight.
+    ///
+    /// This is a real gate, not bookkeeping. A sync reads the bot's list and then writes back to it,
+    /// so two overlapping runs would both decide a suggestion is unbound and both PUT for it — the
+    /// second one pointlessly re-titling a catalogue entry the first had just set. That was already
+    /// possible between the background worker and an admin pressing Sync now; it became likely the
+    /// moment contributors could refresh the wishlist themselves.
+    ///
+    /// A gate rather than a queue: the loser has nothing useful to do afterwards, because the run it
+    /// lost to is fetching exactly the same list.
+    /// </summary>
+    public bool TryBeginRun()
     {
-        lock (_gate) _running = true;
+        lock (_gate)
+        {
+            if (_running) return false;
+
+            _running = true;
+            return true;
+        }
     }
 
     /// <summary>

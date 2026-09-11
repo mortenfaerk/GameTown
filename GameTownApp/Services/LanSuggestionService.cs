@@ -84,8 +84,10 @@ public class LanSuggestionService(HttpClient http)
     /// <summary>
     /// Runs a sync now and returns the resulting status, so the screen needs no second request.
     ///
-    /// Admin only, and slow enough to want a busy state: it pulls every suggestion and may make one
-    /// outbound write per newly matched game.
+    /// Open to contributors — it is how the wishlist gets refreshed without waiting out the poll
+    /// interval — and slow enough to want a busy state: it pulls every suggestion and may make one
+    /// outbound write per newly matched game. A reason of "busy" means a sync was already running and
+    /// this call did nothing.
     /// </summary>
     public async Task<LanSyncStatusContract?> SyncNow()
     {

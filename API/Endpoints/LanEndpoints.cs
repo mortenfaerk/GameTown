@@ -59,6 +59,20 @@ public static class LanEndpoints
              .WithName("DismissLanSuggestion")
              .WithDescription("Marks a suggestion as never going to be matched, or restores it. Local only.");
 
+        // Contributor, not Admin, and that is a revision of the first instinct. The argument for Admin
+        // was that a sync spends someone else's rate limit — but a contributor already makes outbound
+        // calls to the bot every time they link or unlink, so that was never the real line. Refreshing
+        // your own to-do list is not an integration action, and making people wait up to a quarter of
+        // an hour to see a suggestion they know was just posted is the kind of friction that gets a
+        // screen abandoned.
+        //
+        // Reading the sync STATUS stays Admin: it reports on how the integration is configured and
+        // belongs with the rest of the settings.
+        group.MapPost("/sync", Sync)
+             .Produces<LanSyncStatusContract>(StatusCodes.Status200OK)
+             .WithName("SyncLanSuggestions")
+             .WithDescription("Runs a sync now, rather than waiting for the configured interval.");
+
         // The shelf chips are rendered for anonymous visitors, so this cannot sit behind the group's
         // Contributor policy. It carries LAN event names and game counts — the same information the
         // filtered shelf already shows anyone who can reach the host. Worth knowing that the names
@@ -70,16 +84,11 @@ public static class LanEndpoints
            .WithName("GetLanEvents")
            .WithDescription("LAN events with at least one library game suggested for them.");
 
-        // Admin: running a sync spends someone else's rate limit, and the status panel reports on a
-        // configured outbound integration rather than on the library.
+        // Admin: the status panel reports on how the integration is configured — the poll interval,
+        // whether credentials are stored — which is settings-page business rather than library business.
         var admin = app.MapGroup("/lan")
             .RequireAuthorization("Admin")
             .WithTags("LAN suggestions");
-
-        admin.MapPost("/sync", Sync)
-             .Produces<LanSyncStatusContract>(StatusCodes.Status200OK)
-             .WithName("SyncLanSuggestions")
-             .WithDescription("Runs a sync now, rather than waiting for the configured interval.");
 
         admin.MapGet("/status", GetStatus)
              .Produces<LanSyncStatusContract>(StatusCodes.Status200OK)

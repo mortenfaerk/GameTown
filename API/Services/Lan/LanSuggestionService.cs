@@ -47,7 +47,9 @@ public class LanSuggestionService(
     /// </summary>
     public async Task<string> SyncAsync(CancellationToken cancellationToken = default)
     {
-        state.MarkRunning();
+        // Returned BEFORE the try, so the finally below cannot mark the run that is actually in
+        // flight as finished — which would let a third caller straight through into the same race.
+        if (!state.TryBeginRun()) return "busy";
 
         var seen = 0;
         var matched = 0;

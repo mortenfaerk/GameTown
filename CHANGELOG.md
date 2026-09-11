@@ -11,7 +11,8 @@ All notable changes to this project will be documented in this file.
     server's public address.
   - New **LAN suggestions** screen for contributors and admins — a wishlist of games people asked for
     that nobody has uploaded, plus manual matching for anything the automatic pass could not identify,
-    and a "set aside" for suggestions that will never be games.
+    and a "set aside" for suggestions that will never be games. Contributors can check for new
+    suggestions themselves rather than waiting out the poll interval.
   - Automatic matching is deliberately conservative: an unambiguous normalised-title match and nothing
     else. Case, punctuation, roman numerals and a leading "The" are handled; trailing numbers and
     subtitles are not stripped, so *Portal* and *Portal 2* stay different games.
@@ -25,7 +26,7 @@ All notable changes to this project will be documented in this file.
 - Security notes: two new accepted risks — outbound requests to an admin-configured address (the LAN
   bot client deliberately does not use the image fetcher's private-address refusal), and player-typed
   Discord text being rendered by GameTown.
-- Tests: 254, up from 207.
+- Tests: 256, up from 207.
 
 ## [0.5.1] - 2026-08-25
 - Bump release version to 0.5.1

@@ -162,7 +162,13 @@ public class LanSyncStatusContract
     public bool Running { get; set; }
     public DateTime? LastRunUtc { get; set; }
 
-    /// <summary>Fixed reason code from the last run, or null if it has not run yet.</summary>
+    /// <summary>
+    /// Fixed reason code from the last run, or null if it has not run yet.
+    ///
+    /// "busy" is the one that is not about the bot: a sync was already in flight, so this caller did
+    /// nothing. It is a normal outcome now that contributors can refresh the wishlist while the
+    /// background worker is also polling, and the screen treats it as such rather than as a failure.
+    /// </summary>
     public string? LastReason { get; set; }
 
     public int LastSeen { get; set; }

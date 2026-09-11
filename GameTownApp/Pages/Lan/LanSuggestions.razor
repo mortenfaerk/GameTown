@@ -22,7 +22,17 @@
 
 <PageTitle>LAN suggestions</PageTitle>
 
-<h1>LAN suggestions</h1>
+<div class="d-flex justify-content-between align-items-baseline flex-wrap gap-2 mb-3">
+    <h1 class="mb-0">LAN suggestions</h1>
+
+    @* GameTown polls on its own schedule, but somebody who has just watched a suggestion go up in
+       Discord should not have to wait out the interval to act on it. Disabled while in flight, and
+       the server refuses an overlapping run anyway. *@
+    <button class="btn btn-sm btn-outline-secondary" disabled="@(Refreshing || Busy)"
+            @onclick="Refresh">
+        @(Refreshing ? "Checking…" : "Check for new suggestions")
+    </button>
+</div>
 
 @if (!string.IsNullOrEmpty(Error))
 {
@@ -237,6 +247,9 @@ else
     private string Tab = "unmatched";
     private bool Loading = true;
     private bool Busy;
+
+    /// <summary>Separate from <see cref="Busy"/> so a refresh does not grey out the row buttons.</summary>
+    private bool Refreshing;
     private string? Error;
     private string? Notice;
 
@@ -276,6 +289,51 @@ else
         }
 
         Loading = false;
+    }
+
+    /// <summary>
+    /// Asks the bot for new suggestions now, instead of waiting out the poll interval.
+    ///
+    /// Reports against the WISHLIST rather than the raw sync counters, because that is the number the
+    /// person pressing this is looking at: "two new" is the answer to what they asked, while "six
+    /// suggestions seen" is a fact about the bot. A refresh that finds nothing says so plainly — the
+    /// worst outcome here is a button that appears to do nothing at all.
+    /// </summary>
+    private async Task Refresh()
+    {
+        Refreshing = true;
+        Error = null;
+        Notice = null;
+
+        var before = UnmatchedCount;
+
+        try
+        {
+            var status = await Lan.SyncNow();
+
+            // "busy" is not a failure: the background poll was already running, and it is fetching
+            // exactly the list this would have. Reload and report on what it found.
+            if (status is not null && status.LastReason is not ("ok" or "busy"))
+            {
+                Error = DescribeReason(status.LastReason ?? "unreachable");
+            }
+            else
+            {
+                Reset();
+                await Load();
+
+                var arrived = UnmatchedCount - before;
+                Notice = arrived > 0
+                    ? $"{arrived} new suggestion{(arrived == 1 ? "" : "s")} on the wishlist."
+                    : "Nothing new — the wishlist is up to date.";
+            }
+        }
+        catch (Exception)
+        {
+            Error = "The LAN bot could not be checked.";
+        }
+
+        Refreshing = false;
     }
 
     private async Task Expand(LanSuggestionContract suggestion)

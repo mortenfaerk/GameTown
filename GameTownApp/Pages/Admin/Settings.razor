@@ -630,10 +630,17 @@ else if (Tab == "lanbot")
         {
             LanStatus = await Lan.SyncNow();
 
-            Notice = LanStatus?.LastReason == "ok"
-                ? $"Synced: {LanStatus.LastSeen} suggestion{(LanStatus.LastSeen == 1 ? "" : "s")} seen, "
-                  + $"{LanStatus.LastMatched} newly matched, {LanStatus.LastBound} linked in the bot."
-                : null;
+            Notice = LanStatus?.LastReason switch
+            {
+                "ok" => $"Synced: {LanStatus.LastSeen} suggestion{(LanStatus.LastSeen == 1 ? "" : "s")} seen, "
+                        + $"{LanStatus.LastMatched} newly matched, {LanStatus.LastBound} linked in the bot.",
+
+                // Not a failure. A sync was already in flight — the background poll, or a contributor
+                // refreshing the wishlist — and it is fetching exactly the same list this would have.
+                "busy" => "A sync was already running, so this one was skipped.",
+
+                _ => null,
+            };
 
             if (Notice is null && LanStatus is not null)
                 Error = DescribeKeyCheck(new ProviderCredentialCheckResult { Reason = LanStatus.LastReason ?? "unreachable" }, "The LAN bot");

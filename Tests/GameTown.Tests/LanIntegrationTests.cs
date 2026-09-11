@@ -729,7 +729,7 @@ public class LanIntegrationTests
     }
 
     [Fact]
-    public async Task Contributors_may_link_but_only_admins_may_sync()
+    public async Task Contributors_may_link_and_refresh_but_not_read_the_sync_status()
     {
         var bot = new FakeLanBot().Suggest(4, "Wardogs");
         using var app = new GameTownApp { LanBotHandler = bot };
@@ -748,9 +748,39 @@ public class LanIntegrationTests
         var linked = await contributor.PostAsJsonAsync("/lan/link", new { remoteId = 4L, gameId });
         linked.EnsureSuccessStatusCode();
 
-        // Running a sync spends someone else's rate limit; the status panel reports on the
-        // integration rather than the library. Both stay Admin.
-        Assert.Equal(HttpStatusCode.Forbidden, (await contributor.PostAsync("/lan/sync", null)).StatusCode);
+        // And so is refreshing it. Waiting out the poll interval to see a suggestion someone has just
+        // posted is the friction that gets a screen abandoned.
+        var refreshed = await contributor.PostAsync("/lan/sync", null);
+        refreshed.EnsureSuccessStatusCode();
+
+        // The status panel is a different thing: it reports how the integration is CONFIGURED, which
+        // is settings-page business.
         Assert.Equal(HttpStatusCode.Forbidden, (await contributor.GetAsync("/lan/status")).StatusCode);
+    }
+
+    /// <summary>
+    /// A refresh does exactly what the poll does, so a contributor pressing it sees new suggestions
+    /// without an admin having to be involved.
+    /// </summary>
+    [Fact]
+    public async Task A_contributor_refreshing_picks_up_suggestions_posted_since_the_last_poll()
+    {
+        var bot = new FakeLanBot();
+        using var app = new GameTownApp { LanBotHandler = bot };
+
+        using var contributor = await app.SignInAsContributorAsync();
+        using var admin = await SignInExistingAdminAsync(app);
+
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+        Assert.Empty(await SuggestionsAsync(contributor, "unmatched"));
+
+        // Posted in Discord after the last sync.
+        bot.Suggest(4, "Wardogs");
+
+        (await contributor.PostAsync("/lan/sync", null)).EnsureSuccessStatusCode();
+
+        var waiting = Assert.Single(await SuggestionsAsync(contributor, "unmatched"));
+        Assert.Equal("Wardogs", waiting.Name);
     }
 }
