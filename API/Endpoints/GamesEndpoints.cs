@@ -83,14 +83,14 @@ public static class GamesEndpoints
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("GetGamesPaged")
-            .WithDescription("Retrieves a paginated list of games from GameTown. The page and page size must be greater than zero.");
+            .WithDescription("Retrieves a paginated list of games from GameTown. The page and page size must be greater than zero. Optionally narrowed by ?tags= (comma-separated, AND) and ?lan= (a LAN event name).");
         group.MapGet("/search/", SearchGame)
             .AllowAnonymous()
             .Produces<IEnumerable<GameContract>>(StatusCodes.Status200OK)
             .Produces(StatusCodes.Status400BadRequest)
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("SearchGame")
-            .WithDescription("Searches for games in GameTown based on a query string. The query string should not be empty and pagination parameters must be greater than zero.");
+            .WithDescription("Searches for games in GameTown based on a query string. The query string should not be empty and pagination parameters must be greater than zero. Accepts the same ?tags= and ?lan= filters as getPaged.");
     }
     private static async Task<IResult> GetGameById(string id, GTGamesService service)
     {
@@ -164,13 +164,14 @@ public static class GamesEndpoints
             ? []
             : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    private static async Task<IResult> GetGamesPaged(int page, int pageSize, GTGamesService service, string? tags = null)
+    private static async Task<IResult> GetGamesPaged(
+        int page, int pageSize, GTGamesService service, string? tags = null, string? lan = null)
     {
         if (page < 1 || pageSize < 1)
             return Results.BadRequest("Page and page size must be greater than zero.");
         try
         {
-            var games = await service.GetGamePaged(page, pageSize, ParseTags(tags));
+            var games = await service.GetGamePaged(page, pageSize, ParseTags(tags), lan);
             return Results.Ok(games);
         }
         catch (Exception ex)
@@ -179,7 +180,7 @@ public static class GamesEndpoints
         }
     }
     private static async Task<IResult> SearchGame(
-        string query, int page, int pageSize, GTGamesService service, string? tags = null)
+        string query, int page, int pageSize, GTGamesService service, string? tags = null, string? lan = null)
     {
         if (string.IsNullOrWhiteSpace(query))
             return Results.BadRequest("Search query cannot be empty.");
@@ -187,7 +188,7 @@ public static class GamesEndpoints
             return Results.BadRequest("Page and page size must be greater than zero.");
         try
         {
-            var games = await service.SearchGames(query, page, pageSize, ParseTags(tags));
+            var games = await service.SearchGames(query, page, pageSize, ParseTags(tags), lan);
             return Results.Ok(games);
         }
         catch (Exception ex)

@@ -43,16 +43,26 @@ public class GamesService(HttpClient http)
     // ---------------------------------------------------------------- GameTown library (public)
 
     public async Task<List<GameContract>> GetPaged(
-        int page = 1, int pageSize = 24, IEnumerable<string>? tags = null)
-        => await _http.GetFromJsonAsync<List<GameContract>>(
-               $"/GTGames/getPaged/{page}/{pageSize}{TagQuery(tags, first: true)}") ?? [];
+        int page = 1, int pageSize = 24, IEnumerable<string>? tags = null, string? lanEvent = null)
+    {
+        var tagFilter = TagQuery(tags, first: true);
+
+        // The LAN filter leads with "?" only when the tag filter did not — this route has no query
+        // string of its own, unlike Search, so whichever filter comes first has to open it.
+        var filters = tagFilter + LanQuery(lanEvent, first: tagFilter.Length == 0);
+
+        return await _http.GetFromJsonAsync<List<GameContract>>(
+                   $"/GTGames/getPaged/{page}/{pageSize}{filters}") ?? [];
+    }
 
     /// <summary>All three query parameters are required; omitting page/pageSize returns 400.</summary>
     public async Task<List<GameContract>> Search(
-        string query, int page = 1, int pageSize = 24, IEnumerable<string>? tags = null)
+        string query, int page = 1, int pageSize = 24, IEnumerable<string>? tags = null,
+        string? lanEvent = null)
     {
         var url = $"/GTGames/search/?query={Uri.EscapeDataString(query)}&page={page}&pageSize={pageSize}"
-                  + TagQuery(tags, first: false);
+                  + TagQuery(tags, first: false)
+                  + LanQuery(lanEvent, first: false);
         return await _http.GetFromJsonAsync<List<GameContract>>(url) ?? [];
     }
 
@@ -70,6 +80,17 @@ public class GamesService(HttpClient http)
 
         return (first ? "?" : "&") + "tags=" + Uri.EscapeDataString(string.Join(',', slugs));
     }
+
+    /// <summary>
+    /// Renders the LAN event filter, or nothing when there is none.
+    ///
+    /// Escaped rather than passed through: event names come from Discord and routinely carry a "#"
+    /// ("HCP #37 (2026)"), which would otherwise truncate the query string at the fragment.
+    /// </summary>
+    private static string LanQuery(string? lanEvent, bool first)
+        => string.IsNullOrWhiteSpace(lanEvent)
+            ? string.Empty
+            : (first ? "?" : "&") + "lan=" + Uri.EscapeDataString(lanEvent);
 
     public async Task<GameContract?> GetById(Guid id)
     {

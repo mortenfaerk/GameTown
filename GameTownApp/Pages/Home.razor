@@ -1,6 +1,7 @@
-@page "/"
+﻿@page "/"
 @inject GamesService GamesService
 @inject NavigationManager Navigation
+@inject LanSuggestionService LanService
 
 @* Public by design: anyone on the LAN browses and downloads. Only contributing is gated. *@
 
@@ -71,6 +72,35 @@
     </div>
 }
 
+@*
+    LAN events players have suggested games for.
+
+    A separate row from the tags, not more chips in the same one. A tag says what a game IS and stays
+    true forever; an event says what people asked for on one weekend, and mixing them would put two
+    different kinds of claim in one control. Only one event can be on at a time — ANDing two LANs
+    almost always returns nothing.
+
+    Absent entirely on an install with no LAN bot, so the shelf is unchanged for everyone else.
+
+    Event names come from Discord. Rendered as text, never as markup.
+*@
+@if (LanEvents.Count > 0)
+{
+    <div class="gt-tags__chips mb-4">
+        <span class="gt-eyebrow me-2">Suggested for</span>
+        @foreach (var lanEvent in LanEvents)
+        {
+            var captured = lanEvent;
+            var on = string.Equals(LanFilter, captured.Name, StringComparison.OrdinalIgnoreCase);
+            <button type="button" class="@(on ? "gt-tag gt-tag--on" : "gt-tag")"
+                    aria-pressed="@on.ToString().ToLowerInvariant()"
+                    @onclick="() => ToggleLan(captured.Name)">
+                @captured.Name
+            </button>
+        }
+    </div>
+}
+
 @if (!string.IsNullOrEmpty(Error))
 {
     <div class="alert alert-danger">@Error</div>
@@ -120,6 +150,15 @@ else
                         <div class="tile__fallback">@GamesService.InitialsFor(game.Title)</div>
                     }
                     <span class="tile__size">@FormatSize(game.Size)</span>
+                    @* Somebody asked for this one. Deliberately just a mark, not the event name:
+                       the tile already carries a title, a size and a meta line, and a fourth piece
+                       of text would crowd it — the chips above are where the name belongs. *@
+                    @if (game.SuggestedFor.Count > 0)
+                    {
+                        <span class="tile__lan" title="@SuggestedTitle(game)">
+                            @(game.PlayedAtLan ? "★" : "◆")
+                        </span>
+                    }
                 </div>
                 <p class="tile__title">@game.Title</p>
                 <p class="tile__meta">
@@ -165,19 +204,32 @@ else
     [SupplyParameterFromQuery(Name = "tags")]
     public string? TagFilter { get; set; }
 
+    /// <summary>
+    /// A LAN event name, e.g. "/?lan=HCP%20%2337%20(2026)" — narrows the shelf to games somebody
+    /// asked for at that LAN.
+    ///
+    /// In the URL for the same reason as the tags: "here is what people want to play this weekend"
+    /// is exactly the thing to paste into a chat window.
+    /// </summary>
+    [SupplyParameterFromQuery(Name = "lan")]
+    public string? LanFilter { get; set; }
+
     private List<GameContract> Games = [];
     private List<TagContract> FilterTags = [];
+    private List<LanEventContract> LanEvents = [];
     private int Page = 1;
     private const int PageSize = 24;
     private bool Loading = true;
     private string? Error;
     private string? loadedQuery;
     private string? loadedTags;
+    private string? loadedLan;
 
     private bool hasLoaded;
 
     private bool IsSearching => !string.IsNullOrWhiteSpace(Q);
-    private bool IsFiltered => IsSearching || SelectedTags.Count > 0;
+    private bool IsFiltered =>
+        IsSearching || SelectedTags.Count > 0 || !string.IsNullOrWhiteSpace(LanFilter);
 
     private List<string> SelectedTags =>
         string.IsNullOrWhiteSpace(TagFilter)
@@ -197,6 +249,10 @@ else
             // The library is the page; the filter bar is not worth failing it over.
             FilterTags = [];
         }
+
+        // Anonymous, and empty on any install with no LAN bot — in which case the row simply does not
+        // render and the shelf looks exactly as it did before this feature existed.
+        LanEvents = await LanService.GetEvents();
     }
 
     protected override async Task OnParametersSetAsync()
@@ -207,11 +263,12 @@ else
         // the cascading auth state resolves or changes (e.g. right after login), and if that landed
         // mid-request the old guard let a *second* concurrent Load start. Two in-flight fetches then
         // raced to assign Games, which is why the shelf sometimes came up empty.
-        if (hasLoaded && loadedQuery == Q && loadedTags == TagFilter) return;
+        if (hasLoaded && loadedQuery == Q && loadedTags == TagFilter && loadedLan == LanFilter) return;
 
         hasLoaded = true;
         loadedQuery = Q;
         loadedTags = TagFilter;
+        loadedLan = LanFilter;
         await Load(1);
     }
 
@@ -226,17 +283,35 @@ else
         var selected = SelectedTags;
         GoTo(selected.Contains(slug)
             ? selected.Where(s => s != slug).ToList()
-            : [.. selected, slug]);
+            : [.. selected, slug], LanFilter);
     }
 
-    private void ClearTags() => GoTo([]);
+    private void ClearTags() => GoTo([], LanFilter);
 
-    /// <summary>Navigates to the library with exactly these tags selected, keeping any search term.</summary>
-    private void GoTo(List<string> tags)
+    /// <summary>
+    /// Selects a LAN event, or clears it when the one already on is clicked again — the same toggle
+    /// behaviour as a tag chip, except only one event can be on at a time. Two LANs at once is not a
+    /// question anybody asks, and an AND across them would almost always return nothing.
+    /// </summary>
+    private void ToggleLan(string name)
+        => GoTo(SelectedTags,
+                string.Equals(LanFilter, name, StringComparison.OrdinalIgnoreCase) ? null : name);
+
+    /// <summary>
+    /// Navigates to the library with exactly these filters on, keeping any search term.
+    ///
+    /// Every filter lives in the address, so the back button walks back through them and any state of
+    /// this page can be pasted to somebody else.
+    /// </summary>
+    private void GoTo(List<string> tags, string? lanEvent)
     {
         var parameters = new List<string>();
         if (IsSearching) parameters.Add($"q={Uri.EscapeDataString(Q!)}");
         if (tags.Count > 0) parameters.Add($"tags={Uri.EscapeDataString(string.Join(',', tags))}");
+
+        // Escaped, because event names routinely carry a "#" ("HCP #37 (2026)") which would otherwise
+        // truncate the query string at what the browser reads as a fragment.
+        if (!string.IsNullOrWhiteSpace(lanEvent)) parameters.Add($"lan={Uri.EscapeDataString(lanEvent)}");
 
         Navigation.NavigateTo(parameters.Count == 0 ? "/" : "/?" + string.Join('&', parameters));
     }
@@ -251,8 +326,8 @@ else
         {
             var tags = SelectedTags;
             Games = IsSearching
-                ? await GamesService.Search(Q!, page, PageSize, tags)
-                : await GamesService.GetPaged(page, PageSize, tags);
+                ? await GamesService.Search(Q!, page, PageSize, tags, LanFilter)
+                : await GamesService.GetPaged(page, PageSize, tags, LanFilter);
             Page = page;
         }
         catch (Exception ex)
@@ -265,4 +340,14 @@ else
 
     private static string FormatSize(double megabytes)
         => megabytes < 1 ? $"{megabytes * 1024:0.#} KB" : $"{megabytes:0.#} MB";
+
+    /// <summary>
+    /// The tooltip behind a tile's suggestion mark. Lists the events rather than a count, because
+    /// "suggested for HCP #37 (2026)" answers the question and "suggested 1 time" does not.
+    /// </summary>
+    private static string SuggestedTitle(GameContract game)
+    {
+        var events = string.Join(", ", game.SuggestedFor);
+        return game.PlayedAtLan ? $"Played at {events}" : $"Suggested for {events}";
+    }
 }

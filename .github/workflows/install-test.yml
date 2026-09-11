@@ -101,7 +101,7 @@ jobs:
           version="$(sudo sqlite3 /var/lib/gametown/gametown.db 'SELECT MAX("Version") FROM "SchemaVersion"')"
           roles="$(sudo sqlite3 /var/lib/gametown/gametown.db 'SELECT COUNT(*) FROM "GameTownRoles"')"
           echo "schema version=$version roles=$roles"
-          [[ "$version" -ge 7 ]] || { echo "::error::schema did not migrate past the baseline"; exit 1; }
+          [[ "$version" -ge 8 ]] || { echo "::error::schema did not migrate past the baseline"; exit 1; }
           [[ "$roles" -eq 2 ]]   || { echo "::error::roles were not seeded"; exit 1; }
 
       # Turns the install just made into one from an OLDER release, so the next step is a genuine
@@ -208,7 +208,7 @@ jobs:
           db=/var/lib/gametown/gametown.db
 
           version="$(sudo sqlite3 "$db" 'SELECT MAX("Version") FROM "SchemaVersion"')"
-          [[ "$version" -ge 7 ]] \
+          [[ "$version" -ge 8 ]] \
             || { echo "::error::the upgrade did not migrate past version 3 (got $version)"; exit 1; }
 
           # Replayed migrations would show up as a duplicate version row.

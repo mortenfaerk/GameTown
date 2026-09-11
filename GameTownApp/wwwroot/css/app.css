@@ -362,6 +362,27 @@ code {
     backdrop-filter: blur(2px);
 }
 
+/*
+   "Somebody asked for this at a LAN."
+
+   Top-left, opposite tile__size, so the two marks on a tile never collide however long the size
+   string gets. It takes the accent colour rather than tile__size's muted grey because this one is a
+   fact about the game worth spotting across a room on a projector, which is where the shelf is
+   actually going to be read.
+*/
+.tile__lan {
+    position: absolute;
+    left: 0.5rem;
+    top: 0.5rem;
+    font-size: 0.75rem;
+    line-height: 1;
+    padding: 0.2rem 0.35rem;
+    border-radius: 4px;
+    color: var(--gt-phosphor);
+    background: rgba(15, 15, 15, 0.82);
+    backdrop-filter: blur(2px);
+}
+
 .tile__title {
     margin: 0.6rem 0 0.1rem;
     font-size: 0.95rem;

@@ -98,7 +98,15 @@ public static class GameMappings
         // the service is gone. Computed here rather than in the browser for the reason above.
         CanRefreshMetadata = game.Metadata is not null
                              && currentProviderId is not null
-                             && game.Metadata.Provider == currentProviderId
+                             && game.Metadata.Provider == currentProviderId,
+        // Distinct, because two people asking for the same game at the same LAN is one badge, not two.
+        // Ordered descending so the most recent event leads — event names carry their number
+        // ("HCP #37 (2026)"), which sorts usefully, and there is no date on a suggestion to sort by.
+        SuggestedFor = [.. game.LanSuggestions
+            .Select(s => s.LanEventName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(name => name, StringComparer.OrdinalIgnoreCase)],
+        PlayedAtLan = game.LanSuggestions.Any(s => s.Played)
     };
 
     public static TagContract ToContract(this Tag tag) => new()

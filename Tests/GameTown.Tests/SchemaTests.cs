@@ -90,7 +90,7 @@ public class SchemaTests
         using (var client = app.CreateBrowser()) await client.GetAsync("/");
 
         // Every migration ran, not just the next one. An install can be several releases behind.
-        Assert.Equal("7", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+        Assert.Equal("8", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
 
         // The row is untouched, and each new column is present with its "nobody asked for this"
         // value rather than being backfilled with a guess.
@@ -176,7 +176,7 @@ public class SchemaTests
         // Booting the new build is the upgrade.
         using (var client = app.CreateBrowser()) await client.GetAsync("/");
 
-        Assert.Equal("7", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+        Assert.Equal("8", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
 
         // Field by field. The image path especially: it is a local file this server is still serving,
         // and carrying the row across without it would blank the cover on a game nobody touched.
@@ -239,7 +239,7 @@ public class SchemaTests
         using var app = new GameTownApp();
         using (var client = app.CreateBrowser()) await client.GetAsync("/");
 
-        Assert.Equal("7", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
+        Assert.Equal("8", app.QueryScalar(@"SELECT MAX(""Version"") FROM ""SchemaVersion"""));
         Assert.Equal("0", app.QueryScalar(@"SELECT COUNT(*) FROM ""MetadataGames"""));
 
         // Present and usable, not merely present: a surrogate the database assigns, which is the

@@ -21,6 +21,8 @@ public partial class DatabaseContext : DbContext
 
     public virtual DbSet<GameTownUser> GameTownUsers { get; set; }
 
+    public virtual DbSet<LanSuggestion> LanSuggestions { get; set; }
+
     public virtual DbSet<MetadataDeveloper> MetadataDevelopers { get; set; }
 
     public virtual DbSet<MetadataGame> MetadataGames { get; set; }
@@ -135,6 +137,38 @@ public partial class DatabaseContext : DbContext
                             .HasColumnType("uniqueidentifier")
                             .HasColumnName("APIRoleId");
                     });
+        });
+
+        modelBuilder.Entity<LanSuggestion>(entity =>
+        {
+            entity.ToTable("LanSuggestion");
+
+            entity.HasIndex(e => e.RemoteMatchId, "IX_LanSuggestion_Bound").IsUnique();
+
+            entity.HasIndex(e => e.GameId, "IX_LanSuggestion_GameId");
+
+            entity.HasIndex(e => e.LanEventName, "IX_LanSuggestion_LanEvent");
+
+            entity.HasIndex(e => e.RemoteId, "IX_LanSuggestion_RemoteId").IsUnique();
+
+            entity.Property(e => e.Id)
+                .ValueGeneratedNever()
+                .HasColumnType("uniqueidentifier");
+            entity.Property(e => e.AutoMatchBlocked).HasColumnType("boolean");
+            entity.Property(e => e.Dismissed).HasColumnType("boolean");
+            entity.Property(e => e.FirstSeenUtc).HasColumnType("datetime");
+            entity.Property(e => e.GameId).HasColumnType("uniqueidentifier");
+            entity.Property(e => e.LanEventName).UseCollation("NOCASE");
+            entity.Property(e => e.LastSeenUtc).HasColumnType("datetime");
+            entity.Property(e => e.Name).UseCollation("NOCASE");
+            entity.Property(e => e.Played).HasColumnType("boolean");
+            entity.Property(e => e.PushedAtUtc).HasColumnType("datetime");
+            entity.Property(e => e.RemoteId).HasColumnType("bigint");
+            entity.Property(e => e.RemoteMatchId).HasColumnType("uniqueidentifier");
+
+            entity.HasOne(d => d.Game).WithMany(p => p.LanSuggestions)
+                .HasForeignKey(d => d.GameId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<MetadataDeveloper>(entity =>

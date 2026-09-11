@@ -73,6 +73,7 @@ app.AddTagEndpoints();
 app.AddGuideEndpoints();
 app.AddMetaDataEndpoints();
 app.AddMetadataRelinkEndpoints();
+app.AddLanEndpoints();
 app.AddUserEndpoints();
 app.AddAuthEndpoints();
 app.AddSettingsEndpoints();

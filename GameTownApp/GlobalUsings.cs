@@ -5,4 +5,5 @@
 global using GameTown.Contracts.Auth;
 global using GameTown.Contracts.Games;
 global using GameTown.Contracts.Users;
+global using GameTown.Contracts.Lan;
 global using GameTown.Contracts.Settings;

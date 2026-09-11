@@ -34,6 +34,17 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     public const string MaxUploadSizeMbKey = "MaxUploadSizeMb";
     public const string BoxArtApiKeyKey = "BoxArtApiKey";
 
+    /// <summary>
+    /// The LAN Discord bot's Catalogue API. A base URL and a shared key, which is a pair in the same
+    /// all-or-nothing sense as the IGDB credentials — see <see cref="GetLanBotCredentialsAsync"/>.
+    /// </summary>
+    public const string LanBotBaseUrlKey = "LanBotBaseUrl";
+    public const string LanBotApiKeyKey = "LanBotApiKey";
+    public const string LanBotSyncIntervalMinutesKey = "LanBotSyncIntervalMinutes";
+
+    /// <summary>Where this install is reachable from, for links handed to anything outside it.</summary>
+    public const string PublicBaseUrlKey = "PublicBaseUrl";
+
     /// <summary>Archive extensions accepted by the upload endpoint when nothing is configured.</summary>
     public static readonly string[] DefaultAllowedFileTypes =
         [".zip", ".7z", ".rar", ".tar", ".gz", ".iso"];
@@ -43,6 +54,13 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     /// upgrade must not start rejecting archives an install has been accepting for months.
     /// </summary>
     public const long DefaultMaxUploadSizeMb = 0;
+
+    /// <summary>
+    /// How often the LAN bot is polled. Fifteen minutes because suggestions arrive at conversational
+    /// speed over days, not seconds — this is a list people add to in Discord between LANs, and a
+    /// tighter interval would spend someone else's rate limit to learn nothing.
+    /// </summary>
+    public const int DefaultLanBotSyncIntervalMinutes = 15;
 
     public string DataDirectory => dataDirectory;
 
@@ -115,6 +133,65 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     /// a dependency.
     /// </summary>
     public Task<string?> GetBoxArtApiKeyAsync() => GetRawAsync(BoxArtApiKeyKey);
+
+    /// <summary>
+    /// The LAN bot's base URL and API key, or nulls when either is missing.
+    ///
+    /// All-or-nothing for the same reason as <see cref="GetIgdbCredentialsAsync"/>: a base URL with
+    /// no key cannot call anything, and reporting it as configured turns a clear "not set up" into a
+    /// confusing failure at the first poll — which, for a background service, nobody is watching.
+    ///
+    /// Read per call, with no cache. <c>LanBotClient</c> must keep calling this rather than capturing
+    /// the pair in its constructor; see this class's summary for the bug that rule exists to prevent.
+    /// </summary>
+    public async Task<(string? BaseUrl, string? ApiKey)> GetLanBotCredentialsAsync()
+    {
+        var baseUrl = await GetRawAsync(LanBotBaseUrlKey);
+        var apiKey = await GetRawAsync(LanBotApiKeyKey);
+
+        return baseUrl is null || apiKey is null ? (null, null) : (baseUrl, apiKey);
+    }
+
+    /// <summary>
+    /// The base URL on its own, whether or not a key accompanies it. Display only — the same
+    /// half-configured state <see cref="GetIgdbClientIdAsync"/> exposes, for the same reason.
+    /// </summary>
+    public Task<string?> GetLanBotBaseUrlAsync() => GetRawAsync(LanBotBaseUrlKey);
+
+    /// <summary>
+    /// Minutes between LAN bot polls. Zero means polling is off, which is a real choice and not the
+    /// same as unconfigured: an operator may want the integration available for manual syncs only.
+    ///
+    /// An unparseable or negative stored value falls back to the default rather than to zero, so a
+    /// hand-edited row cannot silently switch off a sync an operator believes is running.
+    /// </summary>
+    public async Task<int> GetLanBotSyncIntervalMinutesAsync()
+    {
+        var raw = await GetRawAsync(LanBotSyncIntervalMinutesKey);
+        if (raw is null) return DefaultLanBotSyncIntervalMinutes;
+
+        return int.TryParse(raw, out var minutes) && minutes >= 0
+            ? minutes
+            : DefaultLanBotSyncIntervalMinutes;
+    }
+
+    /// <summary>
+    /// Where this install is reachable from, e.g. "http://10.0.0.5:5187". Null when unset.
+    ///
+    /// Nothing inside GameTown needs this — the SPA resolves its own API address from wherever it was
+    /// loaded, which is what lets one published artifact run at any address. It exists for the one
+    /// thing that cannot work that out: something OUTSIDE this install that wants to link back into
+    /// it. Today that is the LAN bot, which composes its links from its own configuration; this is
+    /// sent alongside every call so it need not, and is what the LAN screen shows an operator so they
+    /// can hand over the exact deep link.
+    ///
+    /// Stored without a trailing slash so callers can concatenate a rooted path.
+    /// </summary>
+    public async Task<string?> GetPublicBaseUrlAsync()
+    {
+        var raw = await GetRawAsync(PublicBaseUrlKey);
+        return raw?.TrimEnd('/');
+    }
 
     public async Task<string[]> GetAllowedFileTypesAsync()
     {

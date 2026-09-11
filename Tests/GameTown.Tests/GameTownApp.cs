@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Diagnostics;
 using System.Net.Http.Json;
@@ -21,6 +22,26 @@ public sealed class GameTownApp : WebApplicationFactory<Program>
 {
     public string DataDirectory { get; }
     public string DatabasePath => Path.Combine(DataDirectory, "gametown.db");
+
+    /// <summary>
+    /// A stand-in for the LAN bot, when a test sets one.
+    ///
+    /// THE ONLY STUBBED DEPENDENCY IN THIS SUITE, and it is worth saying why it is not a precedent.
+    /// Everything else here runs against the real thing — a real SQLite file, real cookies, the real
+    /// /setup page — because the bugs this suite exists to catch live in that wiring. Outbound
+    /// providers are covered by asserting their REFUSALS, which never reach the network (see
+    /// BoxArtTests), and that works because nothing downstream of an IGDB search depends on what
+    /// comes back.
+    ///
+    /// The LAN bot is different: its whole value is what GameTown does with the answer, and the rules
+    /// that matter — one binding per game, reconciling to what the bot reports, not recording a link
+    /// that failed to push — are only reachable on the success path. There is no way to observe them
+    /// without deciding what the bot said.
+    ///
+    /// Kept to this one client on purpose. A general-purpose HTTP stub would make it easy to write a
+    /// test that passes against a mock of code that never runs.
+    /// </summary>
+    public HttpMessageHandler? LanBotHandler { get; set; }
 
     public GameTownApp(bool seedRoles = true) : this(createDatabase: true, seedRoles: seedRoles) { }
 
@@ -54,6 +75,17 @@ public sealed class GameTownApp : WebApplicationFactory<Program>
             // the settings work had regressed.
             ["ConnectionStrings:DefaultConnection"] = $"Data Source={DatabasePath}",
         }));
+
+        // Replaces the primary handler of the "lanbot" named client only, and only when a test asked
+        // for it. Everything the sync does above the wire — the settings read, the base address, the
+        // X-Api-Key header, the JSON binding — still runs exactly as it ships.
+        builder.ConfigureServices(services =>
+        {
+            if (LanBotHandler is null) return;
+
+            services.AddHttpClient(API.Services.Lan.LanBotClient.HttpClientName)
+                    .ConfigurePrimaryHttpMessageHandler(() => LanBotHandler);
+        });
 
         return base.CreateHost(builder);
     }

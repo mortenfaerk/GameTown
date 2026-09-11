@@ -25,6 +25,8 @@ public partial class GameTownGame
 
     public int? MetadataId { get; set; }
 
+    public virtual ICollection<LanSuggestion> LanSuggestions { get; set; } = new List<LanSuggestion>();
+
     public virtual MetadataGame? Metadata { get; set; }
 
     public virtual Rawggame? Rawggame { get; set; }

@@ -36,6 +36,7 @@ public partial class DatabaseContext
         modelBuilder.Entity<GameTownRole>().Property(e => e.Id).ValueGeneratedOnAdd();
         modelBuilder.Entity<GameTownUser>().Property(e => e.Id).ValueGeneratedOnAdd();
         modelBuilder.Entity<Tag>().Property(e => e.Id).ValueGeneratedOnAdd();
+        modelBuilder.Entity<LanSuggestion>().Property(e => e.Id).ValueGeneratedOnAdd();
 
         // The same scaffolding artefact as the Guid keys above, arrived at from the other direction.
         //

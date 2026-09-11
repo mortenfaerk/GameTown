@@ -1,4 +1,4 @@
-@inject NavigationManager Navigation
+﻿@inject NavigationManager Navigation
 
 @*
     The sidebar is the navigation home: wordmark, then search, then links grouped by what
@@ -43,6 +43,9 @@
                 <NavLink class="gt-nav__link" href="searchmetadata">
                     <span class="bi bi-search" aria-hidden="true"></span> Browse metadata
                 </NavLink>
+
+                @* Present only on an install that actually talks to a LAN bot — see the component. *@
+                <LanNavLink />
             </Authorized>
         </AuthorizeView>
 

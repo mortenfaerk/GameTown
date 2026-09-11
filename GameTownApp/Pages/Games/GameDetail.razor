@@ -96,6 +96,22 @@ else
                 </div>
             }
 
+            @* Suggested at a LAN, and linked for the same reason the tags are: "what else did people
+               ask for that weekend" is the obvious next question from a game that was on the list.
+
+               Event names come from Discord. Rendered as text, never as markup — see
+               SECURITY-NOTES.md risk 10. *@
+            @if (Game.SuggestedFor.Count > 0)
+            {
+                <p class="gt-muted mb-3">
+                    @(Game.PlayedAtLan ? "Played at" : "Suggested for")
+                    @foreach (var lanEvent in Game.SuggestedFor)
+                    {
+                        <a class="ms-1" href="@($"/?lan={Uri.EscapeDataString(lanEvent)}")">@lanEvent</a>
+                    }
+                </p>
+            }
+
             <div class="d-flex flex-wrap gap-2">
                 <a class="btn btn-primary" href="@GamesService.GetDownloadUrl(Game.Id)">Download</a>
 

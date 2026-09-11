@@ -65,8 +65,33 @@ public class SettingsContract
     /// </summary>
     public bool BoxArtApiKeyIsSet { get; set; }
 
-    /// <summary>Last four characters only, on the same terms as <see cref="RawgApiKeyMasked"/>.</summary>
+    /// <summary>Last four characters only, on the same terms as <see cref="IgdbClientSecretMasked"/>.</summary>
     public string? BoxArtApiKeyMasked { get; set; }
+
+    /// <summary>
+    /// Whether both halves of the LAN bot credential are stored. Same all-or-nothing rule as
+    /// <see cref="IgdbCredentialsAreSet"/> — a base URL with no key cannot call anything.
+    /// </summary>
+    public bool LanBotIsConfigured { get; set; }
+
+    /// <summary>
+    /// The bot's base URL, in full. Not a secret — it is the address every request goes to, and
+    /// showing it is what makes the settings page useful for confirming which environment an install
+    /// is pointed at (there is a dev one and a live one).
+    /// </summary>
+    public string? LanBotBaseUrl { get; set; }
+
+    /// <summary>Last four characters only, on the same terms as <see cref="IgdbClientSecretMasked"/>.</summary>
+    public string? LanBotApiKeyMasked { get; set; }
+
+    /// <summary>Minutes between polls. <c>0</c> means polling is off; manual sync still works.</summary>
+    public int LanBotSyncIntervalMinutes { get; set; }
+
+    /// <summary>
+    /// Where this install is reachable from. Blank when unset, which is not an error — nothing inside
+    /// GameTown needs it.
+    /// </summary>
+    public string PublicBaseUrl { get; set; } = string.Empty;
 
     public List<string> AllowedFileTypes { get; set; } = [];
 
@@ -105,6 +130,25 @@ public class SettingsUpdateRequest
     public string? BoxArtApiKey { get; set; }
 
     public bool ClearBoxArtApiKey { get; set; }
+
+    /// <summary>Null means "unchanged". Validated as an absolute http/https URL before it is stored.</summary>
+    public string? LanBotBaseUrl { get; set; }
+
+    /// <summary>Blank means "unchanged", not "clear" — same asymmetry as <see cref="IgdbClientId"/>.</summary>
+    public string? LanBotApiKey { get; set; }
+
+    /// <summary>Clears both halves. They are one credential and are never half-removed.</summary>
+    public bool ClearLanBotCredentials { get; set; }
+
+    /// <summary>Null means "unchanged". <c>0</c> is a real value and means "do not poll".</summary>
+    public int? LanBotSyncIntervalMinutes { get; set; }
+
+    /// <summary>
+    /// Null means "unchanged"; an explicit blank string DOES clear it. Unlike the secrets above there
+    /// is no asymmetry to preserve here — the browser is given the current value, so a blank box is a
+    /// deliberate erasure rather than an untouched form.
+    /// </summary>
+    public string? PublicBaseUrl { get; set; }
 
     public List<string>? AllowedFileTypes { get; set; }
 

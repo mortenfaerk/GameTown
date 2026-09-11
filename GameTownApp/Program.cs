@@ -40,6 +40,7 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<UploadService>();
 builder.Services.AddScoped<SettingsService>();
 builder.Services.AddScoped<MetadataRelinkService>();
+builder.Services.AddScoped<LanSuggestionService>();
 
 var host = builder.Build();
 

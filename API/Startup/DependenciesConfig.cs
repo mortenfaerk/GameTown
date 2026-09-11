@@ -1,6 +1,7 @@
 ﻿using API.Services;
 using API.Services.Archives;
 using API.Services.BoxArt;
+using API.Services.Lan;
 using API.Services.Metadata;
 using EFModel.Models;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -142,6 +143,34 @@ public static class DependenciesConfig
         {
             client.Timeout = TimeSpan.FromSeconds(20);
         });
+        // The LAN Discord bot's Catalogue API.
+        //
+        // Note what this client deliberately does NOT get: ImageFetcher's handler. That handler
+        // refuses to connect to private addresses, which is exactly right for a URL a CONTRIBUTOR
+        // pasted and exactly wrong for this one. The bot's address is entered by an administrator and
+        // will very often be on the same LAN as the appliance — 10.x, 192.168.x — so the restriction
+        // that makes box art safe would make this integration impossible to configure. The
+        // distinction is who chose the address, not whether it is outbound. See SECURITY-NOTES.md
+        // risk 10 before "hardening" this.
+        //
+        // No BaseAddress or key here: both come from settings and are applied per call, because they
+        // are editable at runtime and this client is built once.
+        builder.Services.AddHttpClient(LanBotClient.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(20);
+        });
+        builder.Services.AddScoped<LanBotClient>();
+        builder.Services.AddScoped<LanSuggestionService>();
+
+        // Singleton because it outlives any request: the background worker writes it and the settings
+        // screen reads it. Holds no scoped dependency of its own — see LanSyncState.
+        builder.Services.AddSingleton<LanSyncState>();
+
+        // The only hosted service in this application. It creates its own scope per tick and re-reads
+        // its interval from settings each loop, so an unconfigured install costs one setting read a
+        // minute and makes no outbound calls at all. See LanSyncWorker.
+        builder.Services.AddHostedService<LanSyncWorker>();
+
         builder.Services.AddScoped<ImageFetcher>();
         #region Authentication
         // Cookie authentication, not JWT bearer. Same-origin hosting (Phase 2a) means the browser

@@ -1,0 +1,429 @@
+@page "/lan-suggestions"
+@attribute [Authorize(Roles = "Admin,Contributor")]
+@inject LanSuggestionService Lan
+@inject GamesService GamesService
+
+@*
+    Game suggestions players made in Discord, and the links between them and the library.
+
+    CONTRIBUTOR, NOT ADMIN. The unmatched tab is a wishlist — games people asked for that nobody has
+    uploaded — so it is a contributor's to-do list, and deciding that "Wardogs" is the game in the
+    library is the same judgement they already make when they tag and describe an upload. Only running
+    the sync and reading its status are admin, and both live on the settings page.
+
+    Several suggestions can point at one game, and that is normal: the bot's bindings are additive, so
+    "Counter-strike 2" and "CS2" both carry a working link to the same library entry. The candidate
+    list says when a game is already linked from somewhere else — as information, not as a warning.
+
+    Names here come from Discord and are UNTRUSTED. They are rendered with plain interpolation, which
+    Razor escapes. Never pass one to MarkupString — unlike game descriptions, which are sanitised on
+    the way out precisely because they are rendered as markup.
+*@
+
+<PageTitle>LAN suggestions</PageTitle>
+
+<h1>LAN suggestions</h1>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="alert alert-danger alert-dismissible">
+        @Error
+        <button type="button" class="btn-close" @onclick="() => Error = null"></button>
+    </div>
+}
+@if (!string.IsNullOrEmpty(Notice))
+{
+    <div class="alert alert-success alert-dismissible">
+        @Notice
+        <button type="button" class="btn-close" @onclick="() => Notice = null"></button>
+    </div>
+}
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <button class="nav-link @(Tab == "unmatched" ? "active" : "")" @onclick='() => Show("unmatched")'>
+            Wishlist @if (UnmatchedCount > 0) { <span class="badge bg-secondary ms-1">@UnmatchedCount</span> }
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(Tab == "matched" ? "active" : "")" @onclick='() => Show("matched")'>
+            Linked
+        </button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(Tab == "dismissed" ? "active" : "")" @onclick='() => Show("dismissed")'>
+            Set aside
+        </button>
+    </li>
+</ul>
+
+@if (Loading)
+{
+    <p><em>Loading…</em></p>
+}
+else if (Suggestions.Count == 0)
+{
+    <div class="alert alert-info">
+        @switch (Tab)
+        {
+            case "unmatched":
+                <text><strong>Nothing waiting.</strong> Every suggestion is either linked to a game or
+                set aside. New ones appear here after the next sync.</text>
+                break;
+            case "matched":
+                <text><strong>Nothing linked yet.</strong> Suggestions that match a game in the library
+                are linked automatically; anything else is waiting on the wishlist.</text>
+                break;
+            default:
+                <text><strong>Nothing set aside.</strong> Suggestions that will never be games — test
+                entries, custom maps — can be put here to keep the wishlist a list of real work.</text>
+                break;
+        }
+    </div>
+}
+else
+{
+    @if (Tab == "unmatched")
+    {
+        <p class="gt-muted">
+            @Suggestions.Count suggestion@(Suggestions.Count == 1 ? "" : "s") @(Suggestions.Count == 1 ? "has" : "have")
+            no game in the library. Link one to a game somebody has already uploaded, or set it aside
+            if it never will be.
+        </p>
+    }
+
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Suggested</th>
+                <th>LAN</th>
+                @if (Tab == "matched") { <th>Linked to</th><th>Status</th> }
+                else { <th>Match</th> }
+                <th class="text-end">Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var suggestion in Suggestions)
+            {
+                <tr>
+                    @* Plain interpolation: Discord text, escaped by Razor. *@
+                    <td>
+                        @suggestion.Name
+                        @if (suggestion.Played)
+                        {
+                            <span class="badge bg-success ms-2" title="Marked as played at the LAN">Played</span>
+                        }
+                    </td>
+                    <td class="gt-muted">@suggestion.LanEventName</td>
+
+                    @if (Tab == "matched")
+                    {
+                        <td>
+                            <a href="/game/@suggestion.GameId">@suggestion.GameTitle</a>
+                            @if (suggestion.LinkSource == "auto")
+                            {
+                                <span class="gt-muted small ms-2">matched automatically</span>
+                            }
+                            else if (suggestion.LinkSource == "remote")
+                            {
+                                <span class="gt-muted small ms-2">linked in the bot</span>
+                            }
+                        </td>
+                        <td>
+                            @if (suggestion.IsBound)
+                            {
+                                <span class="badge bg-success">Linked in Discord</span>
+                            }
+                            else if (suggestion.BoundElsewhere)
+                            {
+                                @* Not fixable from here, so it must not read as pending work: the bot
+                                   only binds suggestions that are currently unbound and will not move
+                                   this one. Someone would have to clear it inside the bot first. *@
+                                <span class="badge bg-warning text-dark"
+                                      title="The bot has this suggestion pointing at its own entry and will not move it">
+                                    Linked elsewhere in the bot
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-secondary"
+                                      title="Matched here, but not pushed to the bot yet">Not sent yet</span>
+                            }
+                        </td>
+                    }
+                    else
+                    {
+                        <td>
+                            @if (Expanded == suggestion.RemoteId)
+                            {
+                                @if (Candidates.Count == 0)
+                                {
+                                    <span class="gt-muted">Nothing in the library looks like this.</span>
+                                }
+                                else
+                                {
+                                    <div class="d-flex flex-column gap-1">
+                                        @foreach (var candidate in Candidates)
+                                        {
+                                            <div>
+                                                <button class="btn btn-sm btn-outline-primary" disabled="@Busy"
+                                                        @onclick="() => Link(suggestion, candidate)">
+                                                    @candidate.Title
+                                                </button>
+                                                @if (candidate.IsExact)
+                                                {
+                                                    <span class="badge bg-success ms-2">Same title</span>
+                                                }
+                                                @if (candidate.AlreadyLinkedFrom.Count > 0)
+                                                {
+                                                    @* Information, not a warning: linking it again is
+                                                       fine and the existing links keep working. *@
+                                                    <span class="gt-muted small ms-2">
+                                                        also linked from
+                                                        @string.Join(", ", candidate.AlreadyLinkedFrom
+                                                            .Select(n => $"“{n}”"))
+                                                    </span>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <span class="gt-muted small">&mdash;</span>
+                            }
+                        </td>
+                    }
+
+                    <td class="text-end text-nowrap">
+                        @if (Tab == "matched")
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
+                                    @onclick="() => Unlink(suggestion)">Unlink</button>
+                        }
+                        else if (Tab == "dismissed")
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
+                                    @onclick="() => Dismiss(suggestion, false)">Put back</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-primary me-1" disabled="@Busy"
+                                    @onclick="() => Expand(suggestion)">
+                                @(Expanded == suggestion.RemoteId ? "Hide" : "Find match")
+                            </button>
+                            <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
+                                    @onclick="() => Dismiss(suggestion, true)">Set aside</button>
+                        }
+                    </td>
+                </tr>
+
+            }
+        </tbody>
+    </table>
+
+    @if (Tab == "matched" && Suggestions.Any(s => s.DeepLink is not null))
+    {
+        <p class="gt-muted small">
+            The bot builds its own links from the match id, which is the game's id in GameTown &mdash;
+            for example <code>@Suggestions.First(s => s.DeepLink is not null).DeepLink</code>. Set this
+            server's public address under Administer &rarr; Settings if that link looks wrong.
+        </p>
+    }
+}
+
+@code {
+    private string Tab = "unmatched";
+    private bool Loading = true;
+    private bool Busy;
+    private string? Error;
+    private string? Notice;
+
+    private List<LanSuggestionContract> Suggestions = [];
+    private int UnmatchedCount;
+
+    /// <summary>Which row has its candidate list open. One at a time — this is a queue, not a grid.</summary>
+    private long? Expanded;
+    private List<LanCandidateContract> Candidates = [];
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Show(string tab)
+    {
+        if (Tab == tab) return;
+
+        Tab = tab;
+        Reset();
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        Loading = true;
+
+        try
+        {
+            Suggestions = await Lan.Get(Tab);
+            UnmatchedCount = Tab == "unmatched" ? Suggestions.Count : await Lan.GetUnmatchedCount();
+        }
+        catch (Exception)
+        {
+            // No exception detail: this reports on a configured outbound integration, and the
+            // message could carry the bot's address.
+            Error = "The suggestion list could not be loaded.";
+            Suggestions = [];
+        }
+
+        Loading = false;
+    }
+
+    private async Task Expand(LanSuggestionContract suggestion)
+    {
+        if (Expanded == suggestion.RemoteId)
+        {
+            Expanded = null;
+            Candidates = [];
+            return;
+        }
+
+        Busy = true;
+        Expanded = suggestion.RemoteId;
+
+        try
+        {
+            Candidates = await Lan.GetCandidates(suggestion.RemoteId);
+        }
+        catch (Exception)
+        {
+            Error = "The library could not be searched for matches.";
+            Candidates = [];
+        }
+
+        Busy = false;
+    }
+
+    /// <summary>
+    /// Links a suggestion to a game.
+    ///
+    /// No confirmation when the game is already linked from another suggestion: the bot's bindings
+    /// are additive, so the existing link keeps working and nothing is taken away from anyone.
+    /// </summary>
+    private async Task Link(LanSuggestionContract suggestion, LanCandidateContract candidate)
+    {
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        try
+        {
+            var result = await Lan.Link(suggestion.RemoteId, candidate.GameId);
+
+            if (result.Ok)
+            {
+                // "ok" and "bound-elsewhere" are both successes for GameTown — the game is recorded
+                // either way — but only one of them put a link in Discord, and saying so is the
+                // difference between a screen that is trusted and one that is not.
+                Notice = result.Reason == "bound-elsewhere"
+                    ? $"“{suggestion.Name}” is recorded as {candidate.Title} here, but the bot already "
+                      + "has that suggestion pointing at its own entry and will not move it. Someone "
+                      + "would need to clear it in the bot first."
+                    : $"Linked “{suggestion.Name}” to {candidate.Title}.";
+
+                Reset();
+                await Load();
+            }
+            else
+            {
+                Error = DescribeReason(result.Reason);
+            }
+        }
+        catch (Exception)
+        {
+            Error = "The link could not be saved.";
+        }
+
+        Busy = false;
+    }
+
+    private async Task Unlink(LanSuggestionContract suggestion)
+    {
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        try
+        {
+            var result = await Lan.Unlink(suggestion.RemoteId);
+
+            if (result.Ok)
+            {
+                Notice = $"Unlinked “{suggestion.Name}”. It will not be matched automatically again.";
+                Reset();
+                await Load();
+            }
+            else
+            {
+                Error = DescribeReason(result.Reason);
+            }
+        }
+        catch (Exception)
+        {
+            Error = "The link could not be removed.";
+        }
+
+        Busy = false;
+    }
+
+    private async Task Dismiss(LanSuggestionContract suggestion, bool dismissed)
+    {
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        try
+        {
+            var result = await Lan.Dismiss(suggestion.RemoteId, dismissed);
+
+            if (result.Ok)
+            {
+                Notice = dismissed
+                    ? $"Set “{suggestion.Name}” aside."
+                    : $"Put “{suggestion.Name}” back on the wishlist.";
+
+                Reset();
+                await Load();
+            }
+            else
+            {
+                Error = DescribeReason(result.Reason);
+            }
+        }
+        catch (Exception)
+        {
+            Error = "That could not be saved.";
+        }
+
+        Busy = false;
+    }
+
+    private void Reset()
+    {
+        Expanded = null;
+        Candidates = [];
+    }
+
+    /// <summary>
+    /// The project's fixed reason vocabulary, in words. Server text is never rendered: these reports
+    /// concern an outbound request to an address an administrator configured.
+    /// </summary>
+    private static string DescribeReason(string reason) => reason switch
+    {
+        "not-configured" => "The LAN bot is not configured. An administrator can set it up under Administer → Settings.",
+        "not-found" => "That suggestion or game no longer exists. Reload the page.",
+        "rejected" => "The LAN bot rejected our credentials.",
+        "rate-limited" => "The LAN bot is rate-limiting us. Try again in a minute.",
+        "unreachable" => "The LAN bot could not be reached, so nothing was changed.",
+        _ => "That did not work, and nothing was changed.",
+    };
+}

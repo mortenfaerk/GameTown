@@ -67,4 +67,18 @@ public class SettingsService(HttpClient http)
             return null;
         return await response.Content.ReadFromJsonAsync<ProviderCredentialCheckResult>();
     }
+
+    /// <summary>
+    /// One live LAN bot call with the stored address and key. Same result shape again — the question
+    /// "did it work, and if not why" does not change with the service being asked.
+    ///
+    /// Reads a single suggestion and writes nothing, so an admin can press Test as often as they like.
+    /// </summary>
+    public async Task<ProviderCredentialCheckResult?> TestLanBotCredentials()
+    {
+        var response = await _http.PostAsync("/settings/test-lanbot-credentials", null);
+        if (!response.IsSuccessStatusCode)
+            return null;
+        return await response.Content.ReadFromJsonAsync<ProviderCredentialCheckResult>();
+    }
 }

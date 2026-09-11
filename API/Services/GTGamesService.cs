@@ -38,6 +38,7 @@ namespace API.Services
         private IQueryable<GameTownGame> WithContractIncludes()
             => _context.GameTownGames
                 .Include(g => g.Tags)
+                .Include(g => g.LanSuggestions)
                 .Include(g => g.Metadata).ThenInclude(m => m!.Developers)
                 .Include(g => g.Metadata).ThenInclude(m => m!.Genres)
                 .Include(g => g.Metadata).ThenInclude(m => m!.Screenshots)
@@ -193,23 +194,24 @@ namespace API.Services
             => int.TryParse(value, out var parsed) && parsed > 0
                 ? parsed
                 : throw new ArgumentException($"'{value}' is not a valid provider game id.", nameof(value));
-        public Task<List<GameContract>> GetGamePaged(int page, int page_size, IEnumerable<string>? tagSlugs = null)
+        public Task<List<GameContract>> GetGamePaged(
+            int page, int page_size, IEnumerable<string>? tagSlugs = null, string? lanEvent = null)
         {
             if (page < 1 || page_size < 1)
                 throw new ArgumentOutOfRangeException("Page and page size must be greater than zero.");
 
-            return BrowseAsync(query: null, tagSlugs, page, page_size);
+            return BrowseAsync(query: null, tagSlugs, lanEvent, page, page_size);
         }
 
         public Task<List<GameContract>> SearchGames(
-            string query, int page, int pageSize, IEnumerable<string>? tagSlugs = null)
+            string query, int page, int pageSize, IEnumerable<string>? tagSlugs = null, string? lanEvent = null)
         {
             if (string.IsNullOrWhiteSpace(query))
                 throw new ArgumentException("Search query cannot be empty.", nameof(query));
             if (page < 1 || pageSize < 1)
                 throw new ArgumentOutOfRangeException("Page and page size must be greater than zero.");
 
-            return BrowseAsync(query, tagSlugs, page, pageSize);
+            return BrowseAsync(query, tagSlugs, lanEvent, page, pageSize);
         }
 
         /// <summary>
@@ -224,7 +226,7 @@ namespace API.Services
         /// tonight" and an OR would answer a question nobody has.
         /// </summary>
         private async Task<List<GameContract>> BrowseAsync(
-            string? query, IEnumerable<string>? tagSlugs, int page, int pageSize)
+            string? query, IEnumerable<string>? tagSlugs, string? lanEvent, int page, int pageSize)
         {
             var games = WithContractIncludes();
 
@@ -252,6 +254,19 @@ namespace API.Services
                     var wanted = slug.Trim().ToLowerInvariant();
                     games = games.Where(g => g.Tags.Any(t => t.Slug == wanted));
                 }
+            }
+
+            if (!string.IsNullOrWhiteSpace(lanEvent))
+            {
+                // Narrows to games somebody asked for at one LAN. Another AND, on the same reasoning
+                // as the tags above: "co-op games suggested for HCP #37" is the question, not "either".
+                //
+                // Matched on LanSuggestion.GameId, which is what GAMETOWN knows about the suggestion,
+                // NOT on whether the bot currently has it bound. Those differ whenever two suggestions
+                // point at one game — the bot holds a single match per game — and filtering on the
+                // binding would drop games off the shelf for a reason no visitor could see.
+                var wantedEvent = lanEvent.Trim();
+                games = games.Where(g => g.LanSuggestions.Any(s => s.LanEventName == wantedEvent));
             }
 
             var page_of_games = await games

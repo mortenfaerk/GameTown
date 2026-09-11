@@ -56,4 +56,17 @@ public class GameContract
     /// the rule in the browser gives it two places to be wrong.
     /// </summary>
     public bool CanRefreshMetadata { get; set; }
+
+    /// <summary>
+    /// LAN events this game was suggested for, newest first. Empty when nobody asked for it, which is
+    /// the normal state for most of the library.
+    ///
+    /// Drawn from what GAMETOWN matched, not from what the LAN bot currently has bound — a game
+    /// suggested at three LANs shows all three even though the bot can only hold one link to it. The
+    /// names come from Discord and are UNTRUSTED: render as text, never as markup.
+    /// </summary>
+    public List<string> SuggestedFor { get; set; } = [];
+
+    /// <summary>Whether any of those suggestions is marked as having actually been played.</summary>
+    public bool PlayedAtLan { get; set; }
 }

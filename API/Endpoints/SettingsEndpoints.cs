@@ -1,5 +1,6 @@
 using API.Services;
 using API.Services.BoxArt;
+using API.Services.Lan;
 using API.Services.Metadata;
 using EFModel.Models;
 using Microsoft.EntityFrameworkCore;
@@ -44,6 +45,11 @@ public static class SettingsEndpoints
              .Produces<ProviderCredentialCheckResult>(StatusCodes.Status200OK)
              .WithName("TestBoxArtKey")
              .WithDescription("Makes one live artwork-provider call with the stored key");
+
+        group.MapPost("/test-lanbot-credentials", TestLanBotCredentials)
+             .Produces<ProviderCredentialCheckResult>(StatusCodes.Status200OK)
+             .WithName("TestLanBotCredentials")
+             .WithDescription("Makes one live LAN bot call with the stored base URL and key");
     }
 
     private static async Task<IResult> GetSettings(
@@ -55,6 +61,7 @@ public static class SettingsEndpoints
     {
         var (clientId, clientSecret) = await settings.GetIgdbCredentialsAsync();
         var boxArtKey = await settings.GetBoxArtApiKeyAsync();
+        var (lanBotBaseUrl, lanBotApiKey) = await settings.GetLanBotCredentialsAsync();
         return new SettingsContract
         {
             GameFilesPath = await settings.GetGameFilesPathAsync(),
@@ -71,6 +78,13 @@ public static class SettingsEndpoints
             RelinkCandidateCount = await relink.CountCandidatesAsync(),
             BoxArtApiKeyIsSet = boxArtKey is not null,
             BoxArtApiKeyMasked = Mask(boxArtKey),
+            LanBotIsConfigured = lanBotBaseUrl is not null && lanBotApiKey is not null,
+            // The raw read, for the same reason as IgdbClientId above: a base URL saved without a key
+            // is a state the admin needs to be able to see, not one to hide behind "not configured".
+            LanBotBaseUrl = await settings.GetLanBotBaseUrlAsync(),
+            LanBotApiKeyMasked = Mask(lanBotApiKey),
+            LanBotSyncIntervalMinutes = await settings.GetLanBotSyncIntervalMinutesAsync(),
+            PublicBaseUrl = await settings.GetPublicBaseUrlAsync() ?? string.Empty,
             AllowedFileTypes = [.. await settings.GetAllowedFileTypesAsync()],
             MaxUploadSizeMb = await settings.GetMaxUploadSizeMbAsync(),
         };
@@ -132,6 +146,77 @@ public static class SettingsEndpoints
             await settings.SetAsync(SettingsService.BoxArtApiKeyKey, request.BoxArtApiKey.Trim());
         }
 
+        if (request.LanBotBaseUrl is not null)
+        {
+            var baseUrl = request.LanBotBaseUrl.Trim();
+
+            if (baseUrl.Length == 0)
+            {
+                await settings.SetAsync(SettingsService.LanBotBaseUrlKey, null);
+            }
+            else
+            {
+                // Validated as http/https specifically, not merely as a well-formed Uri. The API key
+                // is sent as a header on every call to this address, so a scheme that is not one of
+                // these two is not an inconvenience — it is a credential handed somewhere nobody
+                // intended. Private addresses ARE allowed: the bot is expected to be on the LAN, and
+                // this URL is chosen by an administrator. See SECURITY-NOTES.md risk 10.
+                if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
+                    || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                {
+                    return Results.BadRequest("The LAN bot address must be an absolute http:// or https:// URL.");
+                }
+
+                await settings.SetAsync(SettingsService.LanBotBaseUrlKey, baseUrl.TrimEnd('/'));
+            }
+        }
+
+        if (request.ClearLanBotCredentials)
+        {
+            // Both halves, on the same reasoning as the IGDB pair above: a base URL without a key
+            // cannot call anything, and leaving one behind is a state that reports itself as
+            // unconfigured while still being visible on the page.
+            await settings.SetAsync(SettingsService.LanBotBaseUrlKey, null);
+            await settings.SetAsync(SettingsService.LanBotApiKeyKey, null);
+        }
+        else if (!string.IsNullOrWhiteSpace(request.LanBotApiKey))
+        {
+            await settings.SetAsync(SettingsService.LanBotApiKeyKey, request.LanBotApiKey.Trim());
+        }
+
+        if (request.LanBotSyncIntervalMinutes is { } interval)
+        {
+            if (interval < 0)
+                return Results.BadRequest("The sync interval cannot be negative. Use 0 to stop polling.");
+
+            // Stored even at 0, on the same reasoning as MaxUploadSizeMb: "an admin chose manual
+            // syncs only" and "nobody has touched this" should not look identical in the database.
+            await settings.SetAsync(SettingsService.LanBotSyncIntervalMinutesKey,
+                interval.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (request.PublicBaseUrl is not null)
+        {
+            var publicBaseUrl = request.PublicBaseUrl.Trim();
+
+            if (publicBaseUrl.Length == 0)
+            {
+                // A blank here DOES clear, unlike the secrets above. The browser is given the current
+                // value, so an empty box is a deliberate erasure rather than an untouched form.
+                await settings.SetAsync(SettingsService.PublicBaseUrlKey, null);
+            }
+            else
+            {
+                if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var uri)
+                    || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+                {
+                    return Results.BadRequest("The public address must be an absolute http:// or https:// URL.");
+                }
+
+                await settings.SetAsync(SettingsService.PublicBaseUrlKey, publicBaseUrl.TrimEnd('/'));
+            }
+        }
+
         if (request.AllowedFileTypes is not null)
         {
             var normalised = SettingsService.ParseFileTypes(string.Join(',', request.AllowedFileTypes));
@@ -158,6 +243,26 @@ public static class SettingsEndpoints
 
     private static IResult CheckPath(PathCheckRequest request)
         => Results.Ok(DirectoryProbe.Probe(request.Path));
+
+    /// <summary>
+    /// Proves the stored LAN bot credentials work, by asking for a single suggestion.
+    ///
+    /// A real authenticated call rather than the bot's unauthenticated /health, and the difference
+    /// matters: health answers "ok" to a wrong API key, which is the single most likely thing to be
+    /// misconfigured here. Through the client for the same reason the two tests above go through
+    /// their providers — it exercises the header and base-address handling the sync actually uses.
+    ///
+    /// Reads at most one suggestion and writes nothing, so an admin can press Test freely.
+    /// </summary>
+    private static async Task<IResult> TestLanBotCredentials(LanBotClient bot)
+    {
+        var reason = await bot.PingAsync();
+        return Results.Ok(new ProviderCredentialCheckResult
+        {
+            Ok = reason == "ok",
+            Reason = reason,
+        });
+    }
 
     /// <summary>
     /// Proves the stored artwork key works, by searching for a title certain to exist.

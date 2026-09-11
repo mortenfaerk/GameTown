@@ -251,6 +251,60 @@ attacker controls can still be fetched — this bounds *where* the server will c
 will retrieve. It also confirms reachability of any public address, which is a weak port-scan
 primitive. Both need a Contributor account first.
 
+### 10. The server talks to an address an administrator configured (LAN bot)
+
+The LAN Discord bot integration gives GameTown a second outbound capability, and it is a different
+shape from risk 9 in the one way that matters: **the address is chosen by an Admin, not by a
+contributor.**
+
+**The `lanbot` HTTP client deliberately does NOT use `ImageFetcher.BuildHandler`, and must not be
+"hardened" into using it.** That handler refuses to connect to private addresses, which is exactly
+right for a URL a contributor pasted into a box-art field, and exactly wrong here — the bot is
+expected to live on the same LAN as the appliance, so the restriction that makes box art safe would
+make this integration impossible to configure. What bounds the risk instead is who can set it: only
+an Admin, through `PATCH /settings`, which is already the most sensitive endpoint group in the app.
+
+What *is* enforced (`SettingsEndpoints.UpdateSettings`, `LanBotClient`):
+
+- **http/https only**, rejected at save time. The API key is sent as a header on every request to
+  this address, so a scheme that is not one of those two is not an inconvenience — it is a credential
+  handed somewhere nobody intended.
+- **The key is stored and masked like every other secret** (last four characters plus a flag; never
+  returned in full), and cleared only through an explicit flag.
+- **Failures are fixed reason codes, never exception text.** Same rule as risk 9, and for a sharper
+  reason: the configured host may be an internal address, and an exception message would print it.
+  `LanBotClient` logs the status code or the exception *type* and nothing else.
+
+**Residual risk, accepted:** an Admin can point this at any address, including one on the local
+network, and the server will connect to it and send the configured key. That is the feature. It means
+compromising an Admin account yields a coarse internal-reachability probe — weaker than risk 9's,
+because it needs a settings write rather than a single contributor-level request, and it is bounded
+by the same "this is a private server on a home LAN" threat model everything else here rests on.
+
+**The plain-HTTP warning is a warning, not a refusal.** An `http://` bot address is normal on a LAN
+and the settings page says out loud that the key crosses the network in clear. Refusing it would make
+the common case unconfigurable.
+
+### 11. Player-typed text from Discord is rendered by GameTown
+
+Suggestion names and LAN event names are written by players in a Discord channel, arrive through a
+third-party service, and are rendered on GameTown's own pages — the LAN suggestions screen, the badge
+on a game tile, the event chips on the public library page.
+
+They are **plain text everywhere** and must stay that way: Razor interpolation escapes them, and
+nothing in this path may pass one to `MarkupString`. The contrast worth keeping in mind is game
+**descriptions**, which *are* rendered as markup and therefore go through `GameMappings`' sanitiser
+(see "Descriptions are rendered as HTML"). These do not need sanitising and must not be sanitised —
+a cleaner in the middle would corrupt legitimate titles while adding nothing.
+
+`Tests/GameTown.Tests/LanIntegrationTests.cs` pins that the route answers `application/json` — so a
+browser pointed straight at it never renders the markup as a document — and that the text round-trips
+byte for byte.
+
+**`GET /lan/events` is anonymous**, because the shelf it feeds is. It therefore publishes the LAN
+event names to anyone who can reach the host, which is the same audience that can already see the
+filtered shelf. Worth knowing before an event name is used to carry anything private.
+
 ---
 
 ## Invariants — things that look harmless to change and are not

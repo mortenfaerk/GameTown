@@ -1,6 +1,8 @@
-@page "/settings"
+﻿@page "/settings"
 @attribute [Authorize(Roles = "Admin")]
 @inject SettingsService SettingsService
+@inject LanSuggestionService Lan
+@inject NavigationManager Navigation
 
 @*
     Deliberately a page inside the SPA rather than a server-rendered Razor Page.
@@ -39,6 +41,9 @@
     </li>
     <li class="nav-item">
         <button class="nav-link @(Tab == "uploads" ? "active" : "")" @onclick='() => Tab = "uploads"'>Uploads</button>
+    </li>
+    <li class="nav-item">
+        <button class="nav-link @(Tab == "lanbot" ? "active" : "")" @onclick="ShowLanBot">LAN bot</button>
     </li>
 </ul>
 
@@ -307,6 +312,157 @@ else if (Tab == "uploads")
     </div>
 }
 
+else if (Tab == "lanbot")
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">LAN Discord bot</h5>
+            <p class="text-secondary small">
+                Players suggest games in Discord. GameTown polls the bot, matches suggestions against
+                the library, and links each match back so the suggestion carries a link to the game.
+                Contributors handle whatever cannot be matched automatically, under
+                <a href="lan-suggestions">LAN suggestions</a>.
+            </p>
+
+            <div class="alert alert-secondary small">
+                <strong>The bot holds one match per game.</strong> A game asked for under two different
+                spellings can carry the link from only one of them &mdash; the other stays matched in
+                GameTown and shows as waiting. That is the bot's limit, not a fault here.
+            </div>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label" for="lanbot-url">Bot address</label>
+                    <input id="lanbot-url" class="form-control" placeholder="https://bot.example.net"
+                           @bind="LanBotBaseUrl" />
+                </div>
+            </div>
+
+            <div class="row g-2 align-items-end mt-1">
+                <div class="col-md-8">
+                    <label class="form-label" for="lanbot-key">API key</label>
+                    <input id="lanbot-key" type="password" class="form-control" autocomplete="off"
+                           placeholder="@(Current.LanBotApiKeyMasked ?? "not set")" @bind="LanBotApiKey" />
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-primary" @onclick="SaveLanBot" disabled="@Busy">Save</button>
+                    <button class="btn btn-outline-secondary" @onclick="TestLanBot" disabled="@Busy">Test</button>
+                </div>
+            </div>
+
+            @if (LanBotBaseUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            {
+                <div class="alert alert-warning small mt-3 mb-0">
+                    This address is plain <code>http</code>, so the API key is sent across the network
+                    unencrypted. Usually fine on a LAN, and worth knowing about anywhere else.
+                </div>
+            }
+
+            @if (LanBotCheck is not null)
+            {
+                <div class="alert @(LanBotCheck.Ok ? "alert-success" : "alert-warning") mt-3 mb-0">
+                    @DescribeKeyCheck(LanBotCheck, "The LAN bot")
+                </div>
+            }
+
+            @if (Current.LanBotIsConfigured)
+            {
+                <p class="mt-3 mb-0">
+                    <button class="btn btn-sm btn-outline-danger" @onclick="ClearLanBot" disabled="@Busy">
+                        Remove the stored credentials
+                    </button>
+                </p>
+            }
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Polling</h5>
+            <p class="text-secondary small">
+                How often to ask the bot for new suggestions. <strong>0 stops polling</strong> without
+                switching the integration off &mdash; Sync now still works, and so does everything on
+                the suggestions screen. Takes effect without restarting.
+            </p>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label" for="lan-interval">Every (minutes)</label>
+                    <input id="lan-interval" type="number" min="0" step="1" class="form-control"
+                           @bind="LanBotSyncIntervalMinutes" />
+                </div>
+                <div class="col-md-8">
+                    <button class="btn btn-primary" @onclick="SaveLanInterval" disabled="@Busy">Save</button>
+                    <button class="btn btn-outline-secondary" @onclick="SyncNow"
+                            disabled="@(Syncing || !Current.LanBotIsConfigured)">
+                        @(Syncing ? "Syncing…" : "Sync now")
+                    </button>
+                </div>
+            </div>
+
+            @if (LanStatus is not null)
+            {
+                <p class="text-secondary small mt-3 mb-0">
+                    @if (!LanStatus.Configured)
+                    {
+                        <text>Not configured, so nothing is being polled.</text>
+                    }
+                    else if (LanStatus.LastRunUtc is null)
+                    {
+                        <text>Configured, but it has not run yet@(LanStatus.IntervalMinutes == 0
+                            ? " and polling is off."
+                            : $" — the first poll is within {LanStatus.IntervalMinutes} minutes.")</text>
+                    }
+                    else
+                    {
+                        <text>
+                            Last run @LanStatus.LastRunUtc.Value.ToLocalTime().ToString("g"):
+                            @LanStatus.LastSeen seen, @LanStatus.LastMatched newly matched,
+                            @LanStatus.LastBound linked
+                            @if (LanStatus.LastReason != "ok")
+                            {
+                                <span class="text-danger">(@LanStatus.LastReason)</span>
+                            }
+                        </text>
+                    }
+                </p>
+            }
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">This server's address</h5>
+            <p class="text-secondary small">
+                Where players reach GameTown from, used for the links the bot points at a game. Nothing
+                inside GameTown needs it &mdash; the app works out its own address from wherever it was
+                loaded &mdash; so this exists purely for whatever links in from outside.
+            </p>
+
+            <div class="row g-2 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label" for="public-url">Public address</label>
+                    <input id="public-url" class="form-control" placeholder="http://10.0.0.5:5187"
+                           @bind="PublicBaseUrl" />
+                </div>
+                <div class="col-md-4">
+                    <button class="btn btn-outline-secondary" @onclick="DetectPublicBaseUrl">Detect</button>
+                    <button class="btn btn-primary" @onclick="SavePublicBaseUrl" disabled="@Busy">Save</button>
+                </div>
+            </div>
+
+            @if (!string.IsNullOrWhiteSpace(PublicBaseUrl))
+            {
+                <p class="text-secondary small mt-3 mb-0">
+                    Game links will look like
+                    <code>@(PublicBaseUrl.TrimEnd('/'))/game/&lt;game id&gt;</code>. The suggestions
+                    screen shows the exact link for each matched game, to hand to whoever runs the bot.
+                </p>
+            }
+        </div>
+    </div>
+}
+
 @code {
     private string Tab = "storage";
     private bool Loading = true;
@@ -322,6 +478,15 @@ else if (Tab == "uploads")
     private List<string> AllowedFileTypes = [];
     private string NewType = string.Empty;
     private long MaxUploadSizeMb;
+
+    private string LanBotBaseUrl = string.Empty;
+    private string LanBotApiKey = string.Empty;
+    private int LanBotSyncIntervalMinutes;
+    private string PublicBaseUrl = string.Empty;
+
+    private ProviderCredentialCheckResult? LanBotCheck;
+    private LanSyncStatusContract? LanStatus;
+    private bool Syncing;
 
     private PathCheckResult? PathCheck;
     private ProviderCredentialCheckResult? KeyCheck;
@@ -354,6 +519,131 @@ else if (Tab == "uploads")
         IgdbClientId = string.Empty;
         IgdbClientSecret = string.Empty;
         BoxArtApiKey = string.Empty;
+
+        // The base URL and the public address are NOT secrets — they are shown in full, and an empty
+        // box for the public address is a deliberate erasure rather than "unchanged".
+        LanBotBaseUrl = settings.LanBotBaseUrl ?? string.Empty;
+        PublicBaseUrl = settings.PublicBaseUrl;
+        LanBotSyncIntervalMinutes = settings.LanBotSyncIntervalMinutes;
+        LanBotApiKey = string.Empty;
+    }
+
+    /// <summary>
+    /// Opens the LAN bot tab, fetching the sync status the first time.
+    ///
+    /// Not loaded with the rest of the settings: it is the only field here that reports on a live
+    /// background process rather than on stored configuration, and every other tab would pay for it.
+    /// </summary>
+    private async Task ShowLanBot()
+    {
+        Tab = "lanbot";
+        await RefreshLanStatus();
+    }
+
+    private async Task RefreshLanStatus()
+    {
+        try
+        {
+            LanStatus = await Lan.GetStatus();
+        }
+        catch (Exception)
+        {
+            LanStatus = null;
+        }
+    }
+
+    private async Task SaveLanBot()
+    {
+        if (string.IsNullOrWhiteSpace(LanBotBaseUrl))
+        {
+            Error = "Enter the bot's address, or use \"Remove the stored credentials\" to clear them.";
+            return;
+        }
+
+        // Both halves on a FIRST save, one at a time afterwards — the same rule as the IGDB pair, and
+        // for the same reason: saving a key alone is how an admin rotates it, while saving an address
+        // alone before either exists leaves the install half-configured and reporting itself unset.
+        if (!Current!.LanBotIsConfigured && string.IsNullOrWhiteSpace(LanBotApiKey))
+        {
+            Error = "Both the address and the API key are needed.";
+            return;
+        }
+
+        await Save(
+            new SettingsUpdateRequest { LanBotBaseUrl = LanBotBaseUrl, LanBotApiKey = LanBotApiKey },
+            "LAN bot settings saved.");
+
+        await RefreshLanStatus();
+    }
+
+    private async Task ClearLanBot()
+    {
+        await Save(new SettingsUpdateRequest { ClearLanBotCredentials = true }, "LAN bot credentials removed.");
+        await RefreshLanStatus();
+    }
+
+    private async Task SaveLanInterval()
+    {
+        if (LanBotSyncIntervalMinutes < 0)
+        {
+            Error = "Enter 0 to stop polling, or a positive number of minutes.";
+            return;
+        }
+
+        await Save(
+            new SettingsUpdateRequest { LanBotSyncIntervalMinutes = LanBotSyncIntervalMinutes },
+            LanBotSyncIntervalMinutes == 0
+                ? "Polling switched off. Sync now still works."
+                : $"Polling every {LanBotSyncIntervalMinutes} minute{(LanBotSyncIntervalMinutes == 1 ? "" : "s")}.");
+
+        await RefreshLanStatus();
+    }
+
+    private async Task SavePublicBaseUrl()
+        => await Save(new SettingsUpdateRequest { PublicBaseUrl = PublicBaseUrl },
+            string.IsNullOrWhiteSpace(PublicBaseUrl) ? "Public address cleared." : "Public address saved.");
+
+    /// <summary>
+    /// Fills the public address from the address this page was loaded from.
+    ///
+    /// Right far more often than not — an admin almost always configures GameTown from a machine on
+    /// the same network the players will use — and it is offered rather than applied because the one
+    /// case it gets wrong (an admin on a VPN, or a reverse proxy in front) is invisible from here.
+    /// </summary>
+    private void DetectPublicBaseUrl()
+        => PublicBaseUrl = Navigation.BaseUri.TrimEnd('/');
+
+    private async Task TestLanBot()
+    {
+        Busy = true;
+        LanBotCheck = await SettingsService.TestLanBotCredentials();
+        Busy = false;
+    }
+
+    private async Task SyncNow()
+    {
+        Syncing = true;
+        Error = null;
+        Notice = null;
+
+        try
+        {
+            LanStatus = await Lan.SyncNow();
+
+            Notice = LanStatus?.LastReason == "ok"
+                ? $"Synced: {LanStatus.LastSeen} suggestion{(LanStatus.LastSeen == 1 ? "" : "s")} seen, "
+                  + $"{LanStatus.LastMatched} newly matched, {LanStatus.LastBound} linked in the bot."
+                : null;
+
+            if (Notice is null && LanStatus is not null)
+                Error = DescribeKeyCheck(new ProviderCredentialCheckResult { Reason = LanStatus.LastReason ?? "unreachable" }, "The LAN bot");
+        }
+        catch (Exception)
+        {
+            Error = "The sync could not be run.";
+        }
+
+        Syncing = false;
     }
 
     private async Task SaveStorage()
