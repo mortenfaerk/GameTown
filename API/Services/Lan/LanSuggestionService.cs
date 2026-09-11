@@ -412,7 +412,16 @@ public class LanSuggestionService(
 
         var publicBaseUrl = await settings.GetPublicBaseUrlAsync();
 
-        return [.. rows.Select(row => new LanSuggestionContract
+        return [.. rows.Select(row => ToContract(row, publicBaseUrl))];
+    }
+
+    /// <summary>
+    /// One row, on the wire. Shared by the tab listing and the ranked wishlist so the two cannot
+    /// drift — <c>IsBound</c> and <c>BoundElsewhere</c> in particular are easy to derive slightly
+    /// differently in a second place and impossible to notice when they are.
+    /// </summary>
+    private static LanSuggestionContract ToContract(LanSuggestion row, string? publicBaseUrl)
+        => new()
         {
             RemoteId = row.RemoteId,
             Name = row.Name,
@@ -430,8 +439,7 @@ public class LanSuggestionService(
                 ? $"{publicBaseUrl}/game/{row.GameId.Value}"
                 : null,
             FirstSeenUtc = row.FirstSeenUtc,
-        })];
-    }
+        };
 
     /// <summary>
     /// Library entries offered as a match for one suggestion, best first.
@@ -450,31 +458,267 @@ public class LanSuggestionService(
 
         var library = await context.GameTownGames
             .AsNoTracking()
-            .Select(g => new { g.Id, g.Title, g.BoxArtUrl })
+            .Select(g => new LibraryEntry(g.Id, g.Title, g.BoxArtUrl))
             .ToListAsync(cancellationToken);
 
         // Grouped, because a game can be linked from several suggestions at once.
-        var linkedRows = await context.LanSuggestions
-            .AsNoTracking()
-            .Where(s => s.RemoteMatchId != null && s.RemoteId != remoteId)
-            .Select(s => new { MatchId = s.RemoteMatchId!.Value, s.Name })
-            .ToListAsync(cancellationToken);
-
-        var linkedFrom = linkedRows
-            .GroupBy(s => s.MatchId)
-            .ToDictionary(group => group.Key, group => group.Select(s => s.Name).ToList());
+        var linkedFrom = await LinkedFromAsync(cancellationToken, excluding: remoteId);
 
         return [.. SuggestionMatcher
             .Rank(row.Name, library, game => game.Title)
-            .Select(match => new LanCandidateContract
+            .Select(match => ToCandidate(match, linkedFrom, remoteId))];
+    }
+
+    /// <summary>
+    /// The whole wishlist, ranked and banded, in one pass.
+    ///
+    /// WHY THIS IS NOT <see cref="GetCandidatesAsync"/> IN A LOOP. That method reads the entire
+    /// library per call, so ranking a 78-row queue that way is 78 full library reads and 78 round
+    /// trips. Here the library is read once and every suggestion is ranked against the same list.
+    ///
+    /// More importantly it is what lets the screen SORT by how much work a row is. Until every row
+    /// carries a band, the fourteen rows with an obvious answer and the thirty-two with none look
+    /// identical, and a person has to open each one to find out which kind it is — which is the
+    /// actual reason the old screen did not scale.
+    ///
+    /// Candidates are dropped from weak rows before they go on the wire. The screen does not render
+    /// them, and a list of ten wrong answers per row is most of the payload.
+    /// </summary>
+    /// <param name="query">Free text over the suggestion's own name. Not over candidate titles —
+    /// this narrows the queue, it does not search the library.</param>
+    /// <param name="lanEvent">Exact event name, as <c>GetEventsAsync</c> reports them.</param>
+    /// <param name="confidence">"strong", "ambiguous" or "weak" to show one section only.</param>
+    public async Task<LanRankedQueueContract> GetRankedAsync(
+        string? query = null,
+        string? lanEvent = null,
+        string? confidence = null,
+        int page = 1,
+        int pageSize = 50,
+        CancellationToken cancellationToken = default)
+    {
+        // Same predicate as the "unmatched" tab, deliberately. Deriving it independently is what made
+        // the re-link banner and the re-link screen disagree.
+        var rows = await context.LanSuggestions.AsNoTracking()
+            .Include(s => s.Game)
+            .Where(s => s.GameId == null && !s.Dismissed)
+            .OrderByDescending(s => s.RemoteId)
+            .ToListAsync(cancellationToken);
+
+        var library = await context.GameTownGames.AsNoTracking()
+            .Select(g => new LibraryEntry(g.Id, g.Title, g.BoxArtUrl))
+            .ToListAsync(cancellationToken);
+
+        var linkedFrom = await LinkedFromAsync(cancellationToken);
+        var publicBaseUrl = await settings.GetPublicBaseUrlAsync();
+
+        var ranked = new List<LanRankedSuggestionContract>(rows.Count);
+
+        foreach (var row in rows)
+        {
+            var matches = SuggestionMatcher.Rank(row.Name, library, entry => entry.Title);
+            var band = MatchConfidenceBands.Band([.. matches.Select(m => m.Score)]);
+
+            ranked.Add(new LanRankedSuggestionContract
             {
-                GameId = match.Item.Id,
-                Title = match.Item.Title,
-                BoxArtUrl = match.Item.BoxArtUrl,
-                Score = Math.Round(match.Score, 3),
-                IsExact = match.IsExact,
-                AlreadyLinkedFrom = linkedFrom.GetValueOrDefault(match.Item.Id) ?? [],
-            })];
+                Suggestion = ToContract(row, publicBaseUrl),
+                // Nothing at all for a weak row, and only the candidates worth reading for the rest.
+                // Both trims are the same idea at different scales — see MatchConfidenceBands.
+                Candidates = band == MatchConfidence.Weak
+                    ? []
+                    : [.. MatchConfidenceBands
+                        .Nearest(matches, m => m.Score)
+                        .Select(m => ToCandidate(m, linkedFrom, row.RemoteId))],
+                Confidence = MatchConfidenceBands.Name(band),
+                // The one rule that is not about string similarity: a row whose link a contributor
+                // removed must never arrive pre-ticked, or a bulk link would undo their decision.
+                Preselect = band == MatchConfidence.Strong && !row.AutoMatchBlocked,
+                AutoMatchBlocked = row.AutoMatchBlocked,
+            });
+        }
+
+        // Counted over the whole queue, before any filter: these drive the section headings, and a
+        // heading that changed as you typed in the filter box would be reporting on the filter rather
+        // than on the work outstanding.
+        var result = new LanRankedQueueContract
+        {
+            StrongCount = ranked.Count(r => r.Confidence == "strong"),
+            AmbiguousCount = ranked.Count(r => r.Confidence == "ambiguous"),
+            WeakCount = ranked.Count(r => r.Confidence == "weak"),
+        };
+
+        // ORDERED BY BAND, BEFORE PAGING, and this is load-bearing rather than cosmetic. The screen
+        // draws the queue as three sections and offers a bulk action over each; if a page were a
+        // slice of the whole queue in arrival order, the "Likely matches" section would hold whichever
+        // handful of strong rows happened to fall on that page — one of fourteen, in the first run of
+        // this — and "Link selected" would silently mean "link the ones you can currently see".
+        // Sorting by band makes a page a meaningful unit of work: the certain ones first, together.
+        //
+        // Arrival order is kept WITHIN a band, so the queue is still newest-first where that is all
+        // there is to go on.
+        IEnumerable<LanRankedSuggestionContract> filtered = ranked
+            .OrderBy(r => r.Confidence switch { "strong" => 0, "ambiguous" => 1, _ => 2 })
+            .ThenByDescending(r => r.Suggestion.RemoteId);
+
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            var wanted = query.Trim();
+            filtered = filtered.Where(r =>
+                r.Suggestion.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(lanEvent))
+        {
+            filtered = filtered.Where(r =>
+                string.Equals(r.Suggestion.LanEventName, lanEvent, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(confidence))
+        {
+            filtered = filtered.Where(r => r.Confidence == confidence);
+        }
+
+        var matching = filtered.ToList();
+        result.TotalMatching = matching.Count;
+
+        result.Suggestions = [.. matching
+            .Skip(Math.Max(page - 1, 0) * Math.Max(pageSize, 1))
+            .Take(Math.Max(pageSize, 1))];
+
+        return result;
+    }
+
+    /// <summary>What the library looks like to the matcher: a title to rank and a cover to show.</summary>
+    private sealed record LibraryEntry(Guid Id, string Title, string? BoxArtUrl);
+
+    /// <summary>
+    /// Which games are already linked from some OTHER suggestion, by name.
+    ///
+    /// Informational, never a warning — bindings at the bot are additive, so choosing a game already
+    /// in play costs nothing. Read once per request rather than once per suggestion.
+    /// </summary>
+    private async Task<Dictionary<Guid, List<string>>> LinkedFromAsync(
+        CancellationToken cancellationToken, long? excluding = null)
+    {
+        var rows = await context.LanSuggestions.AsNoTracking()
+            .Where(s => s.RemoteMatchId != null)
+            .Select(s => new { MatchId = s.RemoteMatchId!.Value, s.Name, s.RemoteId })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .Where(s => excluding is null || s.RemoteId != excluding)
+            .GroupBy(s => s.MatchId)
+            .ToDictionary(group => group.Key, group => group.Select(s => s.Name).ToList());
+    }
+
+    private static LanCandidateContract ToCandidate(
+        RankedMatch<LibraryEntry> match, Dictionary<Guid, List<string>> linkedFrom, long selfRemoteId)
+        => new()
+        {
+            GameId = match.Item.Id,
+            Title = match.Item.Title,
+            BoxArtUrl = match.Item.BoxArtUrl,
+            Score = Math.Round(match.Score, 3),
+            IsExact = match.IsExact,
+            // The row's own name would otherwise show up as "also linked from" itself.
+            AlreadyLinkedFrom = linkedFrom.GetValueOrDefault(match.Item.Id) ?? [],
+        };
+
+    /// <summary>
+    /// Links several suggestions in one request, stopping early on a reason that will not improve.
+    ///
+    /// The pacing lives here rather than in the browser because these are outbound calls to a
+    /// rate-limited bot and a page can be closed halfway through a loop. Each row still goes through
+    /// <see cref="LinkAsync"/>, so every rule about pushing — at most once, never re-pointed, never
+    /// re-titled — holds exactly as it does for a single link.
+    /// </summary>
+    public async Task<LanBulkResult> LinkManyAsync(
+        IEnumerable<LanLinkRequest> links, CancellationToken cancellationToken = default)
+    {
+        var result = new LanBulkResult();
+
+        foreach (var link in links)
+        {
+            var name = await context.LanSuggestions.AsNoTracking()
+                .Where(s => s.RemoteId == link.RemoteId)
+                .Select(s => s.Name)
+                .FirstOrDefaultAsync(cancellationToken) ?? string.Empty;
+
+            var outcome = await LinkAsync(link.RemoteId, link.GameId, cancellationToken);
+
+            result.Results.Add(new LanBulkEntry
+            {
+                RemoteId = link.RemoteId,
+                Name = name,
+                Ok = outcome.Ok,
+                Reason = outcome.Reason,
+            });
+
+            if (outcome.Ok)
+            {
+                result.Succeeded++;
+                if (outcome.Reason == "bound-elsewhere") result.BoundElsewhere++;
+                continue;
+            }
+
+            result.Failed++;
+
+            // "not-found" is about this row only — the suggestion or game went away — so the rest of
+            // the batch is still worth trying. Everything else is about the bot or its credentials
+            // and will answer the same way thirty more times, each one after a timeout.
+            if (outcome.Reason is not "not-found")
+            {
+                result.StoppedBecause = outcome.Reason;
+                break;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Sets several suggestions aside, or puts them back.
+    ///
+    /// Local only and therefore never stops early: there is no outbound call to fail, and a row that
+    /// has gone missing is not a reason to abandon the rest.
+    /// </summary>
+    public async Task<LanBulkResult> DismissManyAsync(
+        IEnumerable<long> remoteIds, bool dismissed, CancellationToken cancellationToken = default)
+    {
+        var wanted = remoteIds.Distinct().ToList();
+
+        var rows = await context.LanSuggestions
+            .Where(s => wanted.Contains(s.RemoteId))
+            .ToListAsync(cancellationToken);
+
+        var result = new LanBulkResult();
+
+        foreach (var remoteId in wanted)
+        {
+            var row = rows.FirstOrDefault(r => r.RemoteId == remoteId);
+
+            if (row is null)
+            {
+                result.Failed++;
+                result.Results.Add(new LanBulkEntry { RemoteId = remoteId, Ok = false, Reason = "not-found" });
+                continue;
+            }
+
+            row.Dismissed = dismissed;
+
+            result.Succeeded++;
+            result.Results.Add(new LanBulkEntry
+            {
+                RemoteId = remoteId,
+                Name = row.Name,
+                Ok = true,
+                Reason = "ok",
+            });
+        }
+
+        // One save for the batch. Setting thirty rows aside is one decision, and a partial result
+        // would leave the queue in a state nobody chose.
+        await context.SaveChangesAsync(cancellationToken);
+        return result;
     }
 
     /// <summary>
@@ -486,6 +730,16 @@ public class LanSuggestionService(
     public Task<int> CountUnmatchedAsync(CancellationToken cancellationToken = default)
         => context.LanSuggestions.AsNoTracking()
             .CountAsync(s => s.GameId == null && !s.Dismissed, cancellationToken);
+
+    /// <summary>
+    /// Every suggestion in every state — the honest test for whether this install uses the LAN bot.
+    ///
+    /// A COUNT, not a list. The sidebar link used to answer this by pulling the entire suggestion
+    /// list and reading its Count, which on an install with an empty wishlist meant downloading every
+    /// suggestion on every page load to decide one boolean.
+    /// </summary>
+    public Task<int> CountAllAsync(CancellationToken cancellationToken = default)
+        => context.LanSuggestions.AsNoTracking().CountAsync(cancellationToken);
 
     /// <summary>
     /// LAN events with at least one library game suggested for them, for the shelf chips.

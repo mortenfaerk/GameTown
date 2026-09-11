@@ -156,6 +156,24 @@ public class LanIntegrationTests
 
     private sealed record Status(bool Configured, string? LastReason, int LastSeen, int LastMatched, int LastBound);
 
+    private sealed record Counts(int Unmatched, int Total);
+
+    private sealed record RankedRow(
+        Suggestion Suggestion, List<Candidate> Candidates, string Confidence,
+        bool Preselect, bool AutoMatchBlocked);
+
+    private sealed record RankedQueue(
+        List<RankedRow> Suggestions, int StrongCount, int AmbiguousCount, int WeakCount, int TotalMatching);
+
+    private sealed record BulkEntry(long RemoteId, string Name, bool Ok, string Reason);
+
+    private sealed record BulkResult(
+        List<BulkEntry> Results, int Succeeded, int BoundElsewhere, int Failed, string? StoppedBecause);
+
+    private static async Task<RankedQueue> RankedAsync(HttpClient client, string query = "")
+        => await client.GetFromJsonAsync<RankedQueue>($"/lan/suggestions/ranked{query}")
+           ?? new RankedQueue([], 0, 0, 0, 0);
+
     /// <summary>
     /// Configures the integration through the real settings endpoint, so these tests also prove the
     /// values are readable by the running service without a restart — the same property SettingsTests
@@ -782,5 +800,316 @@ public class LanIntegrationTests
 
         var waiting = Assert.Single(await SuggestionsAsync(contributor, "unmatched"));
         Assert.Equal("Wardogs", waiting.Name);
+    }
+
+    // ------------------------------------------------------------------ the ranked wishlist
+
+    /// <summary>
+    /// The ranked queue bands each row so the screen can show three kinds of row differently, and the
+    /// weak rows arrive with NO candidates at all.
+    ///
+    /// That last part is the payload half of the point. A weak row still has ten ranked results
+    /// behind it — every one of them wrong — and shipping them means the screen has to decide not to
+    /// draw what it was just sent. On a real queue those were most of the bytes.
+    /// </summary>
+    [Fact]
+    public async Task The_ranked_queue_bands_rows_and_sends_no_candidates_for_the_hopeless_ones()
+    {
+        var bot = new FakeLanBot()
+            .Suggest(1, "helldivers")        // one clear leader
+            .Suggest(2, "Age of Empires 2")  // a high score with a thin margin: a real choice
+            .Suggest(3, "mario kart");       // nothing in the library is this
+
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        await AddGameAsync(admin, "Helldivers 2");
+        await AddGameAsync(admin, "Age of Empires II: Definitive Edition");
+        await AddGameAsync(admin, "Age of Empires IV");
+        await AddGameAsync(admin, "Magicka");
+        await AddGameAsync(admin, "Magicka 2");
+
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        var queue = await RankedAsync(admin);
+
+        var helldivers = queue.Suggestions.Single(r => r.Suggestion.Name == "helldivers");
+        Assert.Equal("strong", helldivers.Confidence);
+        Assert.Equal("Helldivers 2", helldivers.Candidates[0].Title);
+        Assert.True(helldivers.Preselect);
+
+        // The case that would be a wrong link if the band were computed on score alone: Age of
+        // Empires IV out-scores the correct Definitive Edition, so this must never arrive ticked.
+        var aoe = queue.Suggestions.Single(r => r.Suggestion.Name == "Age of Empires 2");
+        Assert.Equal("ambiguous", aoe.Confidence);
+        Assert.False(aoe.Preselect);
+        Assert.NotEmpty(aoe.Candidates);
+
+        var kart = queue.Suggestions.Single(r => r.Suggestion.Name == "mario kart");
+        Assert.Equal("weak", kart.Confidence);
+        Assert.Empty(kart.Candidates);
+        Assert.False(kart.Preselect);
+
+        Assert.Equal(1, queue.StrongCount);
+        Assert.Equal(1, queue.AmbiguousCount);
+        Assert.Equal(1, queue.WeakCount);
+    }
+
+    /// <summary>
+    /// A row somebody has already unlinked never arrives pre-selected, however well it scores.
+    ///
+    /// THE MOST IMPORTANT ASSERTION ABOUT THE BULK PATH. Unlinking sets AutoMatchBlocked precisely so
+    /// the matcher stops deciding for that row; a screen that then proposed the same game pre-ticked
+    /// would let one press of "Link selected" quietly undo the decision — the same bug the flag
+    /// exists to prevent, reintroduced one layer up. The candidates are still offered, because the
+    /// person may well want to link it again by hand.
+    /// </summary>
+    [Fact]
+    public async Task A_row_somebody_unlinked_is_offered_but_never_pre_selected()
+    {
+        var bot = new FakeLanBot().Suggest(4, "Wardogs");
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        await AddGameAsync(admin, "Wardogs");
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        // Auto-matched on an exact title, then deliberately rejected by a human.
+        await admin.PostAsJsonAsync("/lan/unlink", new { remoteId = 4L });
+
+        var row = (await RankedAsync(admin)).Suggestions.Single();
+
+        Assert.True(row.AutoMatchBlocked);
+        Assert.False(row.Preselect);
+        Assert.Equal("strong", row.Confidence);
+        Assert.Equal("Wardogs", row.Candidates[0].Title);
+    }
+
+    [Fact]
+    public async Task The_ranked_queue_filters_by_name_event_and_band_and_pages()
+    {
+        var bot = new FakeLanBot()
+            .Suggest(1, "helldivers", "HCP #37 (2026)")
+            .Suggest(2, "mario kart", "HCP #37 (2026)")
+            .Suggest(3, "smash bros", "HCP #36 (2025)");
+
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        await AddGameAsync(admin, "Helldivers 2");
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        // Counts describe the whole queue, not the filtered view: they drive section headings, and a
+        // heading that changed as you typed would be reporting on the filter rather than the work.
+        var byName = await RankedAsync(admin, "?q=mario");
+        Assert.Equal("mario kart", byName.Suggestions.Single().Suggestion.Name);
+        Assert.Equal(1, byName.TotalMatching);
+        Assert.Equal(1, byName.StrongCount);
+
+        // "#" in the event name has to survive the query string rather than truncating it.
+        var byEvent = await RankedAsync(admin, $"?lan={Uri.EscapeDataString("HCP #36 (2025)")}");
+        Assert.Equal("smash bros", byEvent.Suggestions.Single().Suggestion.Name);
+
+        var byBand = await RankedAsync(admin, "?confidence=strong");
+        Assert.Equal("helldivers", byBand.Suggestions.Single().Suggestion.Name);
+
+        var firstPage = await RankedAsync(admin, "?page=1&pageSize=2");
+        Assert.Equal(2, firstPage.Suggestions.Count);
+        Assert.Equal(3, firstPage.TotalMatching);
+
+        var secondPage = await RankedAsync(admin, "?page=2&pageSize=2");
+        Assert.Single(secondPage.Suggestions);
+        Assert.Equal(3, secondPage.TotalMatching);
+    }
+
+    /// <summary>
+    /// The ranked queue holds the same rows as the "unmatched" tab.
+    ///
+    /// Two predicates for one question is how the re-link banner and the re-link screen came to
+    /// disagree, and a wishlist whose badge and body differ is the same failure with a different
+    /// name.
+    /// </summary>
+    [Fact]
+    public async Task The_ranked_queue_and_the_unmatched_tab_agree()
+    {
+        var bot = new FakeLanBot()
+            .Suggest(1, "Wardogs").Suggest(2, "asdf").Suggest(3, "Portal 2").Suggest(4, "junk");
+
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        await AddGameAsync(admin, "Portal 2");
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+        await admin.PostAsJsonAsync("/lan/dismiss", new { remoteId = 4L, dismissed = true });
+
+        var tab = await SuggestionsAsync(admin, "unmatched");
+        var queue = await RankedAsync(admin);
+        var counts = await admin.GetFromJsonAsync<Counts>("/lan/count");
+
+        Assert.Equal(
+            tab.Select(s => s.RemoteId).OrderBy(id => id),
+            queue.Suggestions.Select(r => r.Suggestion.RemoteId).OrderBy(id => id));
+
+        Assert.Equal(tab.Count, counts!.Unmatched);
+        Assert.Equal(queue.StrongCount + queue.AmbiguousCount + queue.WeakCount, counts.Unmatched);
+
+        // Every suggestion in every state, including the dismissed one and the auto-matched Portal 2.
+        Assert.Equal(4, counts.Total);
+    }
+
+    // ------------------------------------------------------------------ bulk actions
+
+    [Fact]
+    public async Task Linking_many_pushes_each_one_and_reports_per_row()
+    {
+        var bot = new FakeLanBot().Suggest(1, "Wardogs").Suggest(2, "Skifri");
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        var wardogs = await AddGameAsync(admin, "Wardogs II");
+        var skifri = await AddGameAsync(admin, "Skifri Deluxe");
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        var response = await admin.PostAsJsonAsync("/lan/link-many", new
+        {
+            links = new[]
+            {
+                new { remoteId = 1L, gameId = wardogs },
+                new { remoteId = 2L, gameId = skifri },
+            }
+        });
+
+        response.EnsureSuccessStatusCode();
+        var result = (await response.Content.ReadFromJsonAsync<BulkResult>())!;
+
+        Assert.Equal(2, result.Succeeded);
+        Assert.Equal(0, result.Failed);
+        Assert.Null(result.StoppedBecause);
+
+        // The bot heard about both, under the GameTown game ids.
+        Assert.Equal(wardogs, bot.BindingFor(1));
+        Assert.Equal(skifri, bot.BindingFor(2));
+
+        // The name rides along so the caller can report without re-reading its own list.
+        Assert.Equal(["Wardogs", "Skifri"], result.Results.Select(r => r.Name));
+        Assert.Empty((await RankedAsync(admin)).Suggestions);
+    }
+
+    /// <summary>
+    /// A bulk link abandons the rest when the bot stops answering, and says how many it left.
+    ///
+    /// Thirty more attempts against an unreachable bot is thirty timeouts and the same answer. The
+    /// rows it never tried must stay exactly as they were — the wishlist is the record of what is
+    /// still to do, and a half-applied batch that claims to have finished is worse than a short one.
+    /// </summary>
+    [Fact]
+    public async Task A_bulk_link_stops_when_the_bot_stops_answering()
+    {
+        var bot = new FakeLanBot().Suggest(1, "Wardogs").Suggest(2, "Skifri");
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        var wardogs = await AddGameAsync(admin, "Wardogs II");
+        var skifri = await AddGameAsync(admin, "Skifri Deluxe");
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        bot.FailWith = HttpStatusCode.ServiceUnavailable;
+
+        var result = (await (await admin.PostAsJsonAsync("/lan/link-many", new
+        {
+            links = new[]
+            {
+                new { remoteId = 1L, gameId = wardogs },
+                new { remoteId = 2L, gameId = skifri },
+            }
+        })).Content.ReadFromJsonAsync<BulkResult>())!;
+
+        Assert.Equal("unreachable", result.StoppedBecause);
+        Assert.Equal(0, result.Succeeded);
+
+        // Attempted one, gave up, and never touched the second.
+        Assert.Single(result.Results);
+
+        bot.FailWith = null;
+        Assert.Equal(2, (await RankedAsync(admin)).TotalMatching);
+    }
+
+    /// <summary>
+    /// Setting many aside is local, so it never stops early and is one transaction.
+    ///
+    /// Thirty rows is one decision. A partial result would leave the queue in a state nobody chose.
+    /// </summary>
+    [Fact]
+    public async Task Setting_many_aside_is_all_or_nothing_and_reversible()
+    {
+        var bot = new FakeLanBot().Suggest(1, "asdf").Suggest(2, "???").Suggest(3, "test entry");
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        var result = (await (await admin.PostAsJsonAsync("/lan/dismiss-many",
+            new { remoteIds = new[] { 1L, 2L, 3L }, dismissed = true }))
+            .Content.ReadFromJsonAsync<BulkResult>())!;
+
+        Assert.Equal(3, result.Succeeded);
+        Assert.Empty((await RankedAsync(admin)).Suggestions);
+        Assert.Equal(3, (await SuggestionsAsync(admin, "dismissed")).Count);
+
+        // The undo behind every row's "Undo" button.
+        await admin.PostAsJsonAsync("/lan/dismiss-many", new { remoteIds = new[] { 2L }, dismissed = false });
+
+        Assert.Equal("???", (await RankedAsync(admin)).Suggestions.Single().Suggestion.Name);
+    }
+
+    /// <summary>
+    /// Contributor, not Admin — the same reasoning as the single-row actions. Triaging the wishlist
+    /// in bulk is still triaging the wishlist.
+    /// </summary>
+    [Fact]
+    public async Task A_contributor_can_use_the_ranked_queue_and_the_bulk_routes()
+    {
+        var bot = new FakeLanBot().Suggest(1, "asdf");
+        using var app = new GameTownApp { LanBotHandler = bot };
+
+        using var contributor = await app.SignInAsContributorAsync();
+        using var admin = await SignInExistingAdminAsync(app);
+
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        Assert.Equal(HttpStatusCode.OK, (await contributor.GetAsync("/lan/suggestions/ranked")).StatusCode);
+
+        var response = await contributor.PostAsJsonAsync("/lan/dismiss-many",
+            new { remoteIds = new[] { 1L }, dismissed = true });
+
+        response.EnsureSuccessStatusCode();
+        Assert.Empty((await RankedAsync(contributor)).Suggestions);
+    }
+
+    /// <summary>
+    /// The ranked route is a GET and must answer JSON, not the SPA shell.
+    ///
+    /// An unmatched route falls through to MapFallbackToFile and returns 200 text/html, which looks
+    /// like success until the caller parses a web page as JSON. This is how .Accepts&lt;T&gt;() on a
+    /// GET went unnoticed once already — see ApiRoutingTests.
+    /// </summary>
+    [Fact]
+    public async Task The_ranked_route_answers_json()
+    {
+        using var app = new GameTownApp();
+        using var admin = await app.SignInAsAdminAsync();
+
+        var response = await admin.GetAsync("/lan/suggestions/ranked");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
     }
 }

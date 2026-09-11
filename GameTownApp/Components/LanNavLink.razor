@@ -1,5 +1,6 @@
 @using GameTownApp.Services
-@inject LanSuggestionService Lan
+@inject LanCountState Counts
+@implements IDisposable
 
 @*
     The sidebar's LAN suggestions entry, shown only when the integration is set up.
@@ -15,41 +16,45 @@
     AuthorizeView and is never instantiated until authorization has resolved — an anonymous visitor
     must not fire a request that comes back 401. The route itself is untouched: /lan-suggestions
     still loads if it is typed or bookmarked.
+
+    THE COUNT COMES FROM LanCountState, not from a read of its own, and that is the fix for two
+    separate faults:
+
+      * It used to read once in OnInitializedAsync and never again, so setting a suggestion aside
+        moved the tab badge on the LAN screen from 79 to 78 while this went on saying 79 until a full
+        page reload. Neither number was wrong when it was fetched, which is what made it hard to
+        notice and easy to distrust.
+
+      * It used to decide whether to render by calling Get("all") — the ENTIRE suggestion list —
+        whenever the unmatched count was zero. An empty wishlist is the healthy steady state, so the
+        common case downloaded every suggestion in the database on every page load of the app, to
+        answer one boolean. The count endpoint now returns a total alongside the unmatched figure.
 *@
 
-@if (configured)
+@if (Counts.Total > 0)
 {
     <NavLink class="gt-nav__link" href="lan-suggestions">
         <span class="bi bi-discord" aria-hidden="true"></span> LAN suggestions
-        @if (unmatched > 0)
+        @if (Counts.Unmatched > 0)
         {
-            <span class="badge bg-secondary ms-1">@unmatched</span>
+            <span class="badge bg-secondary ms-1">@Counts.Unmatched</span>
         }
     </NavLink>
 }
 
 @code {
-    private bool configured;
-    private int unmatched;
-
     protected override async Task OnInitializedAsync()
     {
-        try
-        {
-            // /lan/events is the one anonymous route in the group, but this component only renders
-            // for contributors, so the count is the cheaper question and the one that also proves the
-            // integration is reachable. An unconfigured install has no suggestions at all.
-            unmatched = await Lan.GetUnmatchedCount();
+        Counts.Changed += OnChanged;
 
-            // Suggestions only ever exist once a sync has run, so "any rows at all" is the honest
-            // test for whether this install uses the feature — and it needs no admin-only status call
-            // that a contributor would be refused.
-            configured = unmatched > 0 || (await Lan.Get("all")).Count > 0;
-        }
-        catch (Exception)
-        {
-            // Nothing renders. This link is an offer, not a control anyone is waiting on, and an
-            // error in the sidebar would be louder than the link it replaced.
-        }
+        // Already read by whatever got here first — usually this component, occasionally the LAN
+        // screen on a deep link. Either way there is no reason to ask twice.
+        if (!Counts.Loaded) await Counts.Refresh();
     }
+
+    // Nothing renders on a failure: the state swallows it. This link is an offer, not a control
+    // anyone is waiting on, and an error in the sidebar would be louder than the link it replaced.
+    private void OnChanged() => StateHasChanged();
+
+    public void Dispose() => Counts.Changed -= OnChanged;
 }

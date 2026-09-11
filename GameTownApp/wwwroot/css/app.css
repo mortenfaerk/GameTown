@@ -957,3 +957,248 @@ code {
     padding-top: 1.25rem;
     border-top: 1px solid var(--gt-edge);
 }
+
+/* ============================================================================
+   The LAN wishlist — triaging what players asked for against what is on the
+   shelf.
+
+   The layout carries the argument. Three sections, each with the interaction
+   its rows deserve: a tick-list for the ones with an obvious answer, a radio
+   group with visible scores for the ones that need reading, and no candidate
+   list at all for the ones nothing in the library matches. A single flat table
+   of identical rows is what this replaced, and it made all three look the same.
+
+   Rows are list items rather than table cells because they are not tabular:
+   an ambiguous row carries a stack of candidates and a search box, a weak row
+   carries only a search box, and forcing both into one column grid meant the
+   "Match" column sat empty — an em-dash — on every row that was not open.
+   ========================================================================= */
+.gt-lan__filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+    .gt-lan__filters input[type="search"] {
+        flex: 1 1 14rem;
+        max-width: 22rem;
+    }
+
+    .gt-lan__filters select {
+        flex: 0 1 14rem;
+    }
+
+.gt-lan__section {
+    margin-bottom: 2rem;
+}
+
+.gt-lan__head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 0.75rem;
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.5rem;
+    border-bottom: 1px solid var(--gt-edge);
+}
+
+.gt-lan__title {
+    font-size: 1.0625rem;
+    margin-bottom: 0.15rem;
+}
+
+.gt-lan__all {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.35rem 0.15rem;
+    cursor: pointer;
+}
+
+.gt-lan__rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.gt-lan__row {
+    padding: 0.7rem 0.15rem;
+    border-bottom: 1px solid var(--gt-edge);
+}
+
+    .gt-lan__row:last-child {
+        border-bottom: 0;
+    }
+
+/* Name, choice and actions. The middle column is the one that grows, because
+   what it holds differs per band. */
+.gt-lan__main {
+    display: grid;
+    grid-template-columns: 1.5rem minmax(9rem, 15rem) minmax(0, 1fr) auto;
+    gap: 0.9rem;
+    align-items: start;
+}
+
+/* Also used as a spacer where a row has no checkbox, so the four columns stay
+   in line down the whole section whether or not a band is selectable. */
+.gt-lan__tick {
+    display: inline-block;
+    width: 1rem;
+    margin-top: 0.2rem;
+}
+
+.gt-lan__what {
+    min-width: 0;
+}
+
+.gt-lan__name {
+    display: block;
+    font-weight: 600;
+    /* Player-typed Discord text, so it can be anything — including one word long
+       enough to push the row off screen. */
+    overflow-wrap: anywhere;
+}
+
+.gt-lan__facts {
+    display: block;
+    margin-top: 0.1rem;
+}
+
+.gt-lan__choice {
+    min-width: 0;
+}
+
+.gt-lan__actions {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: flex-end;
+    white-space: nowrap;
+}
+
+.gt-lan__candidates {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    margin-bottom: 0.4rem;
+}
+
+/* A candidate is a cover, a name and its score. The score is shown because it
+   is the only thing separating these options from each other, and hiding it is
+   what let ten wrong answers read as ten answers. */
+.gt-lan__candidate {
+    display: grid;
+    grid-template-columns: 1rem 2.25rem minmax(0, 1fr) auto;
+    gap: 0.6rem;
+    align-items: center;
+    padding: 0.3rem 0.4rem;
+    border-radius: 6px;
+    border-left: 2px solid transparent;
+    cursor: pointer;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+    .gt-lan__candidate:hover,
+    .gt-lan__candidate:has(input:checked) {
+        background: rgba(0, 180, 143, 0.10);
+        border-left-color: var(--gt-phosphor);
+    }
+
+.gt-lan__candidate-text {
+    min-width: 0;
+}
+
+/* "None of these" — the option the old screen never offered, and the correct
+   answer more often than the ranking suggests. Set apart by a rule so it does
+   not read as an eleventh game. */
+.gt-lan__none {
+    margin-top: 0.15rem;
+    padding-top: 0.45rem;
+    border-top: 1px solid var(--gt-edge);
+    border-radius: 0;
+}
+
+    .gt-lan__none:hover,
+    .gt-lan__none:has(input:checked) {
+        background: none;
+        border-left-color: transparent;
+    }
+
+/* A staged choice: decided, not yet sent. The phosphor rule is the same mark
+   the metadata picker uses for "this one is filed". */
+.gt-lan__staged {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 0.6rem;
+    background: var(--gt-shelf);
+    border: 1px solid var(--gt-edge);
+    border-left: 2px solid var(--gt-phosphor);
+    border-radius: 6px;
+}
+
+/* The search box's dropdown needs a positioning context that is not the row,
+   or it anchors to the page and lands somewhere else entirely. */
+.gt-lan__picker {
+    position: relative;
+}
+
+/* What happened to this row, in place of its controls. On the row rather than
+   in a banner at the top of the page: acting on a row most of a screen down
+   used to produce no visible confirmation at all. */
+.gt-lan__outcome {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.45rem 0.7rem;
+    border-radius: 6px;
+    border-left: 2px solid transparent;
+    background: var(--gt-shelf);
+}
+
+    .gt-lan__outcome.is-ok {
+        border-left-color: var(--gt-phosphor);
+    }
+
+    .gt-lan__outcome.is-bad {
+        border-left-color: #C4543F;
+    }
+
+.gt-lan__row.is-done {
+    opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .gt-lan__candidate {
+        transition: none;
+    }
+}
+
+/* Below this the four columns stop fitting, and a row reads better stacked than
+   squeezed — the covers and the scores are what have to stay legible. */
+@media (max-width: 768px) {
+    .gt-lan__main {
+        grid-template-columns: 1.5rem minmax(0, 1fr);
+    }
+
+    .gt-lan__choice,
+    .gt-lan__actions {
+        grid-column: 2;
+    }
+
+    .gt-lan__actions {
+        justify-content: flex-start;
+        margin-top: 0.35rem;
+    }
+}
+
+/* Band shortcuts. The sections are ordered so the queue is worked front to back;
+   these are for the job people come back to do on its own — clearing the junk,
+   which is the last section and otherwise a page or two of scrolling away. */
+.gt-lan__bands {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}

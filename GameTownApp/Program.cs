@@ -42,6 +42,10 @@ builder.Services.AddScoped<SettingsService>();
 builder.Services.AddScoped<MetadataRelinkService>();
 builder.Services.AddScoped<LanSuggestionService>();
 
+// The one number the sidebar badge and the LAN screen's tab badge both show. Scoped, so it lives for
+// the life of the SPA; see LanCountState for why they used to disagree.
+builder.Services.AddScoped<LanCountState>();
+
 var host = builder.Build();
 
 // Restore the session before the first paint. The auth cookie is HttpOnly, so the only way

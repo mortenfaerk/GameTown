@@ -1,0 +1,242 @@
+@using GameTownApp.Services
+@inject GamesService GamesService
+@implements IDisposable
+
+@*
+    Searching the library for a game to link a LAN suggestion to.
+
+    THIS IS THE WAY OUT WHEN THE RANKING MISSES, and it is the reason the wishlist stops degrading as
+    the library grows. SuggestionMatcher.Rank returns ten candidates and the screen shows those ten;
+    if the right game is eleventh, there was previously nothing a person could do but link the wrong
+    one or give up. Measured on a real queue: "CS2" ranked Rust first and never offered
+    Counter-Strike 2 at all, and "DRG" never offered Deep Rock Galactic. Both are in the library.
+    Abbreviations are what people type in Discord, and they are exactly what a character-distance
+    score is worst at.
+
+    It searches the LIBRARY, not the metadata provider — /GTGames/search, the same endpoint behind the
+    shelf's own search box, which already matches titles and tag names and needs no new server code.
+    Not to be confused with MetadataPicker, which searches IGDB's catalogue for a game being added.
+
+    Covers, not just names: two games with similar titles are indistinguishable as text and obvious as
+    box art. Same reasoning as MetadataPicker, and it borrows that component's markup vocabulary so
+    the two search boxes in this application look like one idea.
+*@
+
+<div class="gt-meta__field">
+    <input @ref="searchInput"
+           type="search"
+           class="form-control form-control-sm"
+           role="combobox"
+           aria-expanded="@(open ? "true" : "false")"
+           aria-controls="@ListId"
+           aria-autocomplete="list"
+           aria-activedescendant="@(open && active >= 0 ? OptionId(active) : null)"
+           placeholder="@Placeholder"
+           value="@query"
+           disabled="@Disabled"
+           autocomplete="off"
+           @oninput="OnInput"
+           @onkeydown="OnKeyDown"
+           @onfocus="OnFocus" />
+</div>
+
+@if (open)
+{
+    <div class="gt-lan__picker">
+        <button type="button" class="gt-meta__backdrop" tabindex="-1" aria-hidden="true"
+                @onclick="Close"></button>
+
+        <div class="gt-meta__results" id="@ListId" role="listbox" aria-label="Library search results">
+            @if (searching)
+            {
+                <p class="gt-meta__hint mb-0">Searching…</p>
+            }
+            else if (results.Count == 0)
+            {
+                @* The honest reading of an empty result here, and the useful next step. A suggestion
+                   for a game nobody has uploaded is not a failure of this screen — it is the entire
+                   purpose of the wishlist. *@
+                <p class="gt-meta__hint mb-0">
+                    Nothing in the library matches “@query.Trim()”. Nobody has uploaded it yet.
+                </p>
+            }
+            else
+            {
+                @for (var i = 0; i < results.Count; i++)
+                {
+                    var index = i; // captured per iteration, or every row would choose the last one
+                    var game = results[index];
+
+                    <button type="button"
+                            id="@OptionId(index)"
+                            role="option"
+                            aria-selected="@(index == active ? "true" : "false")"
+                            class="gt-meta__option @(index == active ? "is-active" : null)"
+                            @onmouseover="() => active = index"
+                            @onclick="() => Choose(game)">
+                        <span class="gt-meta__thumb">
+                            @if (!string.IsNullOrWhiteSpace(game.BoxArtUrl))
+                            {
+                                <img src="@GamesService.ResolveMedia(game.BoxArtUrl)" alt="" loading="lazy" />
+                            }
+                            else
+                            {
+                                <span>@GamesService.InitialsFor(game.Title)</span>
+                            }
+                        </span>
+                        <span class="gt-meta__name">@game.Title</span>
+                        <span class="gt-data">@game.Size.ToString("0.#") MB</span>
+                    </button>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Fires with the chosen library entry. The parent decides what to do with it.</summary>
+    [Parameter] public EventCallback<GameContract> OnPicked { get; set; }
+
+    [Parameter] public string Placeholder { get; set; } = "Search the library…";
+
+    [Parameter] public bool Disabled { get; set; }
+
+    /// <summary>
+    /// Seeds the box with the suggestion's own name.
+    ///
+    /// Not searched automatically — that is the search the ranker already did and already lost. It is
+    /// there to be edited: the useful move on "CS2" is to type "counter", and starting from the text
+    /// you are correcting beats starting from nothing.
+    /// </summary>
+    [Parameter] public string? InitialQuery { get; set; }
+
+    private string query = string.Empty;
+    private List<GameContract> results = [];
+
+    private int active = -1;
+    private bool open;
+    private bool searching;
+
+    private CancellationTokenSource? debounce;
+    private ElementReference searchInput;
+
+    private readonly string instance = Guid.NewGuid().ToString("N")[..8];
+    private string ListId => $"gt-lanpick-{instance}";
+    private string OptionId(int index) => $"gt-lanpick-{instance}-{index}";
+
+    protected override void OnInitialized() => query = InitialQuery ?? string.Empty;
+
+    private void OnFocus()
+    {
+        // Coming back to a field that already has results should show them again rather than
+        // requiring a keystroke to re-run a search that has already been paid for.
+        if (results.Count > 0) open = true;
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        query = e.Value?.ToString() ?? string.Empty;
+
+        debounce?.Cancel();
+        debounce?.Dispose();
+        debounce = null;
+
+        // Two characters, as in MetadataPicker. One matches most of a library of any size.
+        if (query.Trim().Length < 2)
+        {
+            results = [];
+            searching = false;
+            open = false;
+            return;
+        }
+
+        open = true;
+        searching = true;
+
+        debounce = new CancellationTokenSource();
+        var token = debounce.Token;
+
+        try
+        {
+            // Not a Timer: on WASM there is one thread, and an awaited delay keeps every mutation on
+            // the context the renderer runs on.
+            await Task.Delay(250, token);
+            await Search(token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a later keystroke.
+        }
+    }
+
+    private async Task Search(CancellationToken token)
+    {
+        List<GameContract> found;
+
+        try
+        {
+            found = await GamesService.Search(query.Trim(), 1, 12);
+        }
+        catch (Exception)
+        {
+            // The library is local and this is a type-ahead; an empty list reads as "no match", which
+            // is the same thing a person does next either way. No banner for a keystroke.
+            found = [];
+        }
+
+        if (token.IsCancellationRequested) return;
+
+        results = found;
+        active = results.Count > 0 ? 0 : -1;
+        searching = false;
+
+        StateHasChanged();
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowDown" when open && results.Count > 0:
+                active = (active + 1) % results.Count;
+                break;
+
+            case "ArrowUp" when open && results.Count > 0:
+                active = (active - 1 + results.Count) % results.Count;
+                break;
+
+            case "Enter" when open && active >= 0 && active < results.Count:
+                await Choose(results[active]);
+                break;
+
+            case "Escape":
+                Close();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Hands the chosen game up and closes.
+    ///
+    /// It does NOT link. The parent stages the choice and an explicit button commits it — linking
+    /// pushes to Discord, and a list where every row is one click from an outbound write is how a
+    /// mis-click becomes a wrong link nobody ever looks at again.
+    /// </summary>
+    private async Task Choose(GameContract game)
+    {
+        Close();
+        await OnPicked.InvokeAsync(game);
+    }
+
+    private void Close()
+    {
+        open = false;
+        active = -1;
+    }
+
+    public void Dispose()
+    {
+        debounce?.Cancel();
+        debounce?.Dispose();
+    }
+}

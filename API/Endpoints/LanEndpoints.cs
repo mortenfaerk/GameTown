@@ -32,6 +32,15 @@ public static class LanEndpoints
              .WithName("GetLanCandidates")
              .WithDescription("Library entries ranked as possible matches for one suggestion. Advisory only.");
 
+        // The wishlist screen's own route. One request ranks the whole queue and bands each row, so
+        // the screen can separate "one obvious answer" from "nothing in the library is this game"
+        // without opening every row to find out which it is. See MatchConfidenceBands.
+        group.MapGet("/suggestions/ranked", GetRanked)
+             .Produces<LanRankedQueueContract>(StatusCodes.Status200OK)
+             .WithName("GetRankedLanSuggestions")
+             .WithDescription("The unmatched queue, ranked against the library and banded by confidence. "
+                            + "Filterable by name, LAN event and band; paged.");
+
         group.MapGet("/count", GetCount)
              .Produces<LanCountContract>(StatusCodes.Status200OK)
              .WithName("GetLanUnmatchedCount")
@@ -46,6 +55,22 @@ public static class LanEndpoints
              .WithName("LinkLanSuggestion")
              .WithDescription("Links a suggestion to a library entry and pushes it to the bot. "
                             + "A game other suggestions already point at is fine — bindings are additive.");
+
+        // Bulk, and deliberately a separate route rather than a list on /link: the outcomes differ per
+        // row — some come back "bound-elsewhere", which is a success that puts no link in Discord —
+        // so the response shape is genuinely different and collapsing them would overstate what
+        // happened.
+        group.MapPost("/link-many", LinkMany)
+             .Accepts<LanBulkLinkRequest>("application/json")
+             .Produces<LanBulkResult>(StatusCodes.Status200OK)
+             .WithName("LinkManyLanSuggestions")
+             .WithDescription("Links several suggestions in order, stopping early if the bot stops answering.");
+
+        group.MapPost("/dismiss-many", DismissMany)
+             .Accepts<LanBulkDismissRequest>("application/json")
+             .Produces<LanBulkResult>(StatusCodes.Status200OK)
+             .WithName("DismissManyLanSuggestions")
+             .WithDescription("Sets several suggestions aside, or puts them back. Local only.");
 
         group.MapPost("/unlink", Unlink)
              .Accepts<LanRemoteIdRequest>("application/json")
@@ -104,11 +129,28 @@ public static class LanEndpoints
         long remoteId, LanSuggestionService suggestions, CancellationToken cancellationToken)
         => Results.Ok(await suggestions.GetCandidatesAsync(remoteId, cancellationToken));
 
+    /// <param name="page">1-based. Out-of-range values are clamped rather than rejected — this is a
+    /// screen's own paging, not an address anyone types.</param>
+    private static async Task<IResult> GetRanked(
+        LanSuggestionService suggestions,
+        CancellationToken cancellationToken,
+        string? q = null,
+        string? lan = null,
+        string? confidence = null,
+        int page = 1,
+        int pageSize = 50)
+        => Results.Ok(await suggestions.GetRankedAsync(q, lan, confidence, page, pageSize, cancellationToken));
+
+    /// <summary>
+    /// Both counts in one request. The sidebar link needs "how many are waiting" and "does this
+    /// install use the bot at all", and used to answer the second by downloading every suggestion.
+    /// </summary>
     private static async Task<IResult> GetCount(
         LanSuggestionService suggestions, CancellationToken cancellationToken)
         => Results.Ok(new LanCountContract
         {
-            Unmatched = await suggestions.CountUnmatchedAsync(cancellationToken)
+            Unmatched = await suggestions.CountUnmatchedAsync(cancellationToken),
+            Total = await suggestions.CountAllAsync(cancellationToken),
         });
 
     /// <summary>
@@ -118,6 +160,14 @@ public static class LanEndpoints
     private static async Task<IResult> Link(
         LanLinkRequest request, LanSuggestionService suggestions, CancellationToken cancellationToken)
         => Results.Ok(await suggestions.LinkAsync(request.RemoteId, request.GameId, cancellationToken));
+
+    private static async Task<IResult> LinkMany(
+        LanBulkLinkRequest request, LanSuggestionService suggestions, CancellationToken cancellationToken)
+        => Results.Ok(await suggestions.LinkManyAsync(request.Links, cancellationToken));
+
+    private static async Task<IResult> DismissMany(
+        LanBulkDismissRequest request, LanSuggestionService suggestions, CancellationToken cancellationToken)
+        => Results.Ok(await suggestions.DismissManyAsync(request.RemoteIds, request.Dismissed, cancellationToken));
 
     private static async Task<IResult> Unlink(
         LanRemoteIdRequest request, LanSuggestionService suggestions, CancellationToken cancellationToken)

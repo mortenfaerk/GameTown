@@ -1,15 +1,34 @@
 @page "/lan-suggestions"
 @attribute [Authorize(Roles = "Admin,Contributor")]
 @inject LanSuggestionService Lan
+@inject LanCountState Counts
 @inject GamesService GamesService
+@implements IDisposable
+@using System.Globalization
 
 @*
     Game suggestions players made in Discord, and the links between them and the library.
 
-    CONTRIBUTOR, NOT ADMIN. The unmatched tab is a wishlist — games people asked for that nobody has
-    uploaded — so it is a contributor's to-do list, and deciding that "Wardogs" is the game in the
-    library is the same judgement they already make when they tag and describe an upload. Only running
-    the sync and reading its status are admin, and both live on the settings page.
+    CONTRIBUTOR, NOT ADMIN. The wishlist is a list of games people asked for that nobody has uploaded,
+    so it is a contributor's to-do list, and deciding that "Wardogs" is the game in the library is the
+    same judgement they already make when they tag and describe an upload. Only running the sync and
+    reading its status are admin, and both live on the settings page.
+
+    THE WISHLIST IS THREE QUEUES, NOT ONE LIST, and that is the whole design. Every row used to look
+    identical and hide a "Find match" button that opened ten candidates whether or not any of them was
+    right — because SuggestionMatcher.Rank returns the top ten of everything above zero, so the list
+    is always ten long regardless of quality. Measured on a real queue of 78: fourteen rows had one
+    obvious answer, thirty-two had nothing in the library at all, and a person had to open each row to
+    find out which kind it was. The server now bands them (see MatchConfidenceBands) and each band
+    gets the interaction it deserves:
+
+      Likely      — pre-ticked, reviewed in bulk, linked in one press.
+      Needs a look— candidates as a radio group WITH THEIR SCORES and a "none of these" option.
+      Not here    — no candidates rendered at all, because they would all be wrong. Set aside in bulk.
+
+    NOTHING LINKS ON A SINGLE CLICK. Choosing a candidate stages it; an explicit button commits. A
+    link is an outbound push to Discord that is awkward to undo, and ten buttons twenty pixels apart
+    each firing one immediately is how a mis-click becomes a wrong link nobody ever looks at again.
 
     Several suggestions can point at one game, and that is normal: the bot's bindings are additive, so
     "Counter-strike 2" and "CS2" both carry a working link to the same library entry. The candidate
@@ -28,7 +47,7 @@
     @* GameTown polls on its own schedule, but somebody who has just watched a suggestion go up in
        Discord should not have to wait out the interval to act on it. Disabled while in flight, and
        the server refuses an overlapping run anyway. *@
-    <button class="btn btn-sm btn-outline-secondary" disabled="@(Refreshing || Busy)"
+    <button class="btn btn-sm btn-outline-secondary" disabled="@Refreshing"
             @onclick="Refresh">
         @(Refreshing ? "Checking…" : "Check for new suggestions")
     </button>
@@ -52,12 +71,12 @@
 <ul class="nav nav-tabs mb-3">
     <li class="nav-item">
         <button class="nav-link @(Tab == "unmatched" ? "active" : "")" @onclick='() => Show("unmatched")'>
-            Wishlist @if (UnmatchedCount > 0) { <span class="badge bg-secondary ms-1">@UnmatchedCount</span> }
+            Wishlist @if (Counts.Unmatched > 0) { <span class="badge bg-secondary ms-1">@Counts.Unmatched</span> }
         </button>
     </li>
     <li class="nav-item">
         <button class="nav-link @(Tab == "matched" ? "active" : "")" @onclick='() => Show("matched")'>
-            Linked
+            Linked @if (LinkedNeedingAttention > 0) { <span class="badge bg-warning text-dark ms-1">@LinkedNeedingAttention</span> }
         </button>
     </li>
     <li class="nav-item">
@@ -71,175 +90,465 @@
 {
     <p><em>Loading…</em></p>
 }
-else if (Suggestions.Count == 0)
+else if (Tab == "unmatched")
 {
-    <div class="alert alert-info">
-        @switch (Tab)
-        {
-            case "unmatched":
-                <text><strong>Nothing waiting.</strong> Every suggestion is either linked to a game or
-                set aside. New ones appear here after the next sync.</text>
-                break;
-            case "matched":
-                <text><strong>Nothing linked yet.</strong> Suggestions that match a game in the library
-                are linked automatically; anything else is waiting on the wishlist.</text>
-                break;
-            default:
-                <text><strong>Nothing set aside.</strong> Suggestions that will never be games — test
-                entries, custom maps — can be put here to keep the wishlist a list of real work.</text>
-                break;
-        }
-    </div>
-}
-else
-{
-    @if (Tab == "unmatched")
+    @* ------------------------------------------------------------------ the wishlist *@
+
+    @if (Queue.StrongCount + Queue.AmbiguousCount + Queue.WeakCount == 0)
     {
-        <p class="gt-muted">
-            @Suggestions.Count suggestion@(Suggestions.Count == 1 ? "" : "s") @(Suggestions.Count == 1 ? "has" : "have")
-            no game in the library. Link one to a game somebody has already uploaded, or set it aside
-            if it never will be.
-        </p>
+        <div class="alert alert-info">
+            <strong>Nothing waiting.</strong> Every suggestion is either linked to a game or set
+            aside. New ones appear here after the next sync.
+        </div>
     }
+    else
+    {
+        <div class="gt-lan__filters mb-3">
+            <input type="search" class="form-control form-control-sm" placeholder="Filter by name…"
+                   value="@FilterText" @oninput="OnFilterInput" aria-label="Filter suggestions by name" />
 
-    <table class="table table-sm align-middle">
-        <thead>
-            <tr>
-                <th>Suggested</th>
-                <th>LAN</th>
-                @if (Tab == "matched") { <th>Linked to</th><th>Status</th> }
-                else { <th>Match</th> }
-                <th class="text-end">Action</th>
-            </tr>
-        </thead>
-        <tbody>
-            @foreach (var suggestion in Suggestions)
+            <select class="form-select form-select-sm" value="@FilterEvent"
+                    @onchange="e => ApplyFilter(lanEvent: e.Value?.ToString())" aria-label="Filter by LAN event">
+                <option value="">Every LAN</option>
+                @foreach (var lanEvent in Events)
+                {
+                    <option value="@lanEvent.Name">@lanEvent.Name</option>
+                }
+            </select>
+
+            @if (Filtering)
             {
-                <tr>
-                    @* Plain interpolation: Discord text, escaped by Razor. *@
-                    <td>
-                        @suggestion.Name
-                        @if (suggestion.Played)
-                        {
-                            <span class="badge bg-success ms-2" title="Marked as played at the LAN">Played</span>
-                        }
-                    </td>
-                    <td class="gt-muted">@suggestion.LanEventName</td>
+                <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFilters">Clear</button>
+            }
+        </div>
 
-                    @if (Tab == "matched")
+        @* Jump straight to one band.
+
+           Sections are ordered strong -> ambiguous -> weak and then paged, so the queue is worked in
+           the order it should be. That is right for working through it and wrong for the one job
+           people come back to do on its own: clearing the junk, which is the LAST section and on a
+           real queue sits behind a page or two of reading. These are the shortcut, and they use the
+           filter the ranked route already supports. *@
+        <div class="gt-lan__bands mb-3">
+            <button class="btn btn-sm @(FilterBand == "" ? "btn-primary" : "btn-outline-secondary")"
+                    disabled="@Busy" @onclick='() => ApplyFilter(band: "")'>
+                Everything (@(Queue.StrongCount + Queue.AmbiguousCount + Queue.WeakCount))
+            </button>
+            <button class="btn btn-sm @(FilterBand == "strong" ? "btn-primary" : "btn-outline-secondary")"
+                    disabled="@(Busy || Queue.StrongCount == 0)" @onclick='() => ApplyFilter(band: "strong")'>
+                Likely (@Queue.StrongCount)
+            </button>
+            <button class="btn btn-sm @(FilterBand == "ambiguous" ? "btn-primary" : "btn-outline-secondary")"
+                    disabled="@(Busy || Queue.AmbiguousCount == 0)" @onclick='() => ApplyFilter(band: "ambiguous")'>
+                Needs a look (@Queue.AmbiguousCount)
+            </button>
+            <button class="btn btn-sm @(FilterBand == "weak" ? "btn-primary" : "btn-outline-secondary")"
+                    disabled="@(Busy || Queue.WeakCount == 0)" @onclick='() => ApplyFilter(band: "weak")'>
+                Nothing in the library (@Queue.WeakCount)
+            </button>
+        </div>
+
+        @* Sections in the order the work should be done: the cheap certain wins first, the reading
+           second, the bulk dismissal last. *@
+        @foreach (var band in Bands)
+        {
+            var rows = Rows(band.Key);
+            if (rows.Count == 0) continue;
+
+            <section class="gt-lan__section">
+                <header class="gt-lan__head">
+                    <div>
+                        <h2 class="gt-lan__title">@band.Title</h2>
+                        <p class="gt-muted small mb-0">@band.Blurb</p>
+                    </div>
+
+                    @if (band.Key == "strong")
                     {
-                        <td>
-                            <a href="/game/@suggestion.GameId">@suggestion.GameTitle</a>
-                            @if (suggestion.LinkSource == "auto")
-                            {
-                                <span class="gt-muted small ms-2">matched automatically</span>
-                            }
-                            else if (suggestion.LinkSource == "remote")
-                            {
-                                <span class="gt-muted small ms-2">linked in the bot</span>
-                            }
-                        </td>
-                        <td>
-                            @if (suggestion.IsBound)
-                            {
-                                <span class="badge bg-success">Linked in Discord</span>
-                            }
-                            else if (suggestion.BoundElsewhere)
-                            {
-                                @* Not fixable from here, so it must not read as pending work: the bot
-                                   only binds suggestions that are currently unbound and will not move
-                                   this one. Someone would have to clear it inside the bot first. *@
-                                <span class="badge bg-warning text-dark"
-                                      title="The bot has this suggestion pointing at its own entry and will not move it">
-                                    Linked elsewhere in the bot
-                                </span>
-                            }
-                            else
-                            {
-                                <span class="badge bg-secondary"
-                                      title="Matched here, but not pushed to the bot yet">Not sent yet</span>
-                            }
-                        </td>
+                        <button class="btn btn-sm btn-primary" disabled="@(Busy || StagedCount(rows) == 0)"
+                                @onclick="() => LinkSelected(rows)">
+                            @(Busy ? "Linking…" : $"Link {StagedCount(rows)} selected")
+                        </button>
                     }
-                    else
+                    else if (band.Key == "weak")
                     {
-                        <td>
-                            @if (Expanded == suggestion.RemoteId)
-                            {
-                                @if (Candidates.Count == 0)
+                        <button class="btn btn-sm btn-outline-secondary" disabled="@(Busy || Dismissable(rows) == 0)"
+                                @onclick="() => SetAsideSelected(rows)">
+                            @(Busy ? "Working…" : $"Set aside {Dismissable(rows)} selected")
+                        </button>
+                    }
+                </header>
+
+                @if (band.Key is "strong" or "weak")
+                {
+                    <label class="gt-lan__all">
+                        <input type="checkbox" class="form-check-input"
+                               checked="@(Checked(rows) == rows.Count && rows.Count > 0)"
+                               @onchange="e => ToggleAll(rows, e)" />
+                        <span class="gt-muted small">
+                            @(Checked(rows) == rows.Count && rows.Count > 0 ? "Deselect all" : "Select all")
+                            on screen
+                        </span>
+                    </label>
+                }
+
+                <ul class="gt-lan__rows">
+                    @foreach (var row in rows)
+                    {
+                        var id = row.Suggestion.RemoteId;
+
+                        <li class="gt-lan__row @(Outcomes.ContainsKey(id) ? "is-done" : null)" @key="id">
+
+                            @* Feedback lives ON the row that produced it, and the row KEEPS ITS NAME
+                               while showing it. The old screen put every notice in a banner at the
+                               top of the page, so acting on a row most of a screen down produced no
+                               visible confirmation at all — the only evidence was a row vanishing.
+                               Replacing the whole row was the first fix and half a fix: three rows
+                               set aside together all read "Set aside." and there was no way to tell
+                               which undo belonged to which suggestion. *@
+                            <div class="gt-lan__main">
+                                @if (band.Key is "strong" or "weak" && !Outcomes.ContainsKey(id))
                                 {
-                                    <span class="gt-muted">Nothing in the library looks like this.</span>
+                                    <input type="checkbox" class="form-check-input gt-lan__tick"
+                                           checked="@Selected.Contains(id)" disabled="@Busy"
+                                           aria-label="@($"Select {row.Suggestion.Name}")"
+                                           @onchange="e => Toggle(id, e)" />
                                 }
                                 else
                                 {
-                                    <div class="d-flex flex-column gap-1">
-                                        @foreach (var candidate in Candidates)
+                                    <span class="gt-lan__tick"></span>
+                                }
+
+                                <div class="gt-lan__what">
+                                    @* Plain interpolation: Discord text, escaped by Razor. *@
+                                    <span class="gt-lan__name">@row.Suggestion.Name</span>
+                                    <span class="gt-lan__facts gt-muted small">
+                                        @row.Suggestion.LanEventName
+                                        @if (row.Suggestion.Played)
                                         {
-                                            <div>
-                                                <button class="btn btn-sm btn-outline-primary" disabled="@Busy"
-                                                        @onclick="() => Link(suggestion, candidate)">
-                                                    @candidate.Title
-                                                </button>
-                                                @if (candidate.IsExact)
-                                                {
-                                                    <span class="badge bg-success ms-2">Same title</span>
-                                                }
-                                                @if (candidate.AlreadyLinkedFrom.Count > 0)
-                                                {
-                                                    @* Information, not a warning: linking it again is
-                                                       fine and the existing links keep working. *@
-                                                    <span class="gt-muted small ms-2">
-                                                        also linked from
-                                                        @string.Join(", ", candidate.AlreadyLinkedFrom
-                                                            .Select(n => $"“{n}”"))
-                                                    </span>
-                                                }
-                                            </div>
+                                            <span class="badge bg-success ms-1"
+                                                  title="Marked as played at the LAN">Played</span>
+                                        }
+                                        @if (row.AutoMatchBlocked && !Outcomes.ContainsKey(id))
+                                        {
+                                            @* Why a confident-looking row is not ticked. Without
+                                               this it reads as an oversight and somebody helpfully
+                                               ticks it, undoing a decision. *@
+                                            <span class="badge bg-secondary ms-1"
+                                                  title="Somebody removed this link before, so it is never matched automatically and never pre-selected">
+                                                unlinked before
+                                            </span>
+                                        }
+                                    </span>
+                                </div>
+
+                                @if (Outcomes.TryGetValue(id, out var outcome))
+                                {
+                                    <div class="gt-lan__outcome @(outcome.Ok ? "is-ok" : "is-bad")">
+                                        <span>@outcome.Message</span>
+                                        @if (outcome.Undo is not null)
+                                        {
+                                            <button class="btn btn-sm btn-link p-0" disabled="@Busy"
+                                                    @onclick="outcome.Undo">Undo</button>
                                         }
                                     </div>
+
+                                    <div class="gt-lan__actions"></div>
                                 }
-                            }
-                            else
-                            {
-                                <span class="gt-muted small">&mdash;</span>
-                            }
-                        </td>
+                                else
+                                {
+                                    <div class="gt-lan__choice">
+                                        @if (Staged.TryGetValue(id, out var staged))
+                                        {
+                                            <div class="gt-lan__staged">
+                                                <span class="gt-meta__thumb">
+                                                    @if (!string.IsNullOrWhiteSpace(staged.BoxArtUrl))
+                                                    {
+                                                        <img src="@GamesService.ResolveMedia(staged.BoxArtUrl)" alt="" loading="lazy" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <span>@GamesService.InitialsFor(staged.Title)</span>
+                                                    }
+                                                </span>
+                                                <span class="gt-meta__name">@staged.Title</span>
+                                                <button class="btn btn-sm btn-link p-0 ms-2" disabled="@Busy"
+                                                        @onclick="() => Unstage(id)">Change</button>
+                                            </div>
+                                        }
+                                        else if (band.Key == "weak")
+                                        {
+                                            @* No candidate list, deliberately. Everything the ranker
+                                               returned for these rows is wrong — "swat 4" reaches
+                                               Trine 4 and Hearts of Iron IV on a shared "4" — so the
+                                               only honest offer is a search and a way out. *@
+                                            <LibraryGamePicker Disabled="@Busy"
+                                                               InitialQuery="@row.Suggestion.Name"
+                                                               Placeholder="Search the library…"
+                                                               OnPicked="game => Stage(id, game)" />
+                                        }
+                                        else
+                                        {
+                                            <div class="gt-lan__candidates" role="radiogroup"
+                                                 aria-label="@($"Candidates for {row.Suggestion.Name}")">
+                                                @foreach (var candidate in row.Candidates)
+                                                {
+                                                    var pick = candidate;
+
+                                                    <label class="gt-lan__candidate">
+                                                        <input type="radio" class="form-check-input"
+                                                               name="@($"cand-{id}")" disabled="@Busy"
+                                                               checked="@(Staged.TryGetValue(id, out var s) && s.GameId == pick.GameId)"
+                                                               @onchange="() => Stage(id, pick)" />
+
+                                                        <span class="gt-meta__thumb">
+                                                            @if (!string.IsNullOrWhiteSpace(pick.BoxArtUrl))
+                                                            {
+                                                                <img src="@GamesService.ResolveMedia(pick.BoxArtUrl)" alt="" loading="lazy" />
+                                                            }
+                                                            else
+                                                            {
+                                                                <span>@GamesService.InitialsFor(pick.Title)</span>
+                                                            }
+                                                        </span>
+
+                                                        <span class="gt-lan__candidate-text">
+                                                            <span class="gt-meta__name">@pick.Title</span>
+                                                            @if (pick.AlreadyLinkedFrom.Count > 0)
+                                                            {
+                                                                @* Information, not a warning:
+                                                                   bindings are additive, so linking
+                                                                   it again is fine and the existing
+                                                                   links keep working. *@
+                                                                <span class="gt-muted small d-block">
+                                                                    also linked from
+                                                                    @string.Join(", ", pick.AlreadyLinkedFrom.Select(n => $"“{n}”"))
+                                                                </span>
+                                                            }
+                                                        </span>
+
+                                                        @* The score is shown because it is the only
+                                                           thing separating these options, and hiding
+                                                           it is what made ten wrong answers look like
+                                                           ten answers. It orders the list and means
+                                                           nothing else — never a threshold.
+
+                                                           Invariant: this is a machine value in the
+                                                           mono face, and a Danish browser renders
+                                                           "0,51" for it otherwise, which reads as a
+                                                           thousands separator in a column of them. *@
+                                                        <span class="gt-data">@pick.Score.ToString("0.00", CultureInfo.InvariantCulture)</span>
+                                                    </label>
+                                                }
+
+                                                @* The option the old screen never offered, which is
+                                                   the correct answer surprisingly often. *@
+                                                <label class="gt-lan__candidate gt-lan__none">
+                                                    <input type="radio" class="form-check-input"
+                                                           name="@($"cand-{id}")" disabled="@Busy"
+                                                           checked="@(!Staged.ContainsKey(id))"
+                                                           @onchange="() => Unstage(id)" />
+                                                    <span class="gt-lan__tick"></span>
+                                                    <span class="gt-muted">None of these</span>
+                                                </label>
+                                            </div>
+
+                                            <LibraryGamePicker Disabled="@Busy"
+                                                               InitialQuery="@row.Suggestion.Name"
+                                                               Placeholder="…or search the library"
+                                                               OnPicked="game => Stage(id, game)" />
+                                        }
+                                    </div>
+
+                                    <div class="gt-lan__actions">
+                                        @if (Staged.ContainsKey(id))
+                                        {
+                                            <button class="btn btn-sm btn-primary" disabled="@Busy"
+                                                    @onclick="() => LinkOne(row)">Link</button>
+                                        }
+                                        <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
+                                                @onclick="() => SetAside(row)">Set aside</button>
+                                    </div>
+                                }
+                            </div>
+                        </li>
                     }
+                </ul>
+            </section>
+        }
 
-                    <td class="text-end text-nowrap">
-                        @if (Tab == "matched")
-                        {
-                            <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
-                                    @onclick="() => Unlink(suggestion)">Unlink</button>
-                        }
-                        else if (Tab == "dismissed")
-                        {
-                            <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
-                                    @onclick="() => Dismiss(suggestion, false)">Put back</button>
-                        }
-                        else
-                        {
-                            <button class="btn btn-sm btn-outline-primary me-1" disabled="@Busy"
-                                    @onclick="() => Expand(suggestion)">
-                                @(Expanded == suggestion.RemoteId ? "Hide" : "Find match")
-                            </button>
-                            <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
-                                    @onclick="() => Dismiss(suggestion, true)">Set aside</button>
-                        }
-                    </td>
-                </tr>
+        @if (Queue.TotalMatching > Queue.Suggestions.Count)
+        {
+            <div class="d-flex align-items-center gap-2 mt-3">
+                <button class="btn btn-sm btn-outline-secondary" disabled="@(Page == 1 || Busy)"
+                        @onclick="() => GoTo(Page - 1)">Previous</button>
+                <span class="gt-muted small">
+                    Showing @From–@To of @Queue.TotalMatching
+                </span>
+                <button class="btn btn-sm btn-outline-secondary" disabled="@(To >= Queue.TotalMatching || Busy)"
+                        @onclick="() => GoTo(Page + 1)">Next</button>
+            </div>
+        }
+        else if (Filtering && Queue.TotalMatching == 0)
+        {
+            <div class="alert alert-info">
+                <strong>Nothing matches that filter.</strong> There are still
+                @(Queue.StrongCount + Queue.AmbiguousCount + Queue.WeakCount) suggestions on the
+                wishlist.
+            </div>
+        }
+    }
+}
+else
+{
+    @* ------------------------------------------------------------ linked and set aside *@
 
-            }
-        </tbody>
-    </table>
-
-    @if (Tab == "matched" && Suggestions.Any(s => s.DeepLink is not null))
+    @if (Suggestions.Count == 0)
     {
-        <p class="gt-muted small">
-            The bot builds its own links from the match id, which is the game's id in GameTown &mdash;
-            for example <code>@Suggestions.First(s => s.DeepLink is not null).DeepLink</code>. Set this
-            server's public address under Administer &rarr; Settings if that link looks wrong.
-        </p>
+        <div class="alert alert-info">
+            @if (Tab == "matched")
+            {
+                <text><strong>Nothing linked yet.</strong> Suggestions that match a game in the library
+                are linked automatically; anything else is waiting on the wishlist.</text>
+            }
+            else
+            {
+                <text><strong>Nothing set aside.</strong> Suggestions that will never be games — test
+                entries, custom maps — can be put here to keep the wishlist a list of real work.</text>
+            }
+        </div>
+    }
+    else
+    {
+        @if (Tab == "matched")
+        {
+            @* Most linked rows need nothing: auto-matching requires normalised equality, so the
+               suggestion name and the game title are usually the same string twice. The rows worth
+               looking at are the ones where GameTown's claim and the bot's disagree, so those are
+               what this tab opens on. *@
+            <div class="gt-lan__filters mb-3">
+                <div class="btn-group btn-group-sm" role="group" aria-label="Which linked rows to show">
+                    <button class="btn @(LinkedView == "attention" ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick='() => SetLinkedView("attention")'>
+                        Needs attention @if (LinkedNeedingAttention > 0) { <text>(@LinkedNeedingAttention)</text> }
+                    </button>
+                    <button class="btn @(LinkedView == "all" ? "btn-primary" : "btn-outline-secondary")"
+                            @onclick='() => SetLinkedView("all")'>
+                        All @Suggestions.Count
+                    </button>
+                </div>
+
+                <input type="search" class="form-control form-control-sm" placeholder="Filter by name…"
+                       value="@FilterText" @oninput="OnFilterInput" aria-label="Filter linked suggestions" />
+            </div>
+        }
+
+        @if (VisibleRows.Count == 0)
+        {
+            <div class="alert alert-success">
+                <strong>Everything is in step.</strong> Every linked suggestion carries a working link
+                in Discord.
+            </div>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table table-sm align-middle">
+                    <thead>
+                        <tr>
+                            <th>Suggested</th>
+                            <th>LAN</th>
+                            @if (Tab == "matched") { <th>Linked to</th><th>Status</th> }
+                            <th class="text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var suggestion in VisibleRows)
+                        {
+                            var id = suggestion.RemoteId;
+
+                            <tr @key="id">
+                                @* Plain interpolation: Discord text, escaped by Razor. *@
+                                <td>
+                                    @suggestion.Name
+                                    @if (suggestion.Played)
+                                    {
+                                        <span class="badge bg-success ms-2" title="Marked as played at the LAN">Played</span>
+                                    }
+                                </td>
+                                <td class="gt-muted">@suggestion.LanEventName</td>
+
+                                @if (Tab == "matched")
+                                {
+                                    <td>
+                                        <a href="/game/@suggestion.GameId">@suggestion.GameTitle</a>
+                                        @if (suggestion.LinkSource == "auto")
+                                        {
+                                            <span class="gt-muted small ms-2">matched automatically</span>
+                                        }
+                                        else if (suggestion.LinkSource == "remote")
+                                        {
+                                            <span class="gt-muted small ms-2">linked in the bot</span>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (suggestion.IsBound)
+                                        {
+                                            <span class="badge bg-success">Linked in Discord</span>
+                                        }
+                                        else if (suggestion.BoundElsewhere)
+                                        {
+                                            @* Not fixable from here, so it must not read as pending work: the bot
+                                               only binds suggestions that are currently unbound and will not move
+                                               this one. Someone would have to clear it inside the bot first. *@
+                                            <span class="badge bg-warning text-dark"
+                                                  title="The bot has this suggestion pointing at its own entry and will not move it">
+                                                Linked elsewhere in the bot
+                                            </span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-secondary"
+                                                  title="Matched here, but not pushed to the bot yet">Not sent yet</span>
+                                        }
+                                    </td>
+                                }
+
+                                <td class="text-end text-nowrap">
+                                    @if (Outcomes.TryGetValue(id, out var outcome))
+                                    {
+                                        <span class="gt-muted small me-2">@outcome.Message</span>
+                                        @if (outcome.Undo is not null)
+                                        {
+                                            <button class="btn btn-sm btn-link p-0" disabled="@Busy"
+                                                    @onclick="outcome.Undo">Undo</button>
+                                        }
+                                    }
+                                    else if (Tab == "matched")
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
+                                                @onclick="() => Unlink(suggestion)">Unlink</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-outline-secondary" disabled="@Busy"
+                                                @onclick="() => Restore(suggestion)">Put back</button>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        @if (Tab == "matched" && Suggestions.Any(s => s.DeepLink is not null))
+        {
+            <p class="gt-muted small">
+                The bot builds its own links from the match id, which is the game's id in GameTown &mdash;
+                for example <code>@Suggestions.First(s => s.DeepLink is not null).DeepLink</code>. Set this
+                server's public address under Administer &rarr; Settings if that link looks wrong.
+            </p>
+        }
     }
 }
 
@@ -253,14 +562,146 @@ else
     private string? Error;
     private string? Notice;
 
+    /// <summary>The wishlist, ranked and banded. Only populated on the "unmatched" tab.</summary>
+    private LanRankedQueueContract Queue = new();
+
+    /// <summary>The plain listing behind the Linked and Set aside tabs.</summary>
     private List<LanSuggestionContract> Suggestions = [];
-    private int UnmatchedCount;
 
-    /// <summary>Which row has its candidate list open. One at a time — this is a queue, not a grid.</summary>
-    private long? Expanded;
-    private List<LanCandidateContract> Candidates = [];
+    private List<LanEventContract> Events = [];
 
-    protected override async Task OnInitializedAsync() => await Load();
+    /// <summary>Which rows are ticked for a bulk action. Cleared whenever the list is reloaded.</summary>
+    private readonly HashSet<long> Selected = [];
+
+    /// <summary>
+    /// The game chosen for a suggestion, not yet linked.
+    ///
+    /// The whole reason linking is two steps. A staged choice can be changed, read back and left
+    /// alone; a click that links immediately cannot.
+    /// </summary>
+    private readonly Dictionary<long, StagedPick> Staged = [];
+
+    /// <summary>
+    /// What just happened to a row, shown in place of its controls.
+    ///
+    /// Keyed by remote id and never cleared by an action on another row, so acting on five rows
+    /// leaves five results on screen rather than one banner describing the last of them.
+    /// </summary>
+    private readonly Dictionary<long, RowOutcome> Outcomes = [];
+
+    private string FilterText = string.Empty;
+    private string FilterEvent = string.Empty;
+
+    /// <summary>"", "strong", "ambiguous" or "weak". Narrows the queue to one section.</summary>
+    private string FilterBand = string.Empty;
+    private string LinkedView = "attention";
+    private int Page = 1;
+    private const int PageSize = 25;
+
+    private CancellationTokenSource? filterDebounce;
+
+    private sealed record StagedPick(Guid GameId, string Title, string? BoxArtUrl);
+
+    /// <summary>An outcome plus, where the action is reversible, the way back.</summary>
+    private sealed record RowOutcome(string Message, bool Ok, Func<Task>? Undo);
+
+    private sealed record BandView(string Key, string Title, string Blurb);
+
+    /// <summary>
+    /// The three sections, in the order the work should be done.
+    ///
+    /// Cheap certain wins first so the queue shrinks before anybody gets tired, the reading second,
+    /// and the bulk dismissal last — it is the largest group and the least interesting.
+    /// </summary>
+    private BandView[] Bands =>
+    [
+        new("strong", $"Likely matches ({Queue.StrongCount})",
+            "One candidate stands clear of the rest. Ticked ready to link — untick anything that looks wrong."),
+        new("ambiguous", $"Needs a look ({Queue.AmbiguousCount})",
+            "Something in the library is close, but not close enough to trust. The number is how well the names match, and nothing more."),
+        new("weak", $"Nothing in the library ({Queue.WeakCount})",
+            "Nobody has uploaded these. Candidates are not shown because every one of them would be wrong — search if you think otherwise."),
+    ];
+
+    private List<LanRankedSuggestionContract> Rows(string band)
+        => [.. Queue.Suggestions.Where(s => s.Confidence == band)];
+
+    private int Checked(List<LanRankedSuggestionContract> rows)
+        => rows.Count(r => Selected.Contains(r.Suggestion.RemoteId));
+
+    /// <summary>Ticked AND carrying a staged game — the only rows a bulk link can act on.</summary>
+    private int StagedCount(List<LanRankedSuggestionContract> rows)
+        => rows.Count(r => Selected.Contains(r.Suggestion.RemoteId) && Staged.ContainsKey(r.Suggestion.RemoteId));
+
+    /// <summary>
+    /// Ticked and NOT staged — what "Set aside selected" may actually act on.
+    ///
+    /// Picking a game out of the library search ticks the row, so a bulk link can pick it up. In the
+    /// "nothing in the library" section the bulk button is Set aside rather than Link, and without
+    /// this exclusion that tick would offer to dismiss the row somebody had just found the game for —
+    /// the one action that would throw the work away.
+    /// </summary>
+    private int Dismissable(List<LanRankedSuggestionContract> rows)
+        => rows.Count(r => Selected.Contains(r.Suggestion.RemoteId) && !Staged.ContainsKey(r.Suggestion.RemoteId));
+
+    private bool Filtering => !string.IsNullOrWhiteSpace(FilterText)
+                              || !string.IsNullOrWhiteSpace(FilterEvent)
+                              || !string.IsNullOrWhiteSpace(FilterBand);
+
+    private int From => ((Page - 1) * PageSize) + 1;
+    private int To => Math.Min(Page * PageSize, Queue.TotalMatching);
+
+    /// <summary>
+    /// Linked rows where GameTown's claim and the bot's disagree.
+    ///
+    /// The only linked rows anybody acts on. The rest are a suggestion name next to an identical game
+    /// title, forty times.
+    /// </summary>
+    private int LinkedNeedingAttention
+        => Tab == "matched" ? Suggestions.Count(s => !s.IsBound) : 0;
+
+    private List<LanSuggestionContract> VisibleRows
+    {
+        get
+        {
+            IEnumerable<LanSuggestionContract> rows = Suggestions;
+
+            if (Tab == "matched" && LinkedView == "attention")
+            {
+                rows = rows.Where(s => !s.IsBound);
+            }
+
+            if (!string.IsNullOrWhiteSpace(FilterText))
+            {
+                var wanted = FilterText.Trim();
+                rows = rows.Where(s => s.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return [.. rows];
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Counts.Changed += OnCountsChanged;
+
+        // The events list feeds the LAN filter and changes about as often as a LAN happens, so it is
+        // read once for the life of the screen rather than with every reload.
+        Events = await Lan.GetEvents();
+
+        if (!Counts.Loaded) await Counts.Refresh();
+
+        await Load();
+    }
+
+    public void Dispose()
+    {
+        Counts.Changed -= OnCountsChanged;
+        filterDebounce?.Cancel();
+        filterDebounce?.Dispose();
+    }
+
+    private void OnCountsChanged() => StateHasChanged();
 
     private async Task Show(string tab)
     {
@@ -268,6 +709,16 @@ else
 
         Tab = tab;
         Reset();
+        FilterText = string.Empty;
+        FilterEvent = string.Empty;
+        FilterBand = string.Empty;
+        Page = 1;
+
+        // A notice about a wishlist row makes no sense over the Linked tab. The old screen kept it,
+        // so switching tabs carried a stale message about an action taken somewhere else.
+        Notice = null;
+        Error = null;
+
         await Load();
     }
 
@@ -277,14 +728,35 @@ else
 
         try
         {
-            Suggestions = await Lan.Get(Tab);
-            UnmatchedCount = Tab == "unmatched" ? Suggestions.Count : await Lan.GetUnmatchedCount();
+            if (Tab == "unmatched")
+            {
+                Queue = await Lan.GetRanked(FilterText, FilterEvent, FilterBand, Page, PageSize);
+
+                // Pre-ticked, but only where the server said so — a row somebody has already unlinked
+                // carries AutoMatchBlocked and must never arrive selected, or a bulk link would undo
+                // their decision. That rule lives on the server, next to the flag.
+                foreach (var row in Queue.Suggestions.Where(r => r.Preselect))
+                {
+                    Selected.Add(row.Suggestion.RemoteId);
+
+                    if (row.Candidates.Count > 0)
+                    {
+                        var top = row.Candidates[0];
+                        Staged[row.Suggestion.RemoteId] = new StagedPick(top.GameId, top.Title, top.BoxArtUrl);
+                    }
+                }
+            }
+            else
+            {
+                Suggestions = await Lan.Get(Tab);
+            }
         }
         catch (Exception)
         {
             // No exception detail: this reports on a configured outbound integration, and the
             // message could carry the bot's address.
             Error = "The suggestion list could not be loaded.";
+            Queue = new LanRankedQueueContract();
             Suggestions = [];
         }
 
@@ -305,7 +777,7 @@ else
         Error = null;
         Notice = null;
 
-        var before = UnmatchedCount;
+        var before = Counts.Unmatched;
 
         try
         {
@@ -320,9 +792,10 @@ else
             else
             {
                 Reset();
+                await Counts.Refresh();
                 await Load();
 
-                var arrived = UnmatchedCount - before;
+                var arrived = Counts.Unmatched - before;
                 Notice = arrived > 0
                     ? $"{arrived} new suggestion{(arrived == 1 ? "" : "s")} on the wishlist."
                     : "Nothing new — the wishlist is up to date.";
@@ -336,69 +809,259 @@ else
         Refreshing = false;
     }
 
-    private async Task Expand(LanSuggestionContract suggestion)
+    // ------------------------------------------------------------------ staging and selection
+
+    private void Stage(long remoteId, LanCandidateContract candidate)
+        => Staged[remoteId] = new StagedPick(candidate.GameId, candidate.Title, candidate.BoxArtUrl);
+
+    private void Stage(long remoteId, GameContract game)
     {
-        if (Expanded == suggestion.RemoteId)
-        {
-            Expanded = null;
-            Candidates = [];
-            return;
-        }
+        Staged[remoteId] = new StagedPick(game.Id, game.Title, game.BoxArtUrl);
 
-        Busy = true;
-        Expanded = suggestion.RemoteId;
-
-        try
-        {
-            Candidates = await Lan.GetCandidates(suggestion.RemoteId);
-        }
-        catch (Exception)
-        {
-            Error = "The library could not be searched for matches.";
-            Candidates = [];
-        }
-
-        Busy = false;
+        // Picking a game out of the library search is a decision, so the row joins the bulk selection
+        // rather than needing a second tick for what was plainly just chosen.
+        Selected.Add(remoteId);
     }
 
-    /// <summary>
-    /// Links a suggestion to a game.
-    ///
-    /// No confirmation when the game is already linked from another suggestion: the bot's bindings
-    /// are additive, so the existing link keeps working and nothing is taken away from anyone.
-    /// </summary>
-    private async Task Link(LanSuggestionContract suggestion, LanCandidateContract candidate)
+    private void Unstage(long remoteId) => Staged.Remove(remoteId);
+
+    private void Toggle(long remoteId, ChangeEventArgs e)
     {
+        if (e.Value is true) Selected.Add(remoteId);
+        else Selected.Remove(remoteId);
+    }
+
+    private void ToggleAll(List<LanRankedSuggestionContract> rows, ChangeEventArgs e)
+    {
+        foreach (var row in rows)
+        {
+            if (e.Value is true) Selected.Add(row.Suggestion.RemoteId);
+            else Selected.Remove(row.Suggestion.RemoteId);
+        }
+    }
+
+    // ------------------------------------------------------------------ acting
+
+    /// <summary>
+    /// Links one suggestion to its staged game.
+    ///
+    /// The row is replaced by its outcome rather than the whole list being refetched. That is not
+    /// only cheaper: reloading re-rendered every row, so a row vanishing from the middle of the list
+    /// shifted everything below it up under the cursor, and two quick clicks in the same place set
+    /// aside two different suggestions.
+    /// </summary>
+    private async Task LinkOne(LanRankedSuggestionContract row)
+    {
+        if (!Staged.TryGetValue(row.Suggestion.RemoteId, out var pick)) return;
+
         Busy = true;
         Error = null;
-        Notice = null;
 
         try
         {
-            var result = await Lan.Link(suggestion.RemoteId, candidate.GameId);
+            var result = await Lan.Link(row.Suggestion.RemoteId, pick.GameId);
 
             if (result.Ok)
             {
                 // "ok" and "bound-elsewhere" are both successes for GameTown — the game is recorded
                 // either way — but only one of them put a link in Discord, and saying so is the
                 // difference between a screen that is trusted and one that is not.
-                Notice = result.Reason == "bound-elsewhere"
-                    ? $"“{suggestion.Name}” is recorded as {candidate.Title} here, but the bot already "
-                      + "has that suggestion pointing at its own entry and will not move it. Someone "
-                      + "would need to clear it in the bot first."
-                    : $"Linked “{suggestion.Name}” to {candidate.Title}.";
+                Record(row.Suggestion.RemoteId, result.Reason == "bound-elsewhere"
+                    ? $"Recorded as {pick.Title}, but the bot already has this suggestion pointing at "
+                      + "its own entry and will not move it."
+                    : $"Linked to {pick.Title}.", ok: true, undo: null);
 
-                Reset();
-                await Load();
+                Counts.Adjust(-1);
             }
             else
             {
-                Error = DescribeReason(result.Reason);
+                Record(row.Suggestion.RemoteId, DescribeReason(result.Reason), ok: false, undo: null);
             }
         }
         catch (Exception)
         {
-            Error = "The link could not be saved.";
+            Record(row.Suggestion.RemoteId, "The link could not be saved.", ok: false, undo: null);
+        }
+
+        Busy = false;
+    }
+
+    /// <summary>
+    /// Links every ticked row that has a staged game, in one request.
+    ///
+    /// Sequenced on the server, which is where the pacing belongs — a loop here would put it in a
+    /// page that can be closed halfway through a run of outbound writes.
+    /// </summary>
+    private async Task LinkSelected(List<LanRankedSuggestionContract> rows)
+    {
+        var links = rows
+            .Where(r => Selected.Contains(r.Suggestion.RemoteId) && Staged.ContainsKey(r.Suggestion.RemoteId))
+            .Select(r => new LanLinkRequest
+            {
+                RemoteId = r.Suggestion.RemoteId,
+                GameId = Staged[r.Suggestion.RemoteId].GameId,
+            })
+            .ToList();
+
+        if (links.Count == 0) return;
+
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        try
+        {
+            var result = await Lan.LinkMany(links);
+
+            foreach (var entry in result.Results)
+            {
+                var title = Staged.TryGetValue(entry.RemoteId, out var pick) ? pick.Title : "the game";
+
+                Record(entry.RemoteId,
+                    entry.Ok
+                        ? entry.Reason == "bound-elsewhere"
+                            ? $"Recorded as {title}; the bot would not move its existing link."
+                            : $"Linked to {title}."
+                        : DescribeReason(entry.Reason),
+                    ok: entry.Ok, undo: null);
+
+                if (entry.Ok) Counts.Adjust(-1);
+            }
+
+            // A bulk action IS worth a banner — unlike a single row, where the outcome sits on the
+            // row that produced it, the summary here is about a group nobody can see all of at once.
+            Notice = Summarise(result, links.Count);
+
+            if (result.StoppedBecause is not null)
+            {
+                var attempted = result.Results.Count;
+                Error = DescribeReason(result.StoppedBecause)
+                        + $" {links.Count - attempted} of {links.Count} were not attempted.";
+            }
+        }
+        catch (Exception)
+        {
+            Error = "The links could not be saved.";
+        }
+
+        Busy = false;
+    }
+
+    private static string Summarise(LanBulkResult result, int asked)
+    {
+        if (result.Succeeded == 0) return "Nothing was linked.";
+
+        var linked = result.Succeeded - result.BoundElsewhere;
+        var text = $"Linked {linked} suggestion{(linked == 1 ? "" : "s")}.";
+
+        // Stated separately because it is the one success that puts no link in Discord, and folding
+        // it into the total would claim links that are not there.
+        if (result.BoundElsewhere > 0)
+        {
+            text += $" {result.BoundElsewhere} more {(result.BoundElsewhere == 1 ? "was" : "were")} "
+                  + "recorded here, but the bot already had them pointing elsewhere and will not move them.";
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// Sets one suggestion aside, with a way back.
+    ///
+    /// Undo matters more than it looks: this is the action people take fastest, on the largest and
+    /// least interesting group, and recovering used to mean switching tabs, finding the row among the
+    /// set-aside ones and pressing "Put back".
+    /// </summary>
+    private async Task SetAside(LanRankedSuggestionContract row)
+    {
+        var id = row.Suggestion.RemoteId;
+
+        Busy = true;
+
+        try
+        {
+            var result = await Lan.Dismiss(id, true);
+
+            if (result.Ok)
+            {
+                Record(id, "Set aside.", ok: true, undo: () => Undo(id));
+                Counts.Adjust(-1);
+            }
+            else
+            {
+                Record(id, DescribeReason(result.Reason), ok: false, undo: null);
+            }
+        }
+        catch (Exception)
+        {
+            Record(id, "That could not be saved.", ok: false, undo: null);
+        }
+
+        Busy = false;
+    }
+
+    private async Task SetAsideSelected(List<LanRankedSuggestionContract> rows)
+    {
+        // Staged rows are excluded here as well as in the button's count. The count is what a person
+        // reads; this is what actually happens, and the two have to agree.
+        var ids = rows.Select(r => r.Suggestion.RemoteId)
+            .Where(id => Selected.Contains(id) && !Staged.ContainsKey(id))
+            .ToList();
+
+        if (ids.Count == 0) return;
+
+        Busy = true;
+        Error = null;
+        Notice = null;
+
+        try
+        {
+            var result = await Lan.DismissMany(ids, true);
+
+            foreach (var entry in result.Results.Where(r => r.Ok))
+            {
+                Record(entry.RemoteId, "Set aside.", ok: true, undo: () => Undo(entry.RemoteId));
+                Counts.Adjust(-1);
+            }
+
+            foreach (var entry in result.Results.Where(r => !r.Ok))
+            {
+                Record(entry.RemoteId, DescribeReason(entry.Reason), ok: false, undo: null);
+            }
+
+            Notice = $"Set {result.Succeeded} suggestion{(result.Succeeded == 1 ? "" : "s")} aside. "
+                   + "Each row offers an undo.";
+        }
+        catch (Exception)
+        {
+            Error = "Those could not be saved.";
+        }
+
+        Busy = false;
+    }
+
+    /// <summary>Puts a set-aside row back and takes its outcome off the screen, so the row returns.</summary>
+    private async Task Undo(long remoteId)
+    {
+        Busy = true;
+
+        try
+        {
+            var result = await Lan.Dismiss(remoteId, false);
+
+            if (result.Ok)
+            {
+                Outcomes.Remove(remoteId);
+                Counts.Adjust(1);
+            }
+            else
+            {
+                Record(remoteId, DescribeReason(result.Reason), ok: false, undo: null);
+            }
+        }
+        catch (Exception)
+        {
+            Record(remoteId, "That could not be undone.", ok: false, undo: null);
         }
 
         Busy = false;
@@ -408,7 +1071,6 @@ else
     {
         Busy = true;
         Error = null;
-        Notice = null;
 
         try
         {
@@ -416,59 +1078,136 @@ else
 
             if (result.Ok)
             {
-                Notice = $"Unlinked “{suggestion.Name}”. It will not be matched automatically again.";
-                Reset();
-                await Load();
+                Record(suggestion.RemoteId, "Unlinked. It will not be matched automatically again.",
+                    ok: true, undo: null);
+
+                Counts.Adjust(1);
             }
             else
             {
-                Error = DescribeReason(result.Reason);
+                Record(suggestion.RemoteId, DescribeReason(result.Reason), ok: false, undo: null);
             }
         }
         catch (Exception)
         {
-            Error = "The link could not be removed.";
+            Record(suggestion.RemoteId, "The link could not be removed.", ok: false, undo: null);
         }
 
         Busy = false;
     }
 
-    private async Task Dismiss(LanSuggestionContract suggestion, bool dismissed)
+    private async Task Restore(LanSuggestionContract suggestion)
     {
         Busy = true;
         Error = null;
-        Notice = null;
 
         try
         {
-            var result = await Lan.Dismiss(suggestion.RemoteId, dismissed);
+            var result = await Lan.Dismiss(suggestion.RemoteId, false);
 
             if (result.Ok)
             {
-                Notice = dismissed
-                    ? $"Set “{suggestion.Name}” aside."
-                    : $"Put “{suggestion.Name}” back on the wishlist.";
-
-                Reset();
-                await Load();
+                Record(suggestion.RemoteId, "Back on the wishlist.", ok: true, undo: null);
+                Counts.Adjust(1);
             }
             else
             {
-                Error = DescribeReason(result.Reason);
+                Record(suggestion.RemoteId, DescribeReason(result.Reason), ok: false, undo: null);
             }
         }
         catch (Exception)
         {
-            Error = "That could not be saved.";
+            Record(suggestion.RemoteId, "That could not be saved.", ok: false, undo: null);
         }
 
         Busy = false;
     }
 
+    private void Record(long remoteId, string message, bool ok, Func<Task>? undo)
+    {
+        Outcomes[remoteId] = new RowOutcome(message, ok, undo);
+        Selected.Remove(remoteId);
+        Staged.Remove(remoteId);
+    }
+
+    // ------------------------------------------------------------------ filtering and paging
+
+    private async Task OnFilterInput(ChangeEventArgs e)
+    {
+        FilterText = e.Value?.ToString() ?? string.Empty;
+
+        // The Linked tab filters in memory — it already has every row — so only the wishlist, which
+        // filters server-side, needs the round trip debounced.
+        if (Tab != "unmatched") return;
+
+        filterDebounce?.Cancel();
+        filterDebounce?.Dispose();
+        filterDebounce = new CancellationTokenSource();
+
+        var token = filterDebounce.Token;
+
+        try
+        {
+            await Task.Delay(250, token);
+            if (token.IsCancellationRequested) return;
+
+            Page = 1;
+            Reset();
+            await Load();
+            StateHasChanged();
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a later keystroke.
+        }
+    }
+
+    /// <summary>
+    /// Applies one filter and leaves the others alone.
+    ///
+    /// Null means "unchanged" rather than "cleared", so choosing a band does not silently drop the
+    /// LAN somebody had already narrowed to.
+    /// </summary>
+    private async Task ApplyFilter(string? lanEvent = null, string? band = null)
+    {
+        if (lanEvent is not null) FilterEvent = lanEvent;
+        if (band is not null) FilterBand = band;
+
+        Page = 1;
+        Reset();
+        await Load();
+    }
+
+    private async Task ClearFilters()
+    {
+        FilterText = string.Empty;
+        FilterEvent = string.Empty;
+        FilterBand = string.Empty;
+        Page = 1;
+        Reset();
+        await Load();
+    }
+
+    private void SetLinkedView(string view) => LinkedView = view;
+
+    private async Task GoTo(int page)
+    {
+        Page = Math.Max(1, page);
+        Reset();
+        await Load();
+    }
+
+    /// <summary>
+    /// Clears everything that describes the list currently on screen.
+    ///
+    /// Outcomes go too: they are positioned against rows that are about to be replaced, and a message
+    /// left over from the previous page would attach itself to whichever row now carries that id.
+    /// </summary>
     private void Reset()
     {
-        Expanded = null;
-        Candidates = [];
+        Selected.Clear();
+        Staged.Clear();
+        Outcomes.Clear();
     }
 
     /// <summary>
