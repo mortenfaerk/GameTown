@@ -69,8 +69,7 @@ public class LanSuggestionService(HttpClient http)
     ///
     /// Sequenced on the SERVER, not here: these are outbound calls to a rate-limited bot, and a loop
     /// in the browser puts the pacing in a page that can be closed halfway through. The result is per
-    /// row because the outcomes genuinely differ — "bound-elsewhere" is a success that puts no link
-    /// in Discord.
+    /// row because a batch can partially fail — some rows link, others don't.
     /// </summary>
     public async Task<LanBulkResult> LinkMany(IEnumerable<LanLinkRequest> links)
     {

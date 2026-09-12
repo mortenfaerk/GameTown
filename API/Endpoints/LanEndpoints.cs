@@ -56,10 +56,9 @@ public static class LanEndpoints
              .WithDescription("Links a suggestion to a library entry and pushes it to the bot. "
                             + "A game other suggestions already point at is fine — bindings are additive.");
 
-        // Bulk, and deliberately a separate route rather than a list on /link: the outcomes differ per
-        // row — some come back "bound-elsewhere", which is a success that puts no link in Discord —
-        // so the response shape is genuinely different and collapsing them would overstate what
-        // happened.
+        // Bulk, and deliberately a separate route rather than a list on /link: a batch can partially
+        // fail, so the response shape is genuinely different from a single link and collapsing them
+        // would overstate what happened.
         group.MapPost("/link-many", LinkMany)
              .Accepts<LanBulkLinkRequest>("application/json")
              .Produces<LanBulkResult>(StatusCodes.Status200OK)

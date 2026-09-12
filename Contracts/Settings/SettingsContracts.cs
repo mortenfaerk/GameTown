@@ -88,8 +88,9 @@ public class SettingsContract
     public int LanBotSyncIntervalMinutes { get; set; }
 
     /// <summary>
-    /// Where this install is reachable from. Blank when unset, which is not an error — nothing inside
-    /// GameTown needs it.
+    /// Where this install is reachable from. Blank when unset, which is not an error — but every LAN
+    /// bot push then omits its <c>url</c>/<c>boxArtUrl</c> fields, since GameTown cannot build an
+    /// absolute link to itself without it.
     /// </summary>
     public string PublicBaseUrl { get; set; } = string.Empty;
 

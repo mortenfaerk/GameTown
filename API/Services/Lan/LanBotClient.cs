@@ -9,17 +9,19 @@ namespace API.Services.Lan;
 /// The LAN Discord bot's Catalogue API — the only place GameTown talks to it.
 ///
 /// HOW THE BOT'S MODEL WORKS, because nothing else in this file makes sense without it: the bot keeps
-/// a catalogue keyed by a GUID the CLIENT chooses, and it binds a player's suggestion to a catalogue
-/// entry whose title equals the suggestion's name. So GameTown does not read matches from the bot —
-/// it CAUSES them, by PUTting an entry under the game's own Id with the suggestion's exact text as
-/// the title. <c>UpsertGameResponse.suggestionsBound</c> is the bot reporting how many it just bound.
+/// a catalogue keyed by a GUID the CLIENT chooses. A game push (<see cref="UpsertGameAsync"/>) writes
+/// that entry's title/url/boxArtUrl and, as a side effect, adopts any currently-unmatched suggestion
+/// whose name case-insensitively equals the pushed title — but a direct bind
+/// (<see cref="MatchSuggestionAsync"/>) is the reliable way to link a specific suggestion, since it
+/// works regardless of what the suggestion's raw text looks like and regardless of whether it is
+/// already bound to something else.
 ///
 /// Two consequences worth knowing before changing anything here:
 ///
-///  * <b>The title we send is the SUGGESTION's text, not GameTown's.</b> Tidying it — fixing the case,
-///    using the library's canonical title — breaks the very binding the call exists to create.
-///  * <b>The bot holds one match per catalogue entry.</b> Re-titling an entry replaces whatever was
-///    bound to it. <c>LanSuggestionService</c> is where that is enforced; this class just makes calls.
+///  * <b>A game push never overwrites an existing match.</b> Only <see cref="MatchSuggestionAsync"/>
+///    can re-point a suggestion that is already bound — it does so unconditionally, last-writer-wins.
+///  * <b>The title we send is GameTown's canonical one.</b> Binding no longer depends on it matching
+///    a suggestion's raw text, so there is no reason to send anything else.
 ///
 /// Settings are read on EVERY call and never captured in the constructor. That is the documented
 /// failure mode in this codebase — the old RAWGService and FileService took their configuration as
@@ -109,15 +111,20 @@ public class LanBotClient(
     }
 
     /// <summary>
-    /// Creates or re-titles the catalogue entry for a game, which is what makes the bot bind
-    /// suggestions with that title to it.
+    /// Creates or updates the catalogue entry for a game — title, deep link and cover art.
     ///
-    /// <paramref name="title"/> must be the suggestion's text verbatim. Returns the number of
-    /// suggestions the bot says it bound — informational; the authority on what is bound is the next
-    /// sync's <c>gameTownMatchId</c>, not this counter.
+    /// <paramref name="url"/> and <paramref name="boxArtUrl"/> are REPLACED WHOLESALE on every call —
+    /// omitting either one clears it at the bot, since that is the only way to retract a link pushed
+    /// earlier. Both are serialised with <c>JsonIgnore(WhenWritingNull)</c> so passing null actually
+    /// omits the key rather than sending an explicit null. As a side effect the bot adopts any
+    /// currently-unmatched suggestion whose name case-insensitively equals <paramref name="title"/>;
+    /// an existing match is never overwritten by this call — see <see cref="MatchSuggestionAsync"/>
+    /// for that. Returns the number of suggestions the bot says it bound this way — informational; the
+    /// authority on what is bound is the next sync's <c>gameTownMatchId</c>, not this counter.
     /// </summary>
     public async Task<(bool Ok, string Reason, int Bound)> UpsertGameAsync(
-        Guid matchId, string title, CancellationToken cancellationToken = default)
+        Guid matchId, string title, string? url, string? boxArtUrl,
+        CancellationToken cancellationToken = default)
     {
         var client = await CreateClientAsync();
         if (client is null) return (false, "not-configured", 0);
@@ -127,7 +134,8 @@ public class LanBotClient(
         try
         {
             using var response = await client.PutAsJsonAsync(
-                $"api/v1/games/{matchId}", new UpsertGameRequest(title), Json, cancellationToken);
+                $"api/v1/games/{matchId}", new UpsertGameRequest(title, url, boxArtUrl), Json,
+                cancellationToken);
 
             var failure = Classify(response);
             if (failure is not null) return (false, failure, 0);
@@ -142,14 +150,15 @@ public class LanBotClient(
     }
 
     /// <summary>
-    /// Removes a catalogue entry.
+    /// Binds one suggestion to a catalogue entry directly, regardless of whatever it is currently
+    /// bound to.
     ///
-    /// Only ever called for an entry GameTown recorded creating (LanSuggestion.PushedAtUtc) — the
-    /// catalogue also holds entries the crew made by hand inside the bot, and those are not ours to
-    /// delete. A 404 counts as success: the entry is gone, which is the outcome asked for.
+    /// Unconditional and unlike a game push's name-based adoption: this re-points an already-bound
+    /// suggestion in one call, last-writer-wins, no delete-then-bind. The catalogue entry must already
+    /// exist — <see cref="UpsertGameAsync"/> first, or this answers "game-not-found" (the bot's 400).
     /// </summary>
-    public async Task<(bool Ok, string Reason)> DeleteGameAsync(
-        Guid matchId, CancellationToken cancellationToken = default)
+    public async Task<(bool Ok, string Reason)> MatchSuggestionAsync(
+        long remoteId, Guid matchId, CancellationToken cancellationToken = default)
     {
         var client = await CreateClientAsync();
         if (client is null) return (false, "not-configured");
@@ -158,16 +167,50 @@ public class LanBotClient(
 
         try
         {
-            using var response = await client.DeleteAsync($"api/v1/games/{matchId}", cancellationToken);
+            using var response = await client.PutAsJsonAsync(
+                $"api/v1/suggestions/{remoteId}/match", new MatchSuggestionRequest(matchId), Json,
+                cancellationToken);
 
-            if (response.StatusCode == HttpStatusCode.NotFound) return (true, "ok");
+            if (response.StatusCode == HttpStatusCode.BadRequest) return (false, "game-not-found");
+            if (response.StatusCode == HttpStatusCode.NotFound) return (false, "not-found");
 
             var failure = Classify(response);
             return failure is null ? (true, "ok") : (false, failure);
         }
         catch (Exception exception)
         {
-            return (false, Unreachable(exception, "deleting a catalogue entry"));
+            return (false, Unreachable(exception, "binding a suggestion"));
+        }
+    }
+
+    /// <summary>
+    /// Clears one suggestion's match, leaving the catalogue entry and every other suggestion bound to
+    /// it untouched.
+    ///
+    /// 204 whether or not a match was there to clear — idempotent, the same way
+    /// <c>SteamGridDbProvider</c> and friends treat a 404 as "already gone" rather than a failure.
+    /// </summary>
+    public async Task<(bool Ok, string Reason)> UnmatchSuggestionAsync(
+        long remoteId, CancellationToken cancellationToken = default)
+    {
+        var client = await CreateClientAsync();
+        if (client is null) return (false, "not-configured");
+
+        using var _ = client;
+
+        try
+        {
+            using var response = await client.DeleteAsync(
+                $"api/v1/suggestions/{remoteId}/match", cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.NotFound) return (false, "not-found");
+
+            var failure = Classify(response);
+            return failure is null ? (true, "ok") : (false, failure);
+        }
+        catch (Exception exception)
+        {
+            return (false, Unreachable(exception, "clearing a suggestion's match"));
         }
     }
 
@@ -214,12 +257,6 @@ public class LanBotClient(
         client.BaseAddress = uri;
         client.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
 
-        // Ignored by the bot today — its UpsertGameRequest has no url field, so it composes links from
-        // its own configuration. Sent anyway because it costs a header and makes "tell GameTown where
-        // it lives" a setting the bot can start honouring without GameTown changing.
-        var publicBaseUrl = await settings.GetPublicBaseUrlAsync();
-        if (publicBaseUrl is not null) client.DefaultRequestHeaders.Add("X-GameTown-Base-Url", publicBaseUrl);
-
         return client;
     }
 
@@ -265,9 +302,16 @@ public class LanBotClient(
 
     private sealed record SuggestionsPage(int Total, List<LanBotSuggestion>? Items);
 
-    private sealed record UpsertGameRequest([property: JsonPropertyName("title")] string Title);
+    private sealed record UpsertGameRequest(
+        [property: JsonPropertyName("title")] string Title,
+        [property: JsonPropertyName("url"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        string? Url,
+        [property: JsonPropertyName("boxArtUrl"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        string? BoxArtUrl);
 
     private sealed record UpsertGameResponse(bool Created, int SuggestionsBound);
+
+    private sealed record MatchSuggestionRequest([property: JsonPropertyName("matchId")] Guid MatchId);
 }
 
 /// <summary>

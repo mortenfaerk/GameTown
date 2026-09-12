@@ -12,22 +12,29 @@ namespace GameTown.Tests;
 /// mean anything: the rules under test are all about GameTown agreeing with what the bot reports, and
 /// a handler that just returned canned JSON could not contradict GameTown the way a real service does.
 ///
-/// Three behaviours, all VERIFIED against the live dev bot rather than inferred from its OpenAPI
-/// document — none of them is obvious from it, and two are the opposite of what its shape suggests:
+/// Modelled on the Catalogue API v1.4.0 OpenAPI document
+/// (<c>https://dev-api-hcpbot.znoozles.net/openapi/v1.json</c>), not just the prose the bot's author
+/// sent:
 ///
-///  1. A PUT replaces the catalogue entry's TITLE. The entry holds exactly one.
-///  2. It then binds every suggestion whose name equals that title AND IS CURRENTLY UNBOUND. An
-///     already-bound suggestion is left alone and the response reports suggestionsBound = 0.
-///  3. It never unbinds and never re-points anything, not even when the new title matches nothing.
-///     Only DELETE removes bindings.
+///  1. <c>PUT /games/{matchId}</c> replaces the entry's title/url/boxArtUrl wholesale — omitting
+///     either of the latter two clears it. As a side effect it binds every UNBOUND suggestion whose
+///     name case-insensitively equals the title; an already-bound suggestion is left alone.
+///  2. <c>PUT /suggestions/{id}/match</c> binds one suggestion UNCONDITIONALLY — it re-points an
+///     already-bound suggestion in one call. 400 if the matchId has no catalogue row; 404 for an
+///     unknown suggestion id.
+///  3. <c>DELETE /suggestions/{id}/match</c> clears just that suggestion's binding. 204 whether or
+///     not one existed; 404 only for an unknown suggestion id. The catalogue entry and every other
+///     suggestion bound to it are untouched.
 ///
 /// Getting this wrong in the fake would be worse than having no fake at all: every test here would
 /// pass against a bot that behaves differently from the real one.
 /// </summary>
 public sealed class FakeLanBot : HttpMessageHandler
 {
+    private sealed record CatalogueEntry(string Title, string? Url, string? BoxArtUrl);
+
     private readonly List<(long Id, string Name, string Event, bool Played)> _suggestions = [];
-    private readonly Dictionary<Guid, string> _catalogue = [];
+    private readonly Dictionary<Guid, CatalogueEntry> _catalogue = [];
 
     /// <summary>suggestion id -> matchId. The bot's own view of what is bound.</summary>
     private readonly Dictionary<long, Guid> _bindings = [];
@@ -35,8 +42,13 @@ public sealed class FakeLanBot : HttpMessageHandler
     /// <summary>Set to make every call fail, for the tests about what GameTown does NOT record.</summary>
     public HttpStatusCode? FailWith { get; set; }
 
+    /// <summary>PUT/DELETE on <c>/games/{matchId}</c> — the catalogue entry itself.</summary>
     public int PutCount { get; private set; }
     public int DeleteCount { get; private set; }
+
+    /// <summary>PUT/DELETE on <c>/suggestions/{id}/match</c> — a single suggestion's binding.</summary>
+    public int MatchPutCount { get; private set; }
+    public int MatchDeleteCount { get; private set; }
 
     public FakeLanBot Suggest(long id, string name, string lanEvent = "HCP #37 (2026)", bool played = false)
     {
@@ -47,7 +59,7 @@ public sealed class FakeLanBot : HttpMessageHandler
     /// <summary>A catalogue entry the crew made by hand inside the bot — not ours to delete.</summary>
     public FakeLanBot CrewBound(long suggestionId, Guid matchId, string title)
     {
-        _catalogue[matchId] = title;
+        _catalogue[matchId] = new CatalogueEntry(title, null, null);
         _bindings[suggestionId] = matchId;
         return this;
     }
@@ -64,6 +76,10 @@ public sealed class FakeLanBot : HttpMessageHandler
         => _bindings.TryGetValue(suggestionId, out var matchId) ? matchId : null;
 
     public bool HasCatalogueEntry(Guid matchId) => _catalogue.ContainsKey(matchId);
+
+    public string? TitleFor(Guid matchId) => _catalogue.TryGetValue(matchId, out var e) ? e.Title : null;
+    public string? UrlFor(Guid matchId) => _catalogue.TryGetValue(matchId, out var e) ? e.Url : null;
+    public string? BoxArtUrlFor(Guid matchId) => _catalogue.TryGetValue(matchId, out var e) ? e.BoxArtUrl : null;
 
     protected override Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
@@ -87,21 +103,58 @@ public sealed class FakeLanBot : HttpMessageHandler
                 }),
             }));
 
+        if (path.EndsWith("/match"))
+        {
+            // .../suggestions/{id}/match — the second-to-last segment is the suggestion id.
+            var segments = path.Split('/');
+            var suggestionId = long.Parse(segments[^2]);
+            var exists = _suggestions.Any(s => s.Id == suggestionId);
+
+            if (request.Method == HttpMethod.Put)
+            {
+                MatchPutCount++;
+                if (!exists) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+                var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync(cancellationToken).Result);
+                var requestedMatchId = Guid.Parse(body.RootElement.GetProperty("matchId").GetString()!);
+
+                if (!_catalogue.ContainsKey(requestedMatchId))
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadRequest));
+
+                // Unconditional — re-points a suggestion already bound to something else in one call.
+                _bindings[suggestionId] = requestedMatchId;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+            }
+
+            if (request.Method == HttpMethod.Delete)
+            {
+                MatchDeleteCount++;
+                if (!exists) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+                // 204 whether or not a binding was there to clear — idempotent for a machine caller.
+                _bindings.Remove(suggestionId);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            }
+        }
+
         var matchId = Guid.Parse(path[(path.LastIndexOf('/') + 1)..]);
 
         if (request.Method == HttpMethod.Put)
         {
             PutCount++;
             var body = JsonDocument.Parse(request.Content!.ReadAsStringAsync(cancellationToken).Result);
-            var title = body.RootElement.GetProperty("title").GetString()!;
+            var root = body.RootElement;
+            var title = root.GetProperty("title").GetString()!;
+            var url = root.TryGetProperty("url", out var urlProp) ? urlProp.GetString() : null;
+            var boxArtUrl = root.TryGetProperty("boxArtUrl", out var boxArtProp) ? boxArtProp.GetString() : null;
 
-            // The title is replaced; existing bindings are NOT touched. Verified against the live bot:
-            // a PUT carrying a title that matches nothing still leaves every previous binding in place.
-            _catalogue[matchId] = title;
+            // Replaced wholesale; existing bindings are NOT touched. Verified against the live bot: a
+            // PUT carrying a title that matches nothing still leaves every previous binding in place.
+            _catalogue[matchId] = new CatalogueEntry(title, url, boxArtUrl);
 
             // UNBOUND only. An already-bound suggestion is not re-pointed, even by a PUT carrying its
-            // exact name — the live bot answers suggestionsBound = 0 for that, which is what makes
-            // "GameTown cannot take over a link the crew already made" true rather than a guess.
+            // exact name — the live bot answers suggestionsBound = 0 for that. Only the direct-bind
+            // endpoint above can move an existing binding.
             var bindings = _suggestions
                 .Where(s => string.Equals(s.Name, title, StringComparison.OrdinalIgnoreCase))
                 .Where(s => !_bindings.ContainsKey(s.Id))
@@ -113,7 +166,7 @@ public sealed class FakeLanBot : HttpMessageHandler
             {
                 created = true,
                 suggestionsBound = bindings.Count,
-                game = new { matchId, title, source = "gametown" },
+                game = new { matchId, title, url, boxArtUrl, source = "gametown" },
             }));
         }
 
@@ -142,7 +195,7 @@ public class LanIntegrationTests
 {
     private sealed record Suggestion(
         long RemoteId, string Name, string LanEventName, bool Played, Guid? GameId,
-        string? GameTitle, string? LinkSource, bool IsBound, bool BoundElsewhere,
+        string? GameTitle, string? LinkSource, bool IsBound,
         bool Dismissed, string? DeepLink);
 
     private sealed record LinkResult(bool Ok, string Reason);
@@ -168,7 +221,7 @@ public class LanIntegrationTests
     private sealed record BulkEntry(long RemoteId, string Name, bool Ok, string Reason);
 
     private sealed record BulkResult(
-        List<BulkEntry> Results, int Succeeded, int BoundElsewhere, int Failed, string? StoppedBecause);
+        List<BulkEntry> Results, int Succeeded, int Failed, string? StoppedBecause);
 
     private static async Task<RankedQueue> RankedAsync(HttpClient client, string query = "")
         => await client.GetFromJsonAsync<RankedQueue>($"/lan/suggestions/ranked{query}")
@@ -299,6 +352,29 @@ public class LanIntegrationTests
     }
 
     /// <summary>
+    /// A push sends GameTown's own canonical title, never the suggestion's raw text — the title we
+    /// send stopped being load-bearing for binding once a direct bind existed, and the bot's author
+    /// confirmed adoption-by-title was already case-insensitive, so there is no reason to send
+    /// anything but the library's own spelling. It also sends the deep link as <c>url</c>, and omits
+    /// <c>boxArtUrl</c> entirely (never an empty string) when the game has no cover.
+    /// </summary>
+    [Fact]
+    public async Task A_push_sends_the_canonical_title_and_the_deep_link_and_omits_missing_box_art()
+    {
+        var bot = new FakeLanBot().Suggest(3, "counter-strike 2");
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        var gameId = await AddGameAsync(admin, "Counter-Strike 2");
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        Assert.Equal("Counter-Strike 2", bot.TitleFor(gameId));
+        Assert.Equal($"http://gametown.test:5187/game/{gameId}", bot.UrlFor(gameId));
+        Assert.Null(bot.BoxArtUrlFor(gameId));
+    }
+
+    /// <summary>
     /// THE THRASH TEST, and the reason it syncs three times.
     ///
     /// Two suggestions normalise to the same game. Each gets its own binding — bindings are additive —
@@ -321,8 +397,8 @@ public class LanIntegrationTests
 
         await admin.PostAsync("/lan/sync", null);
 
-        // Both matched AND both bound: the bot binds each suggestion by its own name and never
-        // unbinds, so a game asked for under two spellings really does carry two working links.
+        // Both matched AND both bound: each suggestion is bound directly, and bindings at the far end
+        // are additive, so a game asked for under two spellings really does carry two working links.
         var matched = await SuggestionsAsync(admin, "matched");
         Assert.Equal(2, matched.Count);
         Assert.All(matched, s => Assert.Equal(gameId, s.GameId));
@@ -344,19 +420,13 @@ public class LanIntegrationTests
     }
 
     /// <summary>
-    /// A suggestion the crew already bound inside the bot cannot be claimed by GameTown, and the
-    /// screen must not pretend otherwise.
-    ///
-    /// The bot binds only suggestions that are currently UNBOUND, so the PUT lands (the catalogue
-    /// entry is written) while the suggestion keeps pointing at the crew's entry. Reporting that as a
-    /// successful link would show a green tick in GameTown for a link Discord does not have — which is
-    /// exactly the kind of quiet lie this codebase spends its comments guarding against.
-    ///
-    /// GameTown still records the GAME, because it genuinely knows what it is: the badge, the shelf
-    /// and the wishlist all read that rather than the binding.
+    /// Since Catalogue API v1.4.0, a suggestion the crew already bound inside the bot CAN be claimed
+    /// by GameTown — the direct-bind endpoint re-points an existing binding unconditionally, unlike
+    /// the old title-match side effect it replaces here. This used to be the one case GameTown could
+    /// record a game for but never actually link in Discord; it is now an ordinary successful link.
     /// </summary>
     [Fact]
-    public async Task Linking_a_suggestion_the_crew_already_bound_records_the_game_but_says_the_link_did_not_move()
+    public async Task Linking_a_suggestion_the_crew_already_bound_succeeds_and_repoints_it()
     {
         var bot = new FakeLanBot();
         using var app = new GameTownApp { LanBotHandler = bot };
@@ -374,22 +444,53 @@ public class LanIntegrationTests
         var result = await (await admin.PostAsJsonAsync("/lan/link", new { remoteId = 5L, gameId }))
             .Content.ReadFromJsonAsync<LinkResult>();
 
-        // A success, not a failure — but a different one, and the caller has to be able to tell.
         Assert.True(result!.Ok);
-        Assert.Equal("bound-elsewhere", result.Reason);
+        Assert.Equal("ok", result.Reason);
 
-        // The bot did not move it.
-        Assert.Equal(crewEntry, bot.BindingFor(5));
+        // Re-pointed away from the crew's own entry, to the GameTown game.
+        Assert.Equal(gameId, bot.BindingFor(5));
 
         var matched = Assert.Single(await SuggestionsAsync(admin, "matched"));
         Assert.Equal(gameId, matched.GameId);
-        Assert.False(matched.IsBound);
-        Assert.True(matched.BoundElsewhere);
+        Assert.True(matched.IsBound);
 
         // And the game still carries the suggestion everywhere a visitor sees it.
         using var anonymous = app.CreateBrowser();
         var games = await anonymous.GetFromJsonAsync<List<Game>>("/GTGames/getPaged/1/50");
         Assert.Equal(["HCP #37 (2026)"], games!.Single().SuggestedFor);
+    }
+
+    /// <summary>
+    /// The genuinely unconditional case ask #1 was about: re-pointing a suggestion away from a
+    /// DIFFERENT GameTown game it was already bound to, not just from the crew's own entry.
+    /// </summary>
+    [Fact]
+    public async Task Linking_a_suggestion_already_bound_to_a_different_game_repoints_it()
+    {
+        var bot = new FakeLanBot().Suggest(7, "ambiguous title");
+        using var app = new GameTownApp { LanBotHandler = bot };
+        using var admin = await app.SignInAsAdminAsync();
+
+        var first = await AddGameAsync(admin, "First Game");
+        var second = await AddGameAsync(admin, "Second Game");
+        await ConfigureAsync(admin);
+        await admin.PostAsync("/lan/sync", null);
+
+        var firstLink = await (await admin.PostAsJsonAsync("/lan/link", new { remoteId = 7L, gameId = first }))
+            .Content.ReadFromJsonAsync<LinkResult>();
+        Assert.True(firstLink!.Ok);
+        Assert.Equal(first, bot.BindingFor(7));
+
+        var secondLink = await (await admin.PostAsJsonAsync("/lan/link", new { remoteId = 7L, gameId = second }))
+            .Content.ReadFromJsonAsync<LinkResult>();
+
+        Assert.True(secondLink!.Ok);
+        Assert.Equal("ok", secondLink.Reason);
+        Assert.Equal(second, bot.BindingFor(7));
+
+        var matched = Assert.Single(await SuggestionsAsync(admin, "matched"));
+        Assert.Equal(second, matched.GameId);
+        Assert.True(matched.IsBound);
     }
 
     /// <summary>
@@ -493,8 +594,9 @@ public class LanIntegrationTests
     }
 
     /// <summary>
-    /// Unlinking in GameTown, unlike a delete at the far end, is permanent — it clears the MATCH and
-    /// not just the binding, so the push phase has nothing to re-assert.
+    /// Unlinking in GameTown clears the MATCH, not just the bot's binding, so <c>AutoMatchBlocked</c>
+    /// keeps the push phase from re-asserting it on the next sync — even though the catalogue entry
+    /// itself (unlike the binding) survives an unlink now.
     /// </summary>
     [Fact]
     public async Task An_unlinked_suggestion_is_not_pushed_again_by_the_next_sync()
@@ -512,16 +614,17 @@ public class LanIntegrationTests
         await admin.PostAsync("/lan/sync", null);
 
         Assert.Null(bot.BindingFor(4));
-        Assert.False(bot.HasCatalogueEntry(gameId));
+        Assert.True(bot.HasCatalogueEntry(gameId));
         Assert.Single(await SuggestionsAsync(admin, "unmatched"));
     }
 
     /// <summary>
-    /// An unlink must never delete a catalogue entry the crew made by hand inside the bot. PushedAtUtc
-    /// is what tells the two apart.
+    /// Unlinking an adopted binding (LinkSource "remote") now clears it at the bot too — a per-
+    /// suggestion unbind is safe regardless of who created the underlying catalogue entry, unlike the
+    /// old whole-entry delete this replaces. The entry itself, and anything else bound to it, survive.
     /// </summary>
     [Fact]
-    public async Task Unlinking_an_adopted_binding_leaves_the_crews_entry_alone()
+    public async Task Unlinking_an_adopted_binding_clears_it_but_leaves_the_crews_entry_alone()
     {
         // The bot is created BEFORE the app, because the handler is installed while the host is
         // built — assigning LanBotHandler after the first request has no effect. It is filled in
@@ -544,12 +647,18 @@ public class LanIntegrationTests
             .Content.ReadFromJsonAsync<LinkResult>();
 
         Assert.True(result!.Ok);
+
+        // The whole-entry delete is never called...
         Assert.Equal(0, bot.DeleteCount);
         Assert.True(bot.HasCatalogueEntry(gameId));
+
+        // ...but unlike before this API version, the suggestion's own binding IS cleared at the bot.
+        Assert.Equal(1, bot.MatchDeleteCount);
+        Assert.Null(bot.BindingFor(6));
     }
 
     [Fact]
-    public async Task Unlinking_what_we_pushed_deletes_the_catalogue_entry()
+    public async Task Unlinking_clears_the_suggestions_match_without_touching_the_catalogue_entry()
     {
         var bot = new FakeLanBot().Suggest(4, "Wardogs");
         using var app = new GameTownApp { LanBotHandler = bot };
@@ -563,8 +672,9 @@ public class LanIntegrationTests
             .Content.ReadFromJsonAsync<LinkResult>();
 
         Assert.True(result!.Ok);
-        Assert.Equal(1, bot.DeleteCount);
-        Assert.False(bot.HasCatalogueEntry(gameId));
+        Assert.Equal(0, bot.DeleteCount);
+        Assert.Equal(1, bot.MatchDeleteCount);
+        Assert.True(bot.HasCatalogueEntry(gameId));
         Assert.Null(bot.BindingFor(4));
     }
 

@@ -20,16 +20,20 @@ namespace API.Services.Lan;
 /// re-asserting local state, which is what makes this self-healing when the crew changes something on
 /// their side instead of slowly drifting out of agreement with the system it exists to mirror.
 ///
-/// HOW THE BOT ACTUALLY BINDS, verified against the live one rather than inferred from its API — all
-/// three of these shape the code below and none is obvious from the OpenAPI document:
+/// HOW THE BOT ACTUALLY BINDS, per its own OpenAPI document (Catalogue API v1.4.0):
 ///
-///  1. A PUT replaces the catalogue entry's TITLE, and the entry holds exactly one.
-///  2. It then binds every suggestion whose name equals that title AND IS CURRENTLY UNBOUND.
-///  3. It never unbinds and never re-points anything. Only DELETE removes bindings.
+///  1. A game push (<c>PUT /games/{matchId}</c>) writes the entry's title/url/boxArtUrl and, as a
+///     side effect, adopts any currently-unmatched suggestion whose name case-insensitively equals
+///     the pushed title. It never overwrites an existing match.
+///  2. A direct bind (<c>PUT /suggestions/{id}/match</c>) points one suggestion at a matchId
+///     unconditionally — re-pointing an already-bound suggestion succeeds, last-writer-wins. The
+///     matchId must already have a catalogue row.
+///  3. A direct unbind (<c>DELETE /suggestions/{id}/match</c>) clears just that suggestion's match,
+///     leaving the catalogue entry and every other suggestion bound to it untouched.
 ///
-/// So several suggestions can share one game (2), a suggestion the crew already bound cannot be
-/// claimed by GameTown at all (3), and re-pushing is pointless as well as harmful — it would leave
-/// the catalogue title flip-flopping between two names forever (1).
+/// So several suggestions can share one game (1), and — unlike before this API version — a
+/// suggestion the crew already bound elsewhere CAN be claimed by GameTown, by calling (2) directly
+/// rather than relying on (1)'s name-matching side effect.
 /// </summary>
 public class LanSuggestionService(
     DatabaseContext context,
@@ -228,46 +232,55 @@ public class LanSuggestionService(
     }
 
     /// <summary>
-    /// Pushes every matched-but-unbound suggestion, one PUT each.
+    /// Pushes every matched-but-unbound suggestion: a game push to ensure the catalogue entry exists
+    /// and is current, then a direct bind.
     ///
-    /// EACH SUGGESTION IS PUSHED AT MOST ONCE, and that is the rule the bot's one-title-per-entry
-    /// limit actually demands. Bindings at the far end are additive, so two suggestions for one game
-    /// each get their own and both keep it; what a repeat push would change is the catalogue entry's
-    /// TITLE, which would then flip between the two names on every sync forever — a Discord entry
-    /// whose label keeps changing, logging nothing, visible only to someone who looked twice.
+    /// EACH SUGGESTION IS PUSHED AT MOST ONCE — enforced by the <c>RemoteMatchId == null</c> filter
+    /// below, not by any other flag. Bindings at the far end are additive, so two suggestions for one
+    /// game each get their own bind and both keep it; the game push that precedes a bind is harmless
+    /// to repeat for a second suggestion sharing the same game, since it only ever updates that one
+    /// entry's title/url/boxArtUrl to the same values.
     ///
-    /// Because nothing is re-pushed, a steady state costs one GET per interval and no writes at all
-    /// against the crew's system — which matters when it is someone else's service on a timer.
+    /// Because nothing is re-pushed once bound, a steady state costs one GET per interval and no
+    /// writes at all against the crew's system — which matters when it is someone else's service on a
+    /// timer.
     /// </summary>
     private async Task<int> PushPendingAsync(CancellationToken cancellationToken)
     {
         var pending = await context.LanSuggestions
+            .Include(s => s.Game)
             .Where(s => !s.Dismissed && s.GameId != null && s.RemoteMatchId == null)
             .OrderBy(s => s.RemoteId)
             .ToListAsync(cancellationToken);
 
+        var publicBaseUrl = await settings.GetPublicBaseUrlAsync();
         var bound = 0;
 
         foreach (var row in pending)
         {
             var gameId = row.GameId!.Value;
-            var (ok, reason, boundByPut) = await bot.UpsertGameAsync(gameId, row.Name, cancellationToken);
+            var game = row.Game!;
 
-            if (ok && boundByPut == 0)
-            {
-                // The entry was written but this suggestion was not bound to it — the bot only binds
-                // suggestions that are currently unbound, and something bound this one since the pull
-                // at the start of this run. Leave the row alone; the next reconcile reports the truth.
-                continue;
-            }
+            var (upserted, upsertReason, _) = await bot.UpsertGameAsync(
+                gameId, game.Title, DeepLink(gameId, publicBaseUrl),
+                BoxArtAbsoluteUrl(game.BoxArtUrl, publicBaseUrl), cancellationToken);
 
-            if (!ok)
+            if (!upserted)
             {
                 // Giving up rather than working through the rest. All three are about the far end
                 // rather than about this row, so the remaining calls would fail the same way — and
                 // rate-limited in particular means "stop", not "try harder". The rows are left
                 // untouched and the next run picks them up.
-                if (reason is "rate-limited" or "unreachable" or "not-configured") break;
+                if (upsertReason is "rate-limited" or "unreachable" or "not-configured") break;
+
+                continue;
+            }
+
+            var (matched, matchReason) = await bot.MatchSuggestionAsync(row.RemoteId, gameId, cancellationToken);
+
+            if (!matched)
+            {
+                if (matchReason is "rate-limited" or "unreachable" or "not-configured") break;
 
                 continue;
             }
@@ -282,15 +295,15 @@ public class LanSuggestionService(
     }
 
     /// <summary>
-    /// Links a suggestion to a library entry by hand, pushing it to the bot.
+    /// Links a suggestion to a library entry by hand: pushes the catalogue entry, then binds directly.
     ///
-    /// Linking a game another suggestion already points at is fine and needs no confirmation —
-    /// bindings at the far end are additive, so the other one keeps working. The only thing that
-    /// changes is which name the bot's catalogue entry displays.
+    /// The direct bind is unconditional, so linking a suggestion that already points somewhere else —
+    /// the crew's own catalogue entry, or a different GameTown game — succeeds and re-points it. That
+    /// is deliberate: this is a human decision the bot has no stronger claim to override.
     ///
-    /// The local row is only updated when the push succeeded. Recording a link we could not push would
-    /// make GameTown claim something about the bot that is not true, and the screen would show a green
-    /// tick for a Discord link that does not exist.
+    /// The local row is only updated when both calls succeeded. Recording a link we could not push
+    /// would make GameTown claim something about the bot that is not true, and the screen would show a
+    /// green tick for a Discord link that does not exist.
     /// </summary>
     public async Task<LanLinkResult> LinkAsync(
         long remoteId, Guid gameId, CancellationToken cancellationToken = default)
@@ -306,30 +319,15 @@ public class LanSuggestionService(
         row.LinkSource = "manual";
         row.AutoMatchBlocked = false;
 
-        // The bot will not MOVE a binding — verified against the live one: a PUT binds only the
-        // suggestions that are currently unbound, and answers suggestionsBound=0 otherwise. So when
-        // this suggestion already points somewhere else there is nothing to send, and claiming
-        // otherwise would show a link in GameTown that Discord does not have.
-        //
-        // The local match is still recorded: GameTown genuinely knows which game this is, and the
-        // badge, the shelf and the wishlist all read that rather than the binding.
-        if (row.RemoteMatchId is { } existing && existing != gameId)
-        {
-            await context.SaveChangesAsync(cancellationToken);
-            return new LanLinkResult { Ok = true, Reason = "bound-elsewhere" };
-        }
+        var publicBaseUrl = await settings.GetPublicBaseUrlAsync();
 
-        var (ok, reason, bound) = await bot.UpsertGameAsync(gameId, row.Name, cancellationToken);
-        if (!ok) return Failed(reason);
+        var (upserted, upsertReason, _) = await bot.UpsertGameAsync(
+            gameId, game.Title, DeepLink(gameId, publicBaseUrl),
+            BoxArtAbsoluteUrl(game.BoxArtUrl, publicBaseUrl), cancellationToken);
+        if (!upserted) return Failed(upsertReason);
 
-        // suggestionsBound is the bot's own report of what the PUT achieved. Zero means it bound
-        // nothing — someone bound this suggestion between the last sync and now — so the entry exists
-        // but this suggestion is not on it, and saying so is the only honest answer.
-        if (bound == 0 && row.RemoteMatchId != gameId)
-        {
-            await context.SaveChangesAsync(cancellationToken);
-            return new LanLinkResult { Ok = true, Reason = "bound-elsewhere" };
-        }
+        var (matched, matchReason) = await bot.MatchSuggestionAsync(remoteId, gameId, cancellationToken);
+        if (!matched) return Failed(matchReason);
 
         row.RemoteMatchId = gameId;
         row.PushedAtUtc = DateTime.UtcNow;
@@ -339,22 +337,22 @@ public class LanSuggestionService(
     }
 
     /// <summary>
-    /// Undoes a link, deleting the catalogue entry when GameTown was the one that created it.
+    /// Undoes a link, clearing this suggestion's own match at the bot without touching the catalogue
+    /// entry or any other suggestion bound to it.
     ///
-    /// <c>PushedAtUtc</c> is what makes that safe. The catalogue also holds entries the crew made by
-    /// hand inside the bot, and an unlink here must never delete one of those — so a row we merely
-    /// adopted (LinkSource "remote") releases locally and leaves the bot alone.
+    /// The GameTown-created vs. adopted (LinkSource "remote") distinction that used to gate a
+    /// whole-entry delete no longer applies — a per-suggestion unbind is safe in every case.
     /// </summary>
     public async Task<LanLinkResult> UnlinkAsync(long remoteId, CancellationToken cancellationToken = default)
     {
         var row = await context.LanSuggestions.FirstOrDefaultAsync(s => s.RemoteId == remoteId, cancellationToken);
         if (row is null) return Failed("not-found");
 
-        if (row.RemoteMatchId is { } matchId && row.PushedAtUtc is not null)
+        if (row.RemoteMatchId is not null)
         {
-            var (ok, reason) = await bot.DeleteGameAsync(matchId, cancellationToken);
+            var (ok, reason) = await bot.UnmatchSuggestionAsync(remoteId, cancellationToken);
 
-            // Left exactly as it was. Releasing locally while the entry survives at the far end would
+            // Left exactly as it was. Releasing locally while the bot still reports it bound would
             // leave a Discord link nothing in GameTown admits to.
             if (!ok) return Failed(reason);
         }
@@ -417,8 +415,8 @@ public class LanSuggestionService(
 
     /// <summary>
     /// One row, on the wire. Shared by the tab listing and the ranked wishlist so the two cannot
-    /// drift — <c>IsBound</c> and <c>BoundElsewhere</c> in particular are easy to derive slightly
-    /// differently in a second place and impossible to notice when they are.
+    /// drift — <c>IsBound</c> is easy to derive slightly differently in a second place and impossible
+    /// to notice when it is.
     /// </summary>
     private static LanSuggestionContract ToContract(LanSuggestion row, string? publicBaseUrl)
         => new()
@@ -433,13 +431,30 @@ public class LanSuggestionService(
             // "The bot points at THIS game", not "the bot points at something". A suggestion the crew
             // bound to their own catalogue entry is bound, and not to anything GameTown can link to.
             IsBound = row.RemoteMatchId is not null && row.RemoteMatchId == row.GameId,
-            BoundElsewhere = row.RemoteMatchId is not null && row.RemoteMatchId != row.GameId,
             Dismissed = row.Dismissed,
-            DeepLink = publicBaseUrl is not null && row.GameId is not null
-                ? $"{publicBaseUrl}/game/{row.GameId.Value}"
-                : null,
+            DeepLink = DeepLink(row.GameId, publicBaseUrl),
             FirstSeenUtc = row.FirstSeenUtc,
         };
+
+    /// <summary>
+    /// The deep link a matched suggestion should point at — both what the screen shows an operator
+    /// and, since 1.4.0, the <c>url</c> pushed to the bot's catalogue entry for that game.
+    /// </summary>
+    private static string? DeepLink(Guid? gameId, string? publicBaseUrl)
+        => publicBaseUrl is not null && gameId is not null
+            ? $"{publicBaseUrl}/game/{gameId.Value}"
+            : null;
+
+    /// <summary>
+    /// The absolute cover-art URL pushed to the bot, built from the locally re-hosted
+    /// "/media/{guid}.ext" path — see <c>MediaStore</c>. Discord fetches embed images from the
+    /// internet, so this is null (and therefore omitted, clearing any previously-pushed cover) unless
+    /// both a public address is configured and the game has box art.
+    /// </summary>
+    private static string? BoxArtAbsoluteUrl(string? relativeBoxArtUrl, string? publicBaseUrl)
+        => publicBaseUrl is not null && !string.IsNullOrEmpty(relativeBoxArtUrl)
+            ? $"{publicBaseUrl}{relativeBoxArtUrl}"
+            : null;
 
     /// <summary>
     /// Library entries offered as a match for one suggestion, best first.
@@ -628,8 +643,8 @@ public class LanSuggestionService(
     ///
     /// The pacing lives here rather than in the browser because these are outbound calls to a
     /// rate-limited bot and a page can be closed halfway through a loop. Each row still goes through
-    /// <see cref="LinkAsync"/>, so every rule about pushing — at most once, never re-pointed, never
-    /// re-titled — holds exactly as it does for a single link.
+    /// <see cref="LinkAsync"/>, so every rule about linking — including the unconditional re-point —
+    /// holds exactly as it does for a single link.
     /// </summary>
     public async Task<LanBulkResult> LinkManyAsync(
         IEnumerable<LanLinkRequest> links, CancellationToken cancellationToken = default)
@@ -656,7 +671,6 @@ public class LanSuggestionService(
             if (outcome.Ok)
             {
                 result.Succeeded++;
-                if (outcome.Reason == "bound-elsewhere") result.BoundElsewhere++;
                 continue;
             }
 

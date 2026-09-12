@@ -36,21 +36,9 @@ public class LanSuggestionContract
     ///
     /// Deliberately not "bound to anything": a suggestion the crew linked to their own catalogue
     /// entry inside the bot is bound, but not to a GameTown game, and reporting that as a working
-    /// link would be a green tick for something Discord does not have. See
-    /// <see cref="BoundElsewhere"/> for that case.
+    /// link would be a green tick for something Discord does not have.
     /// </summary>
     public bool IsBound { get; set; }
-
-    /// <summary>
-    /// The bot has this suggestion pointing at something that is not <see cref="GameId"/> — usually a
-    /// catalogue entry the crew made by hand.
-    ///
-    /// It matters because it is not fixable from here: the bot binds only suggestions that are
-    /// currently UNBOUND and will not move an existing binding, so GameTown can record what the game
-    /// is and can do nothing about the link. The screen has to say that rather than show a link as
-    /// pending forever.
-    /// </summary>
-    public bool BoundElsewhere { get; set; }
 
     /// <summary>"Nobody is going to upload this" — keeps the wishlist a list of work.</summary>
     public bool Dismissed { get; set; }
@@ -178,22 +166,13 @@ public class LanBulkDismissRequest
     public bool Dismissed { get; set; }
 }
 
-/// <summary>
-/// What a bulk operation did, per row.
-///
-/// Per row rather than one overall verdict because the outcomes genuinely differ: some rows come back
-/// "bound-elsewhere", which is a success that puts no link in Discord, and collapsing that into "12
-/// linked" would claim twelve Discord links when there are ten.
-/// </summary>
+/// <summary>What a bulk operation did, per row.</summary>
 public class LanBulkResult
 {
     public List<LanBulkEntry> Results { get; set; } = [];
 
-    /// <summary>Rows where <see cref="LanLinkResult.Ok"/> came back true, whatever the reason code.</summary>
+    /// <summary>Rows where <see cref="LanLinkResult.Ok"/> came back true.</summary>
     public int Succeeded { get; set; }
-
-    /// <summary>Rows recorded locally that the bot would not bind. Worth saying out loud.</summary>
-    public int BoundElsewhere { get; set; }
 
     public int Failed { get; set; }
 
@@ -240,13 +219,12 @@ public class LanLinkResult
     public bool Ok { get; set; }
 
     /// <summary>
-    /// "ok", "bound-elsewhere", "not-configured", "rejected", "rate-limited", "unreachable" or
+    /// "ok", "game-not-found", "not-configured", "rejected", "rate-limited", "unreachable" or
     /// "not-found".
     ///
-    /// "bound-elsewhere" comes back with <see cref="Ok"/> TRUE and is not a failure: GameTown recorded
-    /// the game, but the bot already had that suggestion pointing at something else and does not move
-    /// an existing binding. The caller has to say so — it is the one success that puts no link in
-    /// Discord.
+    /// "game-not-found" is the bot's 400 on the direct-bind call — the catalogue entry has to exist
+    /// before a suggestion can be pointed at it. GameTown always pushes the game first, so this should
+    /// only ever surface a genuine bug rather than a normal outcome.
     /// </summary>
     public string Reason { get; set; } = string.Empty;
 }

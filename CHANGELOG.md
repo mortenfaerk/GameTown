@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.6.0] - 2026-09-11
+## [0.6.0] - 2026-09-12
 - Bump release version to 0.6.0.
 - **LAN Discord bot integration.** GameTown now talks to the LAN's game-suggestion bot: a background
   service polls it on a configurable interval, matches suggestions against the library, and pushes
@@ -22,11 +22,29 @@ All notable changes to this project will be documented in this file.
     Deleting a game does not touch the bot; the suggestion simply returns to the wishlist.
   - Migration 008 adds the `LanSuggestion` table. Schema is now at version 8. The installer needs no
     change.
-- Settings: added `PublicBaseUrl`, for links from outside this install back into it.
+  - **Ranked wishlist.** `GET /lan/suggestions/ranked` scores the whole unmatched queue against the
+    library in one pass and bands each row strong/ambiguous/weak by score and margin, so the screen
+    shows the confident matches, the genuine judgement calls, and the hopeless rows separately instead
+    of one flat list — weak rows carry no candidates at all. Nothing links on a single click: a choice
+    is staged, and "Link selected" / "Dismiss selected" apply to a whole band at once, sequenced on the
+    server since the bot is rate-limited. `LibraryGamePicker` is the search fallback for suggestions
+    the ranking misses entirely, such as Discord abbreviations ("CS2", "DRG"). The sidebar badge and
+    the screen's own tab badge now share one count (`LanCountState`) so the two cannot disagree.
+  - Contributors can refresh the wishlist and link/unlink suggestions themselves, not just admins;
+    reading the sync *status* remains Admin-only, since that reports on configuration rather than
+    on-going wishlist triage.
+  - **Catalogue API v1.4.0.** The bot added direct per-suggestion binding and unbinding
+    (`PUT`/`DELETE /suggestions/{id}/match`), which replaces the old title-match-only binding entirely:
+    a suggestion already bound elsewhere — in Discord, or to a different GameTown game — can now be
+    claimed directly instead of only being recorded locally with no working Discord link. A push now
+    also sends the game's own canonical title, deep link and cover art (`url`/`boxArtUrl`), giving the
+    `PublicBaseUrl` setting its first real consumer.
+- Settings: added `PublicBaseUrl`, for links from outside this install back into it — since Catalogue
+  API v1.4.0, also the source of the deep link and cover art every LAN bot push carries.
 - Security notes: two new accepted risks — outbound requests to an admin-configured address (the LAN
   bot client deliberately does not use the image fetcher's private-address refusal), and player-typed
   Discord text being rendered by GameTown.
-- Tests: 256, up from 207.
+- Tests: 285, up from 207.
 
 ## [0.5.1] - 2026-08-25
 - Bump release version to 0.5.1

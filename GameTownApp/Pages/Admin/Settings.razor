@@ -434,9 +434,10 @@ else if (Tab == "lanbot")
         <div class="card-body">
             <h5 class="card-title">This server's address</h5>
             <p class="text-secondary small">
-                Where players reach GameTown from, used for the links the bot points at a game. Nothing
-                inside GameTown needs it &mdash; the app works out its own address from wherever it was
-                loaded &mdash; so this exists purely for whatever links in from outside.
+                Where players reach GameTown from. GameTown itself works out its own address from
+                wherever it was loaded, so this exists for what links in from outside &mdash; the LAN
+                bot in particular, which gets this as the <code>url</code> and cover art on every game
+                it's told about, and uses it to build the Discord links and embed images it shows.
             </p>
 
             <div class="row g-2 align-items-end">

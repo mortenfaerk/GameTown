@@ -495,16 +495,6 @@ else
                                         {
                                             <span class="badge bg-success">Linked in Discord</span>
                                         }
-                                        else if (suggestion.BoundElsewhere)
-                                        {
-                                            @* Not fixable from here, so it must not read as pending work: the bot
-                                               only binds suggestions that are currently unbound and will not move
-                                               this one. Someone would have to clear it inside the bot first. *@
-                                            <span class="badge bg-warning text-dark"
-                                                  title="The bot has this suggestion pointing at its own entry and will not move it">
-                                                Linked elsewhere in the bot
-                                            </span>
-                                        }
                                         else
                                         {
                                             <span class="badge bg-secondary"
@@ -544,9 +534,9 @@ else
         @if (Tab == "matched" && Suggestions.Any(s => s.DeepLink is not null))
         {
             <p class="gt-muted small">
-                The bot builds its own links from the match id, which is the game's id in GameTown &mdash;
-                for example <code>@Suggestions.First(s => s.DeepLink is not null).DeepLink</code>. Set this
-                server's public address under Administer &rarr; Settings if that link looks wrong.
+                GameTown pushes this deep link and the game's cover art straight to the bot's catalogue
+                entry &mdash; for example <code>@Suggestions.First(s => s.DeepLink is not null).DeepLink</code>.
+                Set this server's public address under Administer &rarr; Settings if that link looks wrong.
             </p>
         }
     }
@@ -863,14 +853,7 @@ else
 
             if (result.Ok)
             {
-                // "ok" and "bound-elsewhere" are both successes for GameTown — the game is recorded
-                // either way — but only one of them put a link in Discord, and saying so is the
-                // difference between a screen that is trusted and one that is not.
-                Record(row.Suggestion.RemoteId, result.Reason == "bound-elsewhere"
-                    ? $"Recorded as {pick.Title}, but the bot already has this suggestion pointing at "
-                      + "its own entry and will not move it."
-                    : $"Linked to {pick.Title}.", ok: true, undo: null);
-
+                Record(row.Suggestion.RemoteId, $"Linked to {pick.Title}.", ok: true, undo: null);
                 Counts.Adjust(-1);
             }
             else
@@ -918,11 +901,7 @@ else
                 var title = Staged.TryGetValue(entry.RemoteId, out var pick) ? pick.Title : "the game";
 
                 Record(entry.RemoteId,
-                    entry.Ok
-                        ? entry.Reason == "bound-elsewhere"
-                            ? $"Recorded as {title}; the bot would not move its existing link."
-                            : $"Linked to {title}."
-                        : DescribeReason(entry.Reason),
+                    entry.Ok ? $"Linked to {title}." : DescribeReason(entry.Reason),
                     ok: entry.Ok, undo: null);
 
                 if (entry.Ok) Counts.Adjust(-1);
@@ -951,18 +930,7 @@ else
     {
         if (result.Succeeded == 0) return "Nothing was linked.";
 
-        var linked = result.Succeeded - result.BoundElsewhere;
-        var text = $"Linked {linked} suggestion{(linked == 1 ? "" : "s")}.";
-
-        // Stated separately because it is the one success that puts no link in Discord, and folding
-        // it into the total would claim links that are not there.
-        if (result.BoundElsewhere > 0)
-        {
-            text += $" {result.BoundElsewhere} more {(result.BoundElsewhere == 1 ? "was" : "were")} "
-                  + "recorded here, but the bot already had them pointing elsewhere and will not move them.";
-        }
-
-        return text;
+        return $"Linked {result.Succeeded} suggestion{(result.Succeeded == 1 ? "" : "s")}.";
     }
 
     /// <summary>
@@ -1218,6 +1186,7 @@ else
     {
         "not-configured" => "The LAN bot is not configured. An administrator can set it up under Administer → Settings.",
         "not-found" => "That suggestion or game no longer exists. Reload the page.",
+        "game-not-found" => "The bot doesn't have this game yet. Try syncing and linking again.",
         "rejected" => "The LAN bot rejected our credentials.",
         "rate-limited" => "The LAN bot is rate-limiting us. Try again in a minute.",
         "unreachable" => "The LAN bot could not be reached, so nothing was changed.",
