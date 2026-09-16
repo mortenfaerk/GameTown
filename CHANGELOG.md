@@ -1,6 +1,16 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.6.1] - 2026-09-16
+- Bump release version to 0.6.1.
+- Fixed: deleting a user with any role assigned failed with "A database error occurred while
+  deleting the user." The user↔role join ("GameTownUsers_Roles") never declared `ON DELETE` on
+  its user-side foreign key, and the scaffolded model tried to null out the join row instead of
+  deleting it — impossible, since those columns are the join's own primary key. Migration 009
+  adds `ON DELETE CASCADE` on the user side only; deleting a role still refuses while it's in use,
+  unchanged. Schema is now at version 9. The installer needs no change.
+- Tests: 287, up from 285.
+
 ## [0.6.0] - 2026-09-12
 - Bump release version to 0.6.0.
 - **LAN Discord bot integration.** GameTown now talks to the LAN's game-suggestion bot: a background

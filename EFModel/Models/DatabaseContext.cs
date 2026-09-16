@@ -123,9 +123,7 @@ public partial class DatabaseContext : DbContext
                     r => r.HasOne<GameTownRole>().WithMany()
                         .HasForeignKey("ApiroleId")
                         .OnDelete(DeleteBehavior.ClientSetNull),
-                    l => l.HasOne<GameTownUser>().WithMany()
-                        .HasForeignKey("ApiuserId")
-                        .OnDelete(DeleteBehavior.ClientSetNull),
+                    l => l.HasOne<GameTownUser>().WithMany().HasForeignKey("ApiuserId"),
                     j =>
                     {
                         j.HasKey("ApiuserId", "ApiroleId");
@@ -143,7 +141,7 @@ public partial class DatabaseContext : DbContext
         {
             entity.ToTable("LanSuggestion");
 
-            entity.HasIndex(e => e.RemoteMatchId, "IX_LanSuggestion_Bound").IsUnique();
+            entity.HasIndex(e => e.RemoteMatchId, "IX_LanSuggestion_Bound");
 
             entity.HasIndex(e => e.GameId, "IX_LanSuggestion_GameId");
 
