@@ -305,6 +305,37 @@ byte for byte.
 event names to anyone who can reach the host, which is the same audience that can already see the
 filtered shelf. Worth knowing before an event name is used to carry anything private.
 
+### 12. An admin can publish the API description to the LAN
+
+The Scalar UI and the OpenAPI document used to be mapped only in Development, so on the appliance
+they did not exist. The `ApiDocsEnabled` setting makes them reachable in any environment, anonymously,
+to anyone who can reach the host — which on this appliance means everyone on the LAN.
+
+What is exposed is the API's **shape**: every route, its verb, its parameters and its request and
+response schemas. Not its contents. Every endpoint the document describes keeps exactly the
+authorization it had before, including the `FallbackPolicy` that protects anything which did not
+explicitly opt out, so the document is a map of doors rather than a key to any of them.
+`SettingsTests.Hosted_documentation_is_readable_without_signing_in_but_opens_nothing` pins both
+halves together, which is the pairing that makes this acceptable.
+
+Three things bound it:
+
+- **It is off by default**, and an upgrade does not change that — the coded default is `false` and
+  nothing writes the row until an admin saves the toggle. An install that takes this build gains no
+  surface until somebody asks for it.
+- **Only an Admin can turn it on**, through the `Admin`-only `PATCH /settings`.
+- **It is reversible in place.** The gate reads the setting per request, so switching it off takes
+  effect on the next request with no restart and no deployment.
+
+Anonymous rather than Admin-gated is deliberate. "Accessible to the LAN" is the whole point of the
+setting, and an authenticated docs route would hand a signed-out visitor a bare 401 body — cookie
+auth returns a status rather than redirecting to a login page (see "Auth mechanics"), so there would
+be nothing on screen to act on.
+
+The residual risk is reconnaissance: an attacker already on the LAN learns the API's shape without
+having to guess it. That is worth weighing against the alternative it replaced, which was operators
+having no documentation at all and no way to get it without a rebuild.
+
 ---
 
 ## Invariants — things that look harmless to change and are not
@@ -323,9 +354,10 @@ Two consequences worth holding onto:
 - The intentionally public surface must stay explicitly `.AllowAnonymous()`:
   `/auth/*`, `GET /GTGames/{id}`, `GET /GTGames/download/{id}`, `GET /GTGames/getPaged/{page}/{pageSize}`,
   `GET /GTGames/search/`, the `MapFallbackToFile` SPA shell, the `/setup` page (risk 5) and the
-  Development-only OpenAPI/Scalar endpoints. `Tests/GameTown.Tests/AuthorizationTests.cs` covers a
-  sample of it — the paged list, search, `/auth/me` and the shell — not the whole list, so adding a
-  route here is not the same as having it tested.
+  OpenAPI/Scalar documentation endpoints (risk 12 — no longer Development-only, but off unless an
+  admin turns them on). `Tests/GameTown.Tests/AuthorizationTests.cs` covers a
+  sample of it — the paged list, search, `/auth/me`, the shell, and the documentation endpoints once
+  enabled — not the whole list, so adding a route here is not the same as having it tested.
 
 ### Middleware order in `API/Program.cs`
 

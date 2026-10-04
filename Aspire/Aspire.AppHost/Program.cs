@@ -39,8 +39,11 @@ builder.AddProject<Projects.API>("gametown", launchProfileName: "https")
             DisplayOrder = 200
         });
 
-        // Scalar is mapped only in Development (API/Startup/OpenApiConfig.cs), which is the only
-        // environment the AppHost launches, so this link is always live here.
+        // Scalar is mapped in every environment now, but gated on the ApiDocsEnabled setting
+        // (API/Startup/OpenApiConfig.cs), which is off by default and governs Development too. So
+        // this link 404s on a fresh database until the toggle in Administer -> Settings -> API docs
+        // is saved — it is still worth listing, because that is where an operator goes looking for
+        // the docs and a 404 at a known address is a better answer than no address at all.
         context.Urls.Add(new ResourceUrlAnnotation
         {
             Url = $"{root}/scalar/v1",

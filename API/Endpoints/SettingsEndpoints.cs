@@ -85,6 +85,7 @@ public static class SettingsEndpoints
             LanBotApiKeyMasked = Mask(lanBotApiKey),
             LanBotSyncIntervalMinutes = await settings.GetLanBotSyncIntervalMinutesAsync(),
             PublicBaseUrl = await settings.GetPublicBaseUrlAsync() ?? string.Empty,
+            ApiDocsEnabled = await settings.GetApiDocsEnabledAsync(),
             AllowedFileTypes = [.. await settings.GetAllowedFileTypesAsync()],
             MaxUploadSizeMb = await settings.GetMaxUploadSizeMbAsync(),
         };
@@ -236,6 +237,19 @@ public static class SettingsEndpoints
             // this" should not be indistinguishable in the database.
             await settings.SetAsync(SettingsService.MaxUploadSizeMbKey,
                 maxUploadSizeMb.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (request.ApiDocsEnabled is { } apiDocsEnabled)
+        {
+            // Stored explicitly in both directions, including false, on the same reasoning as
+            // MaxUploadSizeMb above: "an admin turned the documentation off" and "nobody has ever
+            // touched this" should not look identical in the database.
+            //
+            // Written as "false" rather than as a blank, because SetAsync treats blank as "delete
+            // the row and go back to the coded default" — which would make switching the docs off
+            // indistinguishable from never having configured them.
+            await settings.SetAsync(SettingsService.ApiDocsEnabledKey,
+                apiDocsEnabled ? "true" : "false");
         }
 
         return Results.Ok(await BuildContract(settings, relink));

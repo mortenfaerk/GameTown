@@ -108,4 +108,44 @@ public class AuthorizationTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
     }
+
+    /// <summary>
+    /// The API documentation is part of the intentionally-anonymous surface, so it belongs in this
+    /// file's matrix — but only once an admin has turned it on.
+    ///
+    /// It cannot join <see cref="AnonymousRoutes"/>, which asserts against a default install: these
+    /// routes are off by default and answer 404 until the ApiDocsEnabled setting is saved. That is
+    /// the point of the setting, and SettingsTests owns it (see
+    /// <c>SettingsTests.Api_documentation_is_off_by_default</c> and the three tests after it).
+    ///
+    /// What this test adds is the authorization claim specifically: while hosted, the docs are
+    /// readable with no cookie, and turning them on opens nothing else. Anonymous rather than
+    /// Admin-gated is deliberate — see accepted risk 12 in SECURITY-NOTES.md — and a later change
+    /// that quietly put them behind the FallbackPolicy would hand a signed-out visitor a bare 401
+    /// with no login page to land on.
+    /// </summary>
+    [Fact]
+    public async Task Hosted_api_documentation_is_anonymous_and_widens_nothing_else()
+    {
+        using var app = new GameTownApp();
+        using var admin = await app.SignInAsAdminAsync();
+        await admin.PatchAsJsonAsync("/settings", new { apiDocsEnabled = true });
+
+        using var client = app.CreateBrowser();
+
+        var document = await client.GetAsync("/openapi/v1.json");
+        Assert.Equal(HttpStatusCode.OK, document.StatusCode);
+        Assert.Equal("application/json", document.Content.Headers.ContentType?.MediaType);
+
+        var ui = await client.GetAsync("/scalar/v1");
+        Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
+
+        // Every route the document describes keeps the authorization it already had. The two Admin
+        // routes above are re-asserted here on purpose: this is the pairing that makes publishing
+        // the API's shape to a LAN acceptable, and it has to fail together with the claim above.
+        foreach (var guarded in new[] { "/settings", "/users/getAll" })
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync(guarded)).StatusCode);
+        }
+    }
 }

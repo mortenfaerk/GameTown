@@ -41,7 +41,13 @@ dotnet run --project API --launch-profile https  # run just the API (it serves t
 `GameTownApp` has no standalone run step on purpose — the API serves its compiled bundle from its own wwwroot, so "the app" and "the API" are one process on one origin. Launching the WASM dev server on its own *appears* to work but the SPA then resolves its API address to that dev server, and every call comes back as `index.html` (`ExpectedStartOfValueNotFound, <`). See the comment in `Aspire/Aspire.AppHost/Program.cs`.
 
 - API listens on `https://localhost:7188` (also plain-HTTP `http://localhost:5187`, the same port the installed appliance binds — see `install.sh`).
-- API docs (Scalar UI) are at `/scalar/v1`; the `https` profile opens it on launch.
+- API docs (Scalar UI) are at `/scalar/v1` and the OpenAPI document at `/openapi/v1.json`, but
+  **both are off until an admin enables them** — the `ApiDocsEnabled` setting governs every
+  environment, Development included, so a fresh database serves 404 on both until the toggle in
+  *Administer → Settings → API docs* is saved. The gate is a short-circuiting middleware in
+  `OpenApiConfig.UseOpenApi`, not conditional mapping, because an unmapped route here falls
+  through to the SPA shell and answers `200 text/html` instead of 404. Scalar serves its own
+  assets from under `/scalar`, so there is no CDN dependency on an offline LAN.
 - **First run goes to `/setup`** — the server-rendered wizard that creates the first administrator (`API/Pages/Setup.cshtml`). It 404s once an admin exists, so it is only reachable on a fresh database. The Aspire dashboard's `gametown` row links all three: **GameTown**, **Setup (first run)** and **API docs (Scalar)** (`Aspire/Aspire.AppHost/Program.cs` sets them via `WithUrls`; the row shows the first two inline and collapses the rest behind a `+N` chip).
 - The frontend has **no configured API URL and nothing hardcoded**: the API serves the SPA, so it resolves its API base from wherever it was loaded — `builder.HostEnvironment.BaseAddress` in `GameTownApp/Program.cs`. One published artifact therefore runs at any address (a LAN IP, a custom port, a reverse-proxied hostname) with no rebuild. There is no `api.gametowndev.com` or any other deployment host in the source.
 
@@ -94,7 +100,7 @@ There is **no database initialization step**. Point the connection string at a p
 
 This also removed the dev-only `init-dev-db.ps1` bootstrap, and with it the wedge it existed to work around — an empty or missing `.db` used to be adopted as a pre-versioning install, stamped version 1, and then fail on the first migration because the baseline tables were never created.
 
-Runtime settings (`GameFilesPath`, `IGDBClientId`, `IGDBClientSecret`, `BoxArtApiKey`, allowed upload types) live in the `Settings` table and are read **per request** by `SettingsService`. That is deliberate and fragile in one specific way: `IgdbProvider`, `FileService` and `SteamGridDbProvider` must keep reading them per call. The old `RAWGService` and `FileService` used to take these as constructor arguments resolved once at startup, which is exactly what made the settings UI look like it saved and changed nothing.
+Runtime settings (`GameFilesPath`, `IGDBClientId`, `IGDBClientSecret`, `BoxArtApiKey`, `ApiDocsEnabled`, allowed upload types) live in the `Settings` table and are read **per request** by `SettingsService`. That is deliberate and fragile in one specific way: `IgdbProvider`, `FileService` and `SteamGridDbProvider` must keep reading them per call. The old `RAWGService` and `FileService` used to take these as constructor arguments resolved once at startup, which is exactly what made the settings UI look like it saved and changed nothing.
 
 `IgdbTokenProvider` is the one deliberate exception, and it is not really one: it is a **singleton** that caches the Twitch OAuth token (valid ~60 days) but keys the cache on a **hash of the credentials that produced it**. The credentials are still read from the database per call; only the derived token is reused, and only while those credentials are current. Editing them in the admin UI misses the cache on the next call. Do not "simplify" this by capturing credentials in the constructor, and do not make it scoped — a scoped cache would re-authenticate on every request, which is the opposite mistake.
 

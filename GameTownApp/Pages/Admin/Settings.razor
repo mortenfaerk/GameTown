@@ -45,6 +45,9 @@
     <li class="nav-item">
         <button class="nav-link @(Tab == "lanbot" ? "active" : "")" @onclick="ShowLanBot">LAN bot</button>
     </li>
+    <li class="nav-item">
+        <button class="nav-link @(Tab == "apidocs" ? "active" : "")" @onclick='() => Tab = "apidocs"'>API docs</button>
+    </li>
 </ul>
 
 @if (Loading)
@@ -464,6 +467,57 @@ else if (Tab == "lanbot")
     </div>
 }
 
+else if (Tab == "apidocs")
+{
+    <div class="card">
+        <div class="card-body">
+            <h5 class="card-title">API documentation</h5>
+            <p class="text-secondary small">
+                Serves the interactive API reference and the OpenAPI document this install was built
+                from. <strong>Off by default.</strong> While it's on, anyone who can reach this server
+                can read it &mdash; the endpoints it describes stay behind the same login and roles as
+                always, so what becomes visible is their shape, not their contents.
+            </p>
+
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="api-docs-enabled"
+                       checked="@ApiDocsEnabled" disabled="@Busy"
+                       @onchange="e => ApiDocsEnabled = e.Value is true" />
+                <label class="form-check-label" for="api-docs-enabled">
+                    Host the API documentation
+                </label>
+            </div>
+
+            <button class="btn btn-primary" @onclick="SaveApiDocs" disabled="@Busy">Save</button>
+
+            @if (Current.ApiDocsEnabled)
+            {
+                @* Gated on the SERVER's state rather than on the checkbox above, so the link cannot
+                   appear before the change is actually saved.
+
+                   target="_blank" is required, not cosmetic: Blazor intercepts same-origin anchor
+                   clicks and routes them through its own router, and /scalar/v1 has no @@page, so a
+                   plain link lands on this SPA's not-found panel instead of Scalar. Relative rather
+                   than built from PublicBaseUrl, which is for links coming in from outside and is
+                   routinely blank. *@
+                <p class="mt-3 mb-0">
+                    <a href="/scalar/v1" target="_blank" rel="noopener">Open the API reference</a>
+                    <span class="text-secondary small ms-2">
+                        &mdash; the OpenAPI document itself is at <code>/openapi/v1.json</code>.
+                    </span>
+                </p>
+            }
+            else
+            {
+                <p class="text-secondary small mt-3 mb-0">
+                    Currently off. <code>/scalar/v1</code> and <code>/openapi/v1.json</code> answer
+                    with 404.
+                </p>
+            }
+        </div>
+    </div>
+}
+
 @code {
     private string Tab = "storage";
     private bool Loading = true;
@@ -479,6 +533,8 @@ else if (Tab == "lanbot")
     private List<string> AllowedFileTypes = [];
     private string NewType = string.Empty;
     private long MaxUploadSizeMb;
+
+    private bool ApiDocsEnabled;
 
     private string LanBotBaseUrl = string.Empty;
     private string LanBotApiKey = string.Empty;
@@ -513,6 +569,7 @@ else if (Tab == "lanbot")
         GameFilesPath = settings.GameFilesPath;
         AllowedFileTypes = [.. settings.AllowedFileTypes];
         MaxUploadSizeMb = settings.MaxUploadSizeMb;
+        ApiDocsEnabled = settings.ApiDocsEnabled;
         // The secret boxes are emptied rather than repopulated: the browser is never given a stored
         // secret, so there is nothing to put back, and a blank box is what "unchanged" looks like.
         // The client id is NOT a secret and is shown as the field's placeholder, so it needs no
@@ -711,6 +768,12 @@ else if (Tab == "lanbot")
         await Save(new SettingsUpdateRequest { MaxUploadSizeMb = MaxUploadSizeMb },
             MaxUploadSizeMb == 0 ? "Upload size limit removed." : $"Upload size limit set to {MaxUploadSizeMb} MB.");
     }
+
+    private async Task SaveApiDocs()
+        => await Save(new SettingsUpdateRequest { ApiDocsEnabled = ApiDocsEnabled },
+            ApiDocsEnabled
+                ? "API documentation is now hosted."
+                : "API documentation is now off.");
 
     private async Task Save(SettingsUpdateRequest request, string success)
     {
