@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 ## [0.7.1] - 2026-10-09
-- Bump release version to 0.7.0.
+- Bump release version to 0.7.1.
 - **The library scrolls endlessly instead of paging.** Previous/Next and "Page N" are gone: the next
   batch of 48 loads about a screen before you reach the end of the shelf, the header reads "72 of
   340" rather than "24 on this page", and the shelf ends with "That's all N". A "Load more" button
@@ -16,7 +16,8 @@ All notable changes to this project will be documented in this file.
     names the last game seen rather than an offset, so a game uploaded or deleted mid-scroll can no
     longer repeat a tile or skip one. A malformed cursor is a 400.
   - `getPaged` and `search` are unchanged and still used by the game picker.
-- Tests: 300, up from 287.
+- Tests: 306, up from 293.
+
 ## [0.7.0] - 2026-10-04
 - Bump release version to 0.7.0.
 - **New setting: host the API documentation.** *Administer → Settings → API docs* now has a toggle

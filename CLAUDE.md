@@ -57,7 +57,7 @@ dotnet run --project API --launch-profile https  # run just the API (it serves t
 dotnet test Tests/GameTown.Tests/GameTown.Tests.csproj
 ```
 
-300 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
+306 tests, mostly HTTP-level against the real app booted through `WebApplicationFactory` on a throwaway SQLite database created from `Database/sqlite/*.sql` — the same files the application embeds and applies on a fresh install, so DDL/model drift fails here.
 
 Requires the `sqlite3` CLI on the machine running the tests: the harness shells out to it so its view of the database stays independent of the EF model under test. The shipped application does not need it.
 
