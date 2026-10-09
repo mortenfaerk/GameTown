@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 
 namespace GameTownApp.Services;
 
@@ -53,6 +53,28 @@ public class GamesService(HttpClient http)
 
         return await _http.GetFromJsonAsync<List<GameContract>>(
                    $"/GTGames/getPaged/{page}/{pageSize}{filters}") ?? [];
+    }
+
+    /// <summary>
+    /// One batch of the endlessly scrolling library. Pass the previous batch's <c>Next</c> as
+    /// <paramref name="after"/>; a null <c>Next</c> on the result means there is nothing further.
+    /// </summary>
+    public async Task<BrowsePageContract> Browse(
+        string? query, IEnumerable<string>? tags, string? lanEvent, string? after, int limit,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new List<string> { $"limit={limit}" };
+        if (!string.IsNullOrWhiteSpace(query)) parameters.Add($"q={Uri.EscapeDataString(query)}");
+        var tagFilter = TagQuery(tags, first: false);
+        if (tagFilter.Length > 0) parameters.Add(tagFilter[1..]);
+        var lanFilter = LanQuery(lanEvent, first: false);
+        if (lanFilter.Length > 0) parameters.Add(lanFilter[1..]);
+        // Already base64url, so safe as-is; escaped anyway because it is a value the server chose.
+        if (!string.IsNullOrEmpty(after)) parameters.Add($"after={Uri.EscapeDataString(after)}");
+
+        return await _http.GetFromJsonAsync<BrowsePageContract>(
+                   "/GTGames/browse?" + string.Join('&', parameters), cancellationToken)
+               ?? new BrowsePageContract();
     }
 
     /// <summary>All three query parameters are required; omitting page/pageSize returns 400.</summary>

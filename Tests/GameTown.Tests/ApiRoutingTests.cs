@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 
 namespace GameTown.Tests;
 
@@ -25,6 +25,9 @@ public class ApiRoutingTests
         // unfiltered library, which looks like a filter that does not work rather than a broken URL.
         "/GTGames/getPaged/1/5?tags=lan",
         "/GTGames/search/?query=x&page=1&pageSize=5&tags=lan,co-op",
+        // The library page's own route since it became an endless scroll.
+        "/GTGames/browse",
+        "/GTGames/browse?q=x&tags=lan,co-op&lan=HCP%20%2337&limit=5",
         // Anonymous, because the library's filter bar is. Behind the fallback authorization policy
         // this would answer 401 rather than falling through to the SPA, but the assertion below is
         // the one that matters either way.

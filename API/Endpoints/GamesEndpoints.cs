@@ -91,6 +91,15 @@ public static class GamesEndpoints
             .Produces(StatusCodes.Status500InternalServerError)
             .WithName("SearchGame")
             .WithDescription("Searches for games in GameTown based on a query string. The query string should not be empty and pagination parameters must be greater than zero. Accepts the same ?tags= and ?lan= filters as getPaged.");
+        // What the library page actually uses since it became an endless scroll. getPaged and search
+        // stay: the game picker, the tests and anything bookmarked still call them.
+        group.MapGet("/browse", BrowseGames)
+            .AllowAnonymous()
+            .Produces<BrowsePageContract>(StatusCodes.Status200OK)
+            .Produces(StatusCodes.Status400BadRequest)
+            .Produces(StatusCodes.Status500InternalServerError)
+            .WithName("BrowseGames")
+            .WithDescription("One cursor-paged batch of the library, in title order. Pass the previous batch's 'next' as ?after= to continue; 'next' is null on the last batch and 'total' is only present on the first. Optional ?q= (search), ?tags= (comma-separated, AND), ?lan= and ?limit= (1-100, default 48).");
     }
     private static async Task<IResult> GetGameById(string id, GTGamesService service)
     {
@@ -190,6 +199,31 @@ public static class GamesEndpoints
         {
             var games = await service.SearchGames(query, page, pageSize, ParseTags(tags), lan);
             return Results.Ok(games);
+        }
+        catch (Exception ex)
+        {
+            return Results.Problem(ex.Message, statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+    private const int DefaultBrowseLimit = 48;
+    private const int MaxBrowseLimit = 100;
+
+    private static async Task<IResult> BrowseGames(
+        GTGamesService service, string? q = null, string? tags = null, string? lan = null,
+        string? after = null, int? limit = null)
+    {
+        BrowseCursor? cursor = null;
+        if (!string.IsNullOrEmpty(after) && !BrowseCursor.TryDecode(after, out cursor))
+            return Results.BadRequest("Invalid cursor.");
+
+        // Clamped rather than rejected: a limit is a preference about batch size, not a claim that
+        // can be wrong, and the clamp is what stops ?limit=1000000 loading the library in one go.
+        var take = Math.Clamp(limit ?? DefaultBrowseLimit, 1, MaxBrowseLimit);
+
+        try
+        {
+            return Results.Ok(await service.BrowsePageAsync(
+                string.IsNullOrWhiteSpace(q) ? null : q, ParseTags(tags), lan, cursor, take));
         }
         catch (Exception ex)
         {

@@ -1,6 +1,23 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
+## [0.7.0] - 2026-10-09
+- Bump release version to 0.7.0.
+- **The library scrolls endlessly instead of paging.** Previous/Next and "Page N" are gone: the next
+  batch of 48 loads about a screen before you reach the end of the shelf, the header reads "72 of
+  340" rather than "24 on this page", and the shelf ends with "That's all N". A "Load more" button
+  stays at the bottom for keyboard and screen-reader users, and a failed batch offers a Retry in
+  place without throwing away what already loaded.
+  - **Back returns you to where you were.** Opening a game and coming back restores the shelf and
+    its scroll position without reloading it. Going anywhere else first, or changing anything about a
+    game, starts the shelf fresh from the top.
+  - New `GET /GTGames/browse` (anonymous): cursor-paged in (Title, Id) order, with `?q=`, `?tags=`
+    and `?lan=` as before, `?limit=` clamped to 1–100, and a `total` on the first batch. A cursor
+    names the last game seen rather than an offset, so a game uploaded or deleted mid-scroll can no
+    longer repeat a tile or skip one. A malformed cursor is a 400.
+  - `getPaged` and `search` are unchanged and still used by the game picker.
+- Tests: 300, up from 287.
+
 ## [0.6.1] - 2026-09-16
 - Bump release version to 0.6.1.
 - Fixed: deleting a user with any role assigned failed with "A database error occurred while

@@ -322,7 +322,7 @@ Two consequences worth holding onto:
   say so: `.RequireAuthorization("Contributor")` / `("Admin")`.
 - The intentionally public surface must stay explicitly `.AllowAnonymous()`:
   `/auth/*`, `GET /GTGames/{id}`, `GET /GTGames/download/{id}`, `GET /GTGames/getPaged/{page}/{pageSize}`,
-  `GET /GTGames/search/`, the `MapFallbackToFile` SPA shell, the `/setup` page (risk 5) and the
+  `GET /GTGames/search/`, `GET /GTGames/browse`, the `MapFallbackToFile` SPA shell, the `/setup` page (risk 5) and the
   Development-only OpenAPI/Scalar endpoints. `Tests/GameTown.Tests/AuthorizationTests.cs` covers a
   sample of it — the paged list, search, `/auth/me` and the shell — not the whole list, so adding a
   route here is not the same as having it tested.

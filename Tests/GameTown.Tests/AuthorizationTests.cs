@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 
 namespace GameTown.Tests;
@@ -17,6 +17,7 @@ public class AuthorizationTests
     [
         "/GTGames/getPaged/1/5",
         "/GTGames/search/?query=x&page=1&pageSize=5",
+        "/GTGames/browse",
         "/auth/me",
     ];
 

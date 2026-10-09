@@ -1,4 +1,4 @@
-using GameTownApp;
+﻿using GameTownApp;
 using GameTownApp.Helpers;
 using GameTownApp.Pages;
 using GameTownApp.Services;
@@ -30,11 +30,20 @@ builder.Services.AddScoped(sp =>
     // CookieHandler stays even though same-origin fetch would send the cookie by default. It is one
     // line, and being explicit costs nothing next to the failure it prevents — requests that quietly
     // arrive anonymous, which looks like a permissions bug rather than a missing credential.
-    return new HttpClient(new CookieHandler())
+    //
+    // ShelfInvalidatingHandler sits in front of it so that anything which changes a game drops the
+    // library shelf saved for the Back button — see ShelfCache.
+    return new HttpClient(new ShelfInvalidatingHandler(sp.GetRequiredService<ShelfCache>())
+    {
+        InnerHandler = new CookieHandler()
+    })
     {
         BaseAddress = new Uri(apiBaseUrl)
     };
 });
+// Where the library shelf was when a game was opened from it, so Back returns there. Scoped, i.e. for
+// the life of the SPA, which is exactly as long as a Back button can reach.
+builder.Services.AddScoped<ShelfCache>();
 builder.Services.AddScoped<GamesService>();
 builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<UploadService>();

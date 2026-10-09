@@ -2,6 +2,9 @@
 @inject GamesService GamesService
 @inject NavigationManager Navigation
 @inject LanSuggestionService LanService
+@inject ShelfCache ShelfCache
+@inject IJSRuntime JS
+@implements IAsyncDisposable
 
 @* Public by design: anyone on the LAN browses and downloads. Only contributing is gated. *@
 
@@ -27,7 +30,8 @@
     }
     else if (!Loading && Games.Count > 0)
     {
-        <span class="gt-data">@Games.Count on this page</span>
+        @* "of N" because an endless shelf has no page number to say how far along you are. *@
+        <span class="gt-data">@CountLabel</span>
     }
 </div>
 
@@ -139,7 +143,7 @@ else
         @foreach (var game in Games)
         {
             var cover = GamesService.CoverFor(game);
-            <a class="tile" href="@($"/game/{game.Id}")">
+            <a class="tile" href="@($"/game/{game.Id}")" @onclick="RememberShelf">
                 <div class="tile__art">
                     @if (cover is not null)
                     {
@@ -181,13 +185,39 @@ else
         }
     </div>
 
-    <div class="d-flex justify-content-between align-items-center mt-5">
-        <button class="btn btn-sm btn-outline-secondary" disabled="@(Page <= 1)" @onclick="() => Load(Page - 1)">Previous</button>
-        <span class="gt-data">Page @Page</span>
-        @* The API returns a bare list with no total, so a full page implies there may be more. *@
-        <button class="btn btn-sm btn-outline-secondary" disabled="@(Games.Count < PageSize)" @onclick="() => Load(Page + 1)">Next</button>
+    @*
+        The end of the shelf. Normally nobody sees the button: the sentinel below asks for the next
+        batch about a screen before it comes into view. It is here for keyboard and screen-reader
+        users, who need a control rather than a scroll position, and as the way through if the
+        observer never fires.
+
+        A failed batch keeps everything already loaded and offers a retry in place - emptying the
+        shelf because batch four failed would throw away three batches that worked.
+    *@
+    <div class="d-flex justify-content-center align-items-center gap-3 mt-5" aria-live="polite">
+        @if (!string.IsNullOrEmpty(MoreError))
+        {
+            <span class="gt-muted">@MoreError</span>
+            <button class="btn btn-sm btn-outline-secondary" @onclick="RetryMore">Retry</button>
+        }
+        else if (LoadingMore)
+        {
+            <span class="gt-muted">Loading more&hellip;</span>
+        }
+        else if (Next is not null)
+        {
+            <button class="btn btn-sm btn-outline-secondary" @onclick="LoadMore">Load more</button>
+        }
+        else
+        {
+            <span class="gt-data">That&rsquo;s all @Games.Count</span>
+        }
     </div>
 }
+
+@* Always rendered, so the observer attached on first render keeps watching the same element across
+   every filter change. LoadMore decides whether there is anything to do. *@
+<div @ref="sentinel" aria-hidden="true"></div>
 
 @code {
     /// <summary>Set by the sidebar search, which navigates to /?q=… so results stay linkable.</summary>
@@ -217,15 +247,51 @@ else
     private List<GameContract> Games = [];
     private List<TagContract> FilterTags = [];
     private List<LanEventContract> LanEvents = [];
-    private int Page = 1;
-    private const int PageSize = 24;
-    private bool Loading = true;
-    private string? Error;
-    private string? loadedQuery;
-    private string? loadedTags;
-    private string? loadedLan;
 
+    /// <summary>
+    /// Per batch. Twice the 24 the paged shelf used: a wide window shows that many in under two
+    /// screens, so a smaller batch is just more round-trips for the same scroll.
+    /// </summary>
+    private const int BatchSize = 48;
+
+    /// <summary>Cursor for the next batch; null once the shelf has reached the end.</summary>
+    private string? Next;
+
+    /// <summary>Matches across all batches, from the first one. Null if that has not arrived.</summary>
+    private int? Total;
+
+    private bool Loading = true;
+    private bool LoadingMore;
+    private string? Error;
+    private string? MoreError;
+
+    /// <summary>
+    /// Bumped on every filter change. A batch that finishes after the filters moved on checks it and
+    /// throws its result away - otherwise tiles from the shelf you just left get appended to the one
+    /// you are now on. Cancellation alone is not enough: a response can complete in the same tick
+    /// the token is cancelled.
+    /// </summary>
+    private int generation;
+    private CancellationTokenSource? inflight;
+
+    private string? loadedKey;
     private bool hasLoaded;
+
+    private ElementReference sentinel;
+    // In-process: WebAssembly can call JS synchronously, and RememberShelf has to read the scroll
+    // position before the tile's navigation tears this page down.
+    private IJSInProcessObjectReference? module;
+    private DotNetObjectReference<Home>? selfRef;
+    private bool observing;
+    private bool recheckAfterRender;
+    private double? restoreScrollTo;
+
+    private string FilterKey => $"{Q}\u0001{TagFilter}\u0001{LanFilter}";
+
+    private string CountLabel =>
+        Total is null ? $"{Games.Count} games"
+        : Next is null ? $"{Total} games"
+        : $"{Games.Count} of {Total}";
 
     private bool IsSearching => !string.IsNullOrWhiteSpace(Q);
     private bool IsFiltered =>
@@ -257,26 +323,97 @@ else
 
     protected override async Task OnParametersSetAsync()
     {
-        // Re-runs whenever ?q= or ?tags= changes, including navigating back to the unfiltered library.
+        // Re-runs whenever ?q=, ?tags= or ?lan= changes, including navigating back to the unfiltered
+        // library.
         //
         // The guard keys off an explicit flag rather than Loading: parameters get set again whenever
         // the cascading auth state resolves or changes (e.g. right after login), and if that landed
         // mid-request the old guard let a *second* concurrent Load start. Two in-flight fetches then
         // raced to assign Games, which is why the shelf sometimes came up empty.
-        if (hasLoaded && loadedQuery == Q && loadedTags == TagFilter && loadedLan == LanFilter) return;
+        var key = FilterKey;
+        if (hasLoaded && loadedKey == key) return;
 
+        var firstVisit = !hasLoaded;
         hasLoaded = true;
-        loadedQuery = Q;
-        loadedTags = TagFilter;
-        loadedLan = LanFilter;
-        await Load(1);
+        loadedKey = key;
+
+        // Back from a game: the shelf as it was, scrolled to where it was, with no request at all.
+        // Only on arrival - a filter change on this page is a new shelf, not a return to one.
+        if (firstVisit && ShelfCache.Take(key) is { } saved)
+        {
+            Games = saved.Games;
+            Next = saved.Next;
+            Total = saved.Total;
+            Loading = false;
+            restoreScrollTo = saved.ScrollY;
+            return;
+        }
+
+        // A narrower filter is a different, shorter shelf; staying scrolled to where the old one was
+        // would leave the reader below the end of it.
+        if (!firstVisit && module is not null)
+            await module.InvokeVoidAsync("scrollTo", 0);
+
+        await LoadFirst();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                module = await JS.InvokeAsync<IJSInProcessObjectReference>("import", "./js/infiniteScroll.js");
+                selfRef = DotNetObjectReference.Create(this);
+                await module.InvokeVoidAsync("observe", sentinel, selfRef, "800px 0px");
+                observing = true;
+            }
+            catch (JSException)
+            {
+                // No observer (or no module): the "Load more" button still works, which is why it
+                // exists.
+            }
+        }
+
+        if (module is null) return;
+
+        if (restoreScrollTo is { } y)
+        {
+            restoreScrollTo = null;
+            await module.InvokeVoidAsync("restoreScroll", y);
+        }
+
+        // The observer fires on a CHANGE of intersection. If a batch lands and the sentinel is still
+        // within reach - a tall window, or a short batch - nothing would ever change again, and the
+        // shelf would stall until the reader nudged it.
+        if (recheckAfterRender && observing && Next is not null)
+        {
+            recheckAfterRender = false;
+            await module.InvokeVoidAsync("recheck", sentinel, selfRef);
+        }
+    }
+
+    /// <summary>
+    /// Saves the shelf for the Back button, just before a tile navigates to its game. The anchor
+    /// does the navigating; this only records where the reader was.
+    /// </summary>
+    private void RememberShelf()
+    {
+        double y = 0;
+        try
+        {
+            if (module is not null) y = module.Invoke<double>("scrollY");
+        }
+        catch (JSException) { }
+
+        ShelfCache.Save(new ShelfCache.Snapshot(FilterKey, Games, Next, Total, y));
     }
 
     /// <summary>
     /// Adds or removes a tag from the filter and navigates to the resulting URL.
     ///
-    /// Page is deliberately not preserved: a narrower filter has fewer pages, and page 4 of a
-    /// three-page result is an empty shelf that looks like the filter matched nothing.
+    /// The shelf starts over from the top: a narrower filter is a different, shorter list, and the
+    /// batches already loaded belong to the old one.
     /// </summary>
     private void ToggleTag(string slug)
     {
@@ -316,26 +453,117 @@ else
         Navigation.NavigateTo(parameters.Count == 0 ? "/" : "/?" + string.Join('&', parameters));
     }
 
-    private async Task Load(int page)
+    /// <summary>Starts the shelf over from the first batch under the current filters.</summary>
+    private async Task LoadFirst()
     {
-        if (page < 1) return;
+        var mine = BeginGeneration();
 
         Loading = true;
+        LoadingMore = false;
         Error = null;
+        MoreError = null;
+        Games = [];
+        Next = null;
+        Total = null;
+
         try
         {
-            var tags = SelectedTags;
-            Games = IsSearching
-                ? await GamesService.Search(Q!, page, PageSize, tags, LanFilter)
-                : await GamesService.GetPaged(page, PageSize, tags, LanFilter);
-            Page = page;
+            var batch = await GamesService.Browse(
+                IsSearching ? Q : null, SelectedTags, LanFilter, after: null, BatchSize, inflight!.Token);
+            if (mine != generation) return;
+
+            Games = batch.Items;
+            Next = batch.Next;
+            Total = batch.Total;
+            recheckAfterRender = true;
+        }
+        catch (OperationCanceledException) when (mine != generation)
+        {
+            return;
         }
         catch (Exception ex)
         {
+            if (mine != generation) return;
             Error = $"Could not load the library: {ex.Message}";
-            Games = [];
         }
         Loading = false;
+    }
+
+    /// <summary>
+    /// Appends the next batch. Called by the scroll observer, the "Load more" button and Retry.
+    ///
+    /// Re-entrancy is the normal case, not an edge: the observer can fire again while a batch is in
+    /// flight. The LoadingMore check makes that a no-op rather than a second request for the same
+    /// cursor, which would append the same games twice.
+    /// </summary>
+    [JSInvokable]
+    public async Task LoadMore()
+    {
+        if (Loading || LoadingMore || Next is null || !string.IsNullOrEmpty(MoreError)) return;
+
+        var mine = generation;
+        var cursor = Next;
+        LoadingMore = true;
+        StateHasChanged();
+
+        try
+        {
+            var batch = await GamesService.Browse(
+                IsSearching ? Q : null, SelectedTags, LanFilter, cursor, BatchSize,
+                inflight?.Token ?? CancellationToken.None);
+            if (mine != generation) return;
+
+            Games.AddRange(batch.Items);
+            Next = batch.Next;
+            recheckAfterRender = true;
+        }
+        catch (OperationCanceledException) when (mine != generation)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            if (mine != generation) return;
+            MoreError = $"Could not load more: {ex.Message}";
+        }
+        finally
+        {
+            if (mine == generation) LoadingMore = false;
+        }
+        StateHasChanged();
+    }
+
+    private async Task RetryMore()
+    {
+        MoreError = null;
+        await LoadMore();
+    }
+
+    /// <summary>Abandons whatever the previous filters had in flight and returns the new generation.</summary>
+    private int BeginGeneration()
+    {
+        inflight?.Cancel();
+        inflight?.Dispose();
+        inflight = new CancellationTokenSource();
+        return ++generation;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        inflight?.Cancel();
+        inflight?.Dispose();
+
+        if (module is not null)
+        {
+            try
+            {
+                await module.InvokeVoidAsync("unobserve", sentinel);
+                await module.DisposeAsync();
+            }
+            catch (JSDisconnectedException) { }
+            catch (JSException) { }
+        }
+        selfRef?.Dispose();
     }
 
     private static string FormatSize(double megabytes)

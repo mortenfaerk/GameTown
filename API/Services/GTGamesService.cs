@@ -225,8 +225,8 @@ namespace API.Services
         /// game that does both, because the question being asked is "what can the four of us play
         /// tonight" and an OR would answer a question nobody has.
         /// </summary>
-        private async Task<List<GameContract>> BrowseAsync(
-            string? query, IEnumerable<string>? tagSlugs, string? lanEvent, int page, int pageSize)
+        private IQueryable<GameTownGame> Filtered(
+            string? query, IEnumerable<string>? tagSlugs, string? lanEvent)
         {
             var games = WithContractIncludes();
 
@@ -269,7 +269,13 @@ namespace API.Services
                 games = games.Where(g => g.LanSuggestions.Any(s => s.LanEventName == wantedEvent));
             }
 
-            var page_of_games = await games
+            return games;
+        }
+
+        private async Task<List<GameContract>> BrowseAsync(
+            string? query, IEnumerable<string>? tagSlugs, string? lanEvent, int page, int pageSize)
+        {
+            var page_of_games = await Filtered(query, tagSlugs, lanEvent)
                 // Paging without an ORDER BY leaves the order up to the database, so a game could
                 // appear on two pages or on none. Title is the order the shelf is presented in anyway.
                 .OrderBy(g => g.Title)
@@ -278,6 +284,57 @@ namespace API.Services
                 .ToListAsync();
 
             return [.. page_of_games.Select(g => g.ToContract(_metadata.Provider.Id))];
+        }
+
+        /// <summary>
+        /// One batch of the endlessly scrolling shelf: the games after <paramref name="after"/> in
+        /// (Title, Id) order, under the same filters as <see cref="BrowseAsync"/>.
+        ///
+        /// Keyset rather than offset paging. An offset batch shifts by one whenever a game is added or
+        /// removed ahead of it; pagination hid that because each page replaced the last, but an
+        /// appended list shows it as a tile repeated or a tile skipped. Id is the tiebreak, because two
+        /// games may share a title and without it their order — and so where a batch splits them — is
+        /// up to the database.
+        ///
+        /// Title is <c>COLLATE NOCASE</c> on the column, and SQLite applies a column's collation to
+        /// both the ORDER BY and a comparison against it, so the cursor comparison and the sort agree.
+        /// Change one without the other and the cursor skips rows.
+        /// </summary>
+        public async Task<BrowsePageContract> BrowsePageAsync(
+            string? query, IEnumerable<string>? tagSlugs, string? lanEvent, BrowseCursor? after, int limit)
+        {
+            var games = Filtered(query, tagSlugs, lanEvent);
+
+            // Counted before the cursor narrows anything, and only on the first batch — a later batch's
+            // caller already has the total.
+            int? total = after is null ? await games.CountAsync() : null;
+
+            if (after is not null)
+            {
+                var title = after.Title;
+                var id = after.Id;
+                games = games.Where(g =>
+                    string.Compare(g.Title, title) > 0
+                    || (g.Title == title && g.Id.CompareTo(id) > 0));
+            }
+
+            // One more than asked for: whether it arrives is how we know there is a next batch,
+            // without a second query.
+            var rows = await games
+                .OrderBy(g => g.Title)
+                .ThenBy(g => g.Id)
+                .Take(limit + 1)
+                .ToListAsync();
+
+            var hasMore = rows.Count > limit;
+            if (hasMore) rows.RemoveAt(rows.Count - 1);
+
+            return new BrowsePageContract
+            {
+                Items = [.. rows.Select(g => g.ToContract(_metadata.Provider.Id))],
+                Next = hasMore ? new BrowseCursor(rows[^1].Title, rows[^1].Id).Encode() : null,
+                Total = total,
+            };
         }
     }
 }
