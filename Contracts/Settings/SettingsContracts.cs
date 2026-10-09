@@ -94,6 +94,19 @@ public class SettingsContract
     /// </summary>
     public string PublicBaseUrl { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Whether this install serves its API documentation — the Scalar UI and the OpenAPI document.
+    ///
+    /// Unlike the <c>*IsSet</c>/<c>*IsConfigured</c> flags above, this is a STORED setting rather
+    /// than derived state: it is the value itself, and it round-trips through
+    /// <see cref="SettingsUpdateRequest.ApiDocsEnabled"/>.
+    ///
+    /// Off by default. While it is on the docs are reachable by anyone who can reach the server,
+    /// which is the point — but only their shapes become visible, since every endpoint the document
+    /// describes keeps the authorization it already had.
+    /// </summary>
+    public bool ApiDocsEnabled { get; set; }
+
     public List<string> AllowedFileTypes { get; set; } = [];
 
     /// <summary>
@@ -155,6 +168,12 @@ public class SettingsUpdateRequest
 
     /// <summary>Null means "unchanged". <c>0</c> is a real value and means "no limit".</summary>
     public long? MaxUploadSizeMb { get; set; }
+
+    /// <summary>
+    /// Null means "unchanged"; <c>false</c> is a real value and switches the documentation off.
+    /// Unlike the <c>Clear*</c> members above this is a stored value, not a command.
+    /// </summary>
+    public bool? ApiDocsEnabled { get; set; }
 }
 
 public class PathCheckRequest

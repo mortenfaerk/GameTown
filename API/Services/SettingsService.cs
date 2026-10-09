@@ -45,6 +45,12 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     /// <summary>Where this install is reachable from, for links handed to anything outside it.</summary>
     public const string PublicBaseUrlKey = "PublicBaseUrl";
 
+    /// <summary>
+    /// Whether the API documentation — the Scalar UI and the OpenAPI document — answers requests.
+    /// See <see cref="GetApiDocsEnabledAsync"/>.
+    /// </summary>
+    public const string ApiDocsEnabledKey = "ApiDocsEnabled";
+
     /// <summary>Archive extensions accepted by the upload endpoint when nothing is configured.</summary>
     public static readonly string[] DefaultAllowedFileTypes =
         [".zip", ".7z", ".rar", ".tar", ".gz", ".iso"];
@@ -54,6 +60,13 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     /// upgrade must not start rejecting archives an install has been accepting for months.
     /// </summary>
     public const long DefaultMaxUploadSizeMb = 0;
+
+    /// <summary>
+    /// Off, which is what the application did before this setting existed — these endpoints were
+    /// mapped only in Development, so taking a new build must not start publishing the API's shape
+    /// to the LAN on its own.
+    /// </summary>
+    public const bool DefaultApiDocsEnabled = false;
 
     /// <summary>
     /// How often the LAN bot is polled. Fifteen minutes because suggestions arrive at conversational
@@ -191,6 +204,25 @@ public class SettingsService(DatabaseContext dbContext, string dataDirectory)
     {
         var raw = await GetRawAsync(PublicBaseUrlKey);
         return raw?.TrimEnd('/');
+    }
+
+    /// <summary>
+    /// Whether the API documentation answers requests — the Scalar UI at /scalar and the OpenAPI
+    /// document at /openapi. Off by default.
+    ///
+    /// Read per request like every other setting, which is the whole point: an admin toggles this
+    /// from the settings page and it takes effect without a restart. The gate itself lives in
+    /// <c>OpenApiConfig.UseOpenApi</c>.
+    ///
+    /// An unparseable stored value falls back to the default rather than to true, so a hand-edited
+    /// row cannot silently expose docs an operator believes are off.
+    /// </summary>
+    public async Task<bool> GetApiDocsEnabledAsync()
+    {
+        var raw = await GetRawAsync(ApiDocsEnabledKey);
+        if (raw is null) return DefaultApiDocsEnabled;
+
+        return bool.TryParse(raw, out var enabled) ? enabled : DefaultApiDocsEnabled;
     }
 
     public async Task<string[]> GetAllowedFileTypesAsync()

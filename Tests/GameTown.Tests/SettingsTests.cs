@@ -236,10 +236,128 @@ public class SettingsTests
         Assert.Single(candidates!);
     }
 
+    /// <summary>
+    /// The API documentation is off until somebody turns it on.
+    ///
+    /// These endpoints used to be mapped only in Development; the ApiDocsEnabled setting governs
+    /// every environment now, so the default is what decides whether taking a new build starts
+    /// publishing the API's shape to the LAN. It must not.
+    ///
+    /// Note the content-type assertion, which is the half that actually bites. Under SPA-fallback
+    /// hosting an unmatched route does not 404 — it falls through to MapFallbackToFile and answers
+    /// 200 text/html. A gate implemented by leaving the endpoints unmapped would therefore hand the
+    /// caller a web page and a success status, and a status-only test would be no help. See
+    /// ApiRoutingTests for the general form of this trap.
+    /// </summary>
+    [Theory]
+    [InlineData("/scalar/v1")]
+    [InlineData("/openapi/v1.json")]
+    public async Task Api_documentation_is_off_by_default(string route)
+    {
+        using var app = new GameTownApp();
+        using var client = app.CreateBrowser();
+
+        var response = await client.GetAsync(route);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.NotEqual("text/html", response.Content.Headers.ContentType?.MediaType);
+    }
+
+    /// <summary>
+    /// Turning the documentation on reaches the running application, with no restart.
+    ///
+    /// Same shape as the IGDB credential test above and for the same reason: the gate reads the
+    /// setting per request, and anything that captured it at startup would pass a save and serve the
+    /// old answer forever.
+    ///
+    /// The OpenAPI document is the primary assertion rather than the Scalar UI, deliberately. The UI
+    /// answers 200 text/html, which is byte-for-byte what the SPA shell returns — so asserting on the
+    /// UI's status and content type alone would pass against a completely broken gate. The document
+    /// is JSON and names itself in its body, so there is nothing else it could be.
+    /// </summary>
+    [Fact]
+    public async Task Enabling_the_api_documentation_takes_effect_without_a_restart()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/openapi/v1.json")).StatusCode);
+
+        await client.PatchAsJsonAsync("/settings", new { apiDocsEnabled = true });
+
+        var document = await client.GetAsync("/openapi/v1.json");
+        Assert.Equal(HttpStatusCode.OK, document.StatusCode);
+        Assert.Equal("application/json", document.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("\"openapi\"", await document.Content.ReadAsStringAsync());
+
+        // The UI too, by a marker only Scalar emits — OpenApiConfig sets this title.
+        var ui = await client.GetAsync("/scalar/v1");
+        Assert.Equal(HttpStatusCode.OK, ui.StatusCode);
+        Assert.Contains("GameTown API", await ui.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>
+    /// While it is on, the documentation is readable by anyone who can reach the server, and that is
+    /// the point of the setting — the appliance is shown at a LAN and an operator turning this on is
+    /// turning it on for the room, not for themselves.
+    ///
+    /// The second half is what bounds it: the endpoints the document DESCRIBES keep the authorization
+    /// they already had. A visible shape is not an open door, and if that ever stopped being true
+    /// this setting would be a much bigger decision than it is.
+    /// </summary>
+    [Fact]
+    public async Task Hosted_documentation_is_readable_without_signing_in_but_opens_nothing()
+    {
+        using var app = new GameTownApp();
+        using var admin = await app.SignInAsAdminAsync();
+        await admin.PatchAsJsonAsync("/settings", new { apiDocsEnabled = true });
+
+        using var anonymous = app.CreateBrowser();
+
+        var document = await anonymous.GetAsync("/openapi/v1.json");
+        Assert.Equal(HttpStatusCode.OK, document.StatusCode);
+        Assert.Equal("application/json", document.Content.Headers.ContentType?.MediaType);
+
+        // Described in that document, and still shut.
+        var guarded = await anonymous.GetAsync("/settings");
+        Assert.Equal(HttpStatusCode.Unauthorized, guarded.StatusCode);
+    }
+
+    /// <summary>
+    /// And off again, in the same running process.
+    ///
+    /// Switching off is stored as "false" rather than by deleting the row, because SettingsService
+    /// treats a blank value as "go back to the coded default". That happens to be false today, so a
+    /// blank would look like it worked — this test would still pass, and the database would have lost
+    /// the difference between "an admin turned this off" and "nobody ever touched it".
+    /// </summary>
+    [Fact]
+    public async Task Disabling_the_api_documentation_takes_it_away_again()
+    {
+        using var app = new GameTownApp();
+        using var client = await app.SignInAsAdminAsync();
+
+        await client.PatchAsJsonAsync("/settings", new { apiDocsEnabled = true });
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/openapi/v1.json")).StatusCode);
+
+        await client.PatchAsJsonAsync("/settings", new { apiDocsEnabled = false });
+
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/openapi/v1.json")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/scalar/v1")).StatusCode);
+
+        // Stored, not deleted: the row says false rather than being absent.
+        Assert.Equal("false", app.QueryScalar(
+            """SELECT "Value" FROM "Settings" WHERE "Key" = 'ApiDocsEnabled';"""));
+
+        // And the contract reports it, so the settings page hides its link.
+        var settings = await client.GetFromJsonAsync<SettingsDto>("/settings");
+        Assert.False(settings!.ApiDocsEnabled);
+    }
+
     private sealed record SettingsDto(
         string GameFilesPath, string MediaDirectory, string DataDirectory,
         bool IgdbCredentialsAreSet, string? IgdbClientId, string? IgdbClientSecretMasked,
-        List<string> AllowedFileTypes, int RelinkCandidateCount);
+        List<string> AllowedFileTypes, int RelinkCandidateCount, bool ApiDocsEnabled);
 
     private sealed record PathCheck(
         bool Exists, bool Writable, string Reason, long? FreeBytes, string? FileSystem);

@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes to this project will be documented in this file.
-## [0.7.0] - 2026-10-09
+## [0.7.1] - 2026-10-09
 - Bump release version to 0.7.0.
 - **The library scrolls endlessly instead of paging.** Previous/Next and "Page N" are gone: the next
   batch of 48 loads about a screen before you reach the end of the shelf, the header reads "72 of
@@ -17,6 +17,21 @@ All notable changes to this project will be documented in this file.
     longer repeat a tile or skip one. A malformed cursor is a 400.
   - `getPaged` and `search` are unchanged and still used by the game picker.
 - Tests: 300, up from 287.
+## [0.7.0] - 2026-10-04
+- Bump release version to 0.7.0.
+- **New setting: host the API documentation.** *Administer → Settings → API docs* now has a toggle
+  for serving the interactive API reference (Scalar) and the OpenAPI document, with a link to them
+  while it's on. These used to exist only in Development builds, so on an installed appliance there
+  was no way to reach them at all.
+  - **Off by default**, including after an upgrade — taking this build exposes nothing on its own.
+    While it's on they're readable by anyone who can reach the server, which is the point on a LAN;
+    what becomes visible is the API's *shape*, and every endpoint it describes keeps the
+    authorization it already had. See accepted risk 12 in SECURITY-NOTES.md.
+  - Read per request like every other setting, so switching it either way takes effect immediately
+    with no restart. The setting governs Development too, so a fresh dev database serves 404 until
+    it's enabled.
+  - No migration — schema stays at version 9 and the installer needs no change.
+- Tests: 293, up from 287.
 
 ## [0.6.1] - 2026-09-16
 - Bump release version to 0.6.1.
